@@ -1,0 +1,3028 @@
+/* ========================================================= 
+   MAFIA WARS - COMPLETE STYLE 
+   Background image: background.png 
+========================================================= */ 
+ 
+* { 
+    box-sizing: border-box; 
+    margin: 0; 
+    padding: 0; 
+} 
+ 
+html, 
+body { 
+    width: 100%; 
+    min-height: 100%; 
+} 
+ 
+body { 
+    font-family: Arial, Helvetica, sans-serif; 
+ 
+    color: #ffffff; 
+ 
+    min-height: 100vh; 
+ 
+    background: 
+        linear-gradient( 
+            rgba(2, 12, 30, 0.58), 
+            rgba(1, 8, 22, 0.78) 
+        ), 
+        url("background.png"); 
+ 
+    background-size: cover; 
+    background-position: center; 
+    background-repeat: no-repeat; 
+    background-attachment: fixed; 
+ 
+    overflow-x: hidden; 
+} 
+ 
+ 
+/* ========================================================= 
+   GENERAL 
+========================================================= */ 
+ 
+button, 
+input, 
+select { 
+    font-family: inherit; 
+} 
+ 
+button { 
+    cursor: pointer; 
+} 
+ 
+ 
+/* ========================================================= 
+   HOME SCREEN 
+========================================================= */ 
+ 
+#homeScreen { 
+    min-height: 100vh; 
+ 
+    display: flex; 
+    align-items: center; 
+    justify-content: center; 
+ 
+    padding: 30px; 
+ 
+    background: 
+        linear-gradient( 
+            rgba(2, 14, 35, 0.15), 
+            rgba(1, 8, 25, 0.30) 
+        ); 
+} 
+ 
+ 
+/* Main home box */ 
+ 
+.home-container { 
+    width: min(700px, 92vw); 
+    text-align: center; 
+    padding: 35px 25px; 
+    background: transparent; 
+    border: none; 
+    border-radius: 0; 
+    box-shadow: none; 
+    backdrop-filter: none; 
+} 
+ 
+ 
+/* ========================================================= 
+   LOGO 
+========================================================= */ 
+ 
+.logo-icon { 
+    font-size: 48px; 
+ 
+    margin-bottom: 8px; 
+ 
+    filter: 
+        drop-shadow(0 0 8px rgba(100, 180, 255, 0.5)); 
+ 
+    user-select: none; 
+} 
+ 
+ 
+/* ========================================================= 
+   TITLE 
+========================================================= */ 
+ 
+.home-container h1 { 
+    font-size: clamp(32px, 5vw, 50px); 
+    font-weight: 900; 
+    letter-spacing: 2px; 
+    color: #ffffff; 
+    text-transform: none; 
+    margin-bottom: 8px; 
+    text-shadow: 
+        0 3px 0 #081426, 
+        0 0 14px rgba(80, 170, 255, 0.7), 
+        0 0 35px rgba(20, 90, 180, 0.45); 
+} 
+ 
+ 
+/* Edition subtitle */ 
+ 
+.edition-title { 
+    margin: 0 0 14px; 
+    font-size: clamp(20px, 3vw, 28px); 
+    font-weight: 500; 
+    letter-spacing: 1px; 
+    color: #d8eaff; 
+    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8); 
+} 
+ 
+/* Welcome text */ 
+ 
+.home-container > p { 
+    font-size: 18px; 
+    letter-spacing: 1px; 
+    color: #d4e8fa; 
+    margin-bottom: 32px; 
+    text-shadow: 
+        0 2px 8px rgba(0, 0, 0, 0.8); 
+} 
+ 
+ 
+/* ========================================================= 
+   HOME BUTTONS 
+========================================================= */ 
+ 
+/* ========================================================= 
+   HOME BUTTONS 
+========================================================= */ 
+ 
+.home-buttons { 
+    display: flex; 
+ 
+    justify-content: center; 
+ 
+    gap: 15px; 
+ 
+    flex-wrap: wrap; 
+} 
+ 
+.home-buttons button { 
+    min-width: 250px; 
+    padding: 16px 24px; 
+    border: 1px solid rgba(130, 220, 255, 0.45); 
+    border-radius: 10px; 
+    background: 
+        linear-gradient( 
+            180deg, 
+            rgba(45, 180, 235, 0.96), 
+            rgba(25, 125, 190, 0.96) 
+        ); 
+    color: #ffffff; 
+    font-size: 15px; 
+    font-weight: 900; 
+    letter-spacing: 1px; 
+    box-shadow: 
+        0 8px 22px rgba(0, 0, 0, 0.45), 
+        inset 0 1px rgba(255, 255, 255, 0.2); 
+    transition: 
+        transform 0.2s, 
+        box-shadow 0.2s, 
+        background 0.2s; 
+} 
+ 
+.home-buttons button:hover { 
+    transform: translateY(-2px); 
+ 
+    background: 
+        linear-gradient( 
+            180deg, 
+            rgba(40, 110, 170, 0.98), 
+            rgba(10, 48, 90, 0.98) 
+        ); 
+ 
+    box-shadow: 
+        0 12px 28px rgba(0, 0, 0, 0.5), 
+        0 0 18px rgba(50, 150, 230, 0.22); 
+} 
+ 
+.home-buttons button:active { 
+    transform: translateY(0); 
+} 
+ 
+ 
+/* ========================================================= 
+   LOBBY 
+========================================================= */ 
+ 
+#lobby { 
+    min-height: 100vh; 
+ 
+    padding: 40px 20px; 
+} 
+ 
+.lobby-container { 
+    width: min(850px, 95vw); 
+ 
+    margin: 0 auto; 
+ 
+    padding: 30px; 
+ 
+    background: rgba(3, 12, 30, 0.78); 
+ 
+    border: 1px solid rgba(100, 180, 240, 0.22); 
+ 
+    border-radius: 18px; 
+ 
+    box-shadow: 
+        0 20px 60px rgba(0, 0, 0, 0.65); 
+ 
+    backdrop-filter: blur(5px); 
+} 
+ 
+.lobby-container > h1 { 
+    text-align: center; 
+ 
+    font-size: 34px; 
+ 
+    margin-bottom: 20px; 
+ 
+    color: #e9f5ff; 
+ 
+    text-shadow: 
+        0 0 14px rgba(70, 160, 240, 0.45); 
+} 
+ 
+.lobby-container h2 { 
+    margin-top: 15px; 
+    margin-bottom: 10px; 
+ 
+    color: #b9dcf8; 
+} 
+ 
+.lobby-container h3 { 
+    margin-top: 20px; 
+ 
+    color: #c6dff3; 
+} 
+ 
+ 
+/* Room code */ 
+ 
+#displayRoomCode { 
+    width: fit-content; 
+ 
+    min-width: 160px; 
+ 
+    margin: 10px auto 20px; 
+ 
+    padding: 12px 25px; 
+ 
+    text-align: center; 
+ 
+    font-size: 25px; 
+ 
+    font-weight: 900; 
+ 
+    letter-spacing: 5px; 
+ 
+    color: #ffffff; 
+ 
+    background: rgba(0, 25, 55, 0.75); 
+ 
+    border: 1px solid rgba(90, 170, 230, 0.35); 
+ 
+    border-radius: 10px; 
+} 
+ 
+ 
+/* Player list */ 
+ 
+#playerList { 
+    list-style: none; 
+ 
+    display: grid; 
+ 
+    grid-template-columns: 
+        repeat(auto-fit, minmax(180px, 1fr)); 
+ 
+    gap: 8px; 
+ 
+    margin-top: 12px; 
+} 
+ 
+#playerList li { 
+    padding: 10px 13px; 
+ 
+    border-radius: 8px; 
+ 
+    background: rgba(10, 35, 65, 0.72); 
+ 
+    border: 1px solid rgba(100, 170, 220, 0.15); 
+ 
+    color: #dceeff; 
+} 
+ 
+ 
+/* Waiting message */ 
+ 
+#waitingForHost { 
+    margin: 20px 0; 
+ 
+    padding: 14px; 
+ 
+    text-align: center; 
+ 
+    border-radius: 10px; 
+ 
+    background: rgba(20, 65, 100, 0.6); 
+ 
+    color: #b9ddfa; 
+ 
+    border: 1px solid rgba(100, 190, 240, 0.25); 
+} 
+ 
+ 
+/* Host indicator */ 
+ 
+#hostIndicator { 
+    margin: 15px 0; 
+ 
+    text-align: center; 
+ 
+    color: #ffd76a; 
+ 
+    font-weight: 800; 
+ 
+    font-size: 17px; 
+ 
+    text-shadow: 
+        0 0 10px rgba(255, 200, 60, 0.35); 
+} 
+ 
+ 
+/* ========================================================= 
+   ROLE SETTINGS 
+========================================================= */ 
+ 
+.role-settings { 
+    margin-top: 25px; 
+ 
+    padding: 22px; 
+ 
+    background: rgba(2, 16, 35, 0.72); 
+ 
+    border: 1px solid rgba(100, 180, 240, 0.18); 
+ 
+    border-radius: 14px; 
+} 
+ 
+.role-settings label { 
+    display: flex; 
+ 
+    justify-content: space-between; 
+ 
+    align-items: center; 
+ 
+    gap: 15px; 
+ 
+    margin: 9px 0; 
+ 
+    padding: 9px 12px; 
+ 
+    color: #d9ebfa; 
+ 
+    background: rgba(20, 50, 80, 0.4); 
+ 
+    border-radius: 7px; 
+} 
+ 
+.role-settings input[type="number"] { 
+    width: 70px; 
+ 
+    padding: 7px; 
+ 
+    border: 1px solid rgba(120, 190, 240, 0.3); 
+ 
+    border-radius: 6px; 
+ 
+    background: #071a30; 
+ 
+    color: white; 
+ 
+    text-align: center; 
+} 
+ 
+.grandma-setting { 
+    margin: 12px 0; 
+ 
+    padding: 12px; 
+ 
+    border-radius: 8px; 
+ 
+    background: rgba(20, 50, 80, 0.4); 
+ 
+    color: #d9ebfa; 
+} 
+ 
+.grandma-setting p { 
+    margin-bottom: 8px; 
+} 
+ 
+.grandma-setting label { 
+    display: inline-flex; 
+ 
+    background: transparent; 
+ 
+    padding: 4px; 
+ 
+    margin: 0 8px 0 0; 
+} 
+ 
+ 
+/* Start game */ 
+ 
+#startGame { 
+    width: 100%; 
+ 
+    margin-top: 18px; 
+ 
+    padding: 13px; 
+ 
+    border: none; 
+ 
+    border-radius: 9px; 
+ 
+    background: 
+        linear-gradient( 
+            180deg, 
+            #1767a5, 
+            #0a345c 
+        ); 
+ 
+    color: white; 
+ 
+    font-weight: 900; 
+ 
+    letter-spacing: 1px; 
+ 
+    transition: 0.2s; 
+} 
+ 
+#startGame:hover { 
+    transform: translateY(-2px); 
+ 
+    box-shadow: 
+        0 8px 20px rgba(20, 120, 200, 0.25); 
+} 
+ 
+ 
+/* ========================================================= 
+   GAME SCREEN 
+========================================================= */ 
+ 
+#gameScreen { 
+    min-height: 100vh; 
+ 
+    padding: 30px 20px; 
+} 
+ 
+.game-container { 
+    width: min(1000px, 95vw); 
+ 
+    margin: auto; 
+ 
+    padding: 25px; 
+ 
+    background: rgba(3, 12, 28, 0.84); 
+ 
+    border: 1px solid rgba(100, 180, 240, 0.2); 
+ 
+    border-radius: 18px; 
+ 
+    box-shadow: 
+        0 20px 70px rgba(0, 0, 0, 0.65); 
+ 
+    backdrop-filter: blur(5px); 
+} 
+ 
+ 
+/* Game header */ 
+ 
+.game-header { 
+    text-align: center; 
+ 
+    margin-bottom: 25px; 
+} 
+ 
+.game-header h1 { 
+    font-size: 35px; 
+ 
+    color: #eaf5ff; 
+} 
+ 
+.game-header h2 { 
+    margin-top: 10px; 
+ 
+    color: #8fc9f5; 
+} 
+ 
+.your-role-box { 
+    display: inline-block; 
+ 
+    margin-top: 12px; 
+ 
+    padding: 10px 18px; 
+ 
+    border-radius: 9px; 
+ 
+    background: rgba(15, 50, 85, 0.65); 
+ 
+    color: #cde7fa; 
+} 
+ 
+.your-role-box strong { 
+    margin-left: 8px; 
+ 
+    color: #ffffff; 
+} 
+ 
+ 
+/* ========================================================= 
+   PLAYERS 
+========================================================= */ 
+ 
+.players-panel, 
+.action-panel, 
+.chat-box { 
+    margin-top: 18px; 
+ 
+    padding: 20px; 
+ 
+    border-radius: 13px; 
+ 
+    background: rgba(5, 22, 43, 0.78); 
+ 
+    border: 1px solid rgba(100, 180, 240, 0.16); 
+} 
+ 
+.players-panel h2, 
+.action-panel h2, 
+.chat-box h2 { 
+    margin-bottom: 14px; 
+ 
+    color: #bfe2fa; 
+} 
+ 
+#gamePlayerList { 
+    list-style: none; 
+ 
+    display: grid; 
+ 
+    grid-template-columns: 
+        repeat(auto-fit, minmax(180px, 1fr)); 
+ 
+    gap: 8px; 
+} 
+ 
+#gamePlayerList li { 
+    padding: 10px; 
+ 
+    border-radius: 7px; 
+ 
+    background: rgba(20, 50, 80, 0.55); 
+ 
+    color: #dceeff; 
+} 
+ 
+ 
+/* ========================================================= 
+   GAME CONTROLS 
+========================================================= */ 
+ 
+.action-panel p { 
+    color: #a9c8df; 
+ 
+    margin-bottom: 15px; 
+} 
+ 
+select { 
+    width: 100%; 
+ 
+    padding: 11px 12px; 
+ 
+    margin: 6px 0; 
+ 
+    border-radius: 8px; 
+ 
+    border: 1px solid rgba(110, 190, 240, 0.3); 
+ 
+    background: #06182d; 
+ 
+    color: white; 
+ 
+    outline: none; 
+} 
+ 
+.action-panel button { 
+    padding: 11px 18px; 
+ 
+    margin-top: 8px; 
+ 
+    border: none; 
+ 
+    border-radius: 8px; 
+ 
+    background: #125a91; 
+ 
+    color: white; 
+ 
+    font-weight: 800; 
+} 
+ 
+.action-panel button:hover { 
+    background: #1875b7; 
+} 
+ 
+ 
+/* Special panels */ 
+ 
+#grandmafiaPanel, 
+#loverPanel { 
+    margin-top: 18px; 
+ 
+    padding: 15px; 
+ 
+    border-radius: 10px; 
+ 
+    background: rgba(15, 50, 80, 0.55); 
+ 
+    border: 1px solid rgba(100, 180, 240, 0.15); 
+} 
+ 
+#grandmafiaPanel h3, 
+#loverPanel h3 { 
+    margin-bottom: 8px; 
+ 
+    color: #cce9fa; 
+} 
+ 
+ 
+/* ========================================================= 
+   CHAT 
+========================================================= */ 
+ 
+#chatMessages, 
+#mafiaChatMessages { 
+    height: 220px; 
+ 
+    overflow-y: auto; 
+ 
+    padding: 12px; 
+ 
+    margin-bottom: 12px; 
+ 
+    border-radius: 8px; 
+ 
+    background: rgba(0, 8, 20, 0.65); 
+ 
+    border: 1px solid rgba(100, 170, 220, 0.12); 
+} 
+ 
+.chat-message { 
+    padding: 7px 9px; 
+ 
+    margin-bottom: 5px; 
+ 
+    border-radius: 6px; 
+ 
+    background: rgba(25, 60, 90, 0.45); 
+ 
+    color: #d9edfc; 
+ 
+    word-break: break-word; 
+} 
+ 
+.chat-input-row { 
+    display: flex; 
+ 
+    gap: 8px; 
+} 
+ 
+.chat-input-row input { 
+    flex: 1; 
+ 
+    min-width: 0; 
+ 
+    padding: 11px; 
+ 
+    border-radius: 8px; 
+ 
+    border: 1px solid rgba(100, 180, 240, 0.25); 
+ 
+    background: #06182d; 
+ 
+    color: white; 
+ 
+    outline: none; 
+} 
+ 
+.chat-input-row button { 
+    padding: 11px 18px; 
+ 
+    border: none; 
+ 
+    border-radius: 8px; 
+ 
+    background: #125a91; 
+ 
+    color: white; 
+ 
+    font-weight: 800; 
+} 
+ 
+.chat-input-row button:hover { 
+    background: #1875b7; 
+} 
+ 
+ 
+/* ========================================================= 
+   SCROLLBAR 
+========================================================= */ 
+ 
+::-webkit-scrollbar { 
+    width: 8px; 
+} 
+ 
+::-webkit-scrollbar-track { 
+    background: rgba(0, 10, 25, 0.6); 
+} 
+ 
+::-webkit-scrollbar-thumb { 
+    background: rgba(70, 130, 180, 0.6); 
+ 
+    border-radius: 10px; 
+} 
+ 
+ 
+/* ========================================================= 
+   MOBILE 
+========================================================= */ 
+ 
+@media (max-width: 600px) { 
+ 
+    #homeScreen { 
+        padding: 15px; 
+    } 
+ 
+    .home-container { 
+        padding: 35px 20px; 
+    } 
+ 
+    .home-container h1 { 
+        font-size: 40px; 
+ 
+        letter-spacing: 2px; 
+    } 
+ 
+    .home-container > p { 
+        font-size: 15px; 
+    } 
+ 
+    .home-buttons { 
+        flex-direction: column; 
+    } 
+ 
+    .home-buttons button { 
+        width: 100%; 
+    } 
+ 
+    .lobby-container, 
+    .game-container { 
+        padding: 18px; 
+    } 
+ 
+    .chat-input-row { 
+        flex-direction: column; 
+    } 
+ 
+    .chat-input-row button { 
+        width: 100%; 
+    } 
+}
+
+
+/* =========================================================
+   CREATE ROOM / JOIN ROOM PAGES
+   ADDED ONLY — EXISTING CSS ABOVE IS UNCHANGED
+========================================================= */
+
+#createRoomScreen,
+#joinRoomScreen {
+
+    min-height: 100vh;
+
+    width: 100%;
+
+    display: flex;
+
+    justify-content: center;
+
+    align-items: center;
+
+    padding: 20px;
+}
+
+
+/* =========================================================
+   CENTER BOX
+========================================================= */
+
+#createRoomScreen .home-container,
+#joinRoomScreen .home-container {
+
+    width: min(550px, 92vw);
+
+    margin: 0 auto;
+
+    padding: 40px 35px;
+
+    text-align: center;
+
+    background: rgba(3, 12, 30, 0.82);
+
+    border: 1px solid rgba(100, 180, 240, 0.25);
+
+    border-radius: 20px;
+
+    box-shadow:
+        0 20px 60px rgba(0, 0, 0, 0.65),
+        0 0 30px rgba(30, 130, 220, 0.12);
+
+    backdrop-filter: blur(6px);
+}
+
+
+/* =========================================================
+   ICON
+========================================================= */
+
+#createRoomScreen .logo-icon,
+#joinRoomScreen .logo-icon {
+
+    font-size: 52px;
+
+    margin-bottom: 10px;
+}
+
+
+/* =========================================================
+   TITLE
+========================================================= */
+
+#createRoomScreen h1,
+#joinRoomScreen h1 {
+
+    font-size: clamp(42px, 7vw, 62px);
+
+    font-weight: 900;
+
+    color: #ffffff;
+
+    margin-bottom: 12px;
+
+    text-shadow:
+        0 3px 0 #081426,
+        0 0 14px rgba(80, 170, 255, 0.7),
+        0 0 35px rgba(20, 90, 180, 0.45);
+}
+
+
+/* =========================================================
+   DESCRIPTION
+========================================================= */
+
+#createRoomScreen p,
+#joinRoomScreen p {
+
+    font-size: 18px;
+
+    color: #d4e8fa;
+
+    margin-bottom: 25px;
+}
+
+
+/* =========================================================
+   INPUTS
+========================================================= */
+
+#createRoomScreen input,
+#joinRoomScreen input {
+
+    width: 100%;
+
+    height: 52px;
+
+    padding: 0 15px;
+
+    margin: 8px 0;
+
+    border: 1px solid rgba(120, 190, 240, 0.3);
+
+    border-radius: 9px;
+
+    background: #06182d;
+
+    color: white;
+
+    font-size: 16px;
+
+    outline: none;
+}
+
+
+#createRoomScreen input:focus,
+#joinRoomScreen input:focus {
+
+    border-color: rgba(80, 170, 240, 0.8);
+
+    box-shadow:
+        0 0 12px rgba(50, 150, 230, 0.25);
+}
+
+
+#createRoomScreen input::placeholder,
+#joinRoomScreen input::placeholder {
+
+    color: #8fa8bd;
+}
+
+
+/* =========================================================
+   CREATE / JOIN BUTTONS
+========================================================= */
+
+#confirmCreateRoom,
+#confirmJoinRoom {
+
+    width: 100%;
+
+    height: 52px;
+
+    margin-top: 12px;
+
+    border: 1px solid rgba(130, 220, 255, 0.45);
+
+    border-radius: 9px;
+
+    background:
+        linear-gradient(
+            180deg,
+            rgba(45, 180, 235, 0.96),
+            rgba(25, 125, 190, 0.96)
+        );
+
+    color: #ffffff;
+
+    font-size: 15px;
+
+    font-weight: 900;
+
+    letter-spacing: 1px;
+
+    box-shadow:
+        0 8px 22px rgba(0, 0, 0, 0.45),
+        inset 0 1px rgba(255, 255, 255, 0.2);
+
+    transition:
+        transform 0.2s,
+        box-shadow 0.2s,
+        background 0.2s;
+}
+
+
+#confirmCreateRoom:hover,
+#confirmJoinRoom:hover {
+
+    transform: translateY(-2px);
+
+    background:
+        linear-gradient(
+            180deg,
+            rgba(40, 110, 170, 0.98),
+            rgba(10, 48, 90, 0.98)
+        );
+
+    box-shadow:
+        0 12px 28px rgba(0, 0, 0, 0.5),
+        0 0 18px rgba(50, 150, 230, 0.22);
+}
+
+
+/* =========================================================
+   BACK BUTTONS
+========================================================= */
+
+#backFromCreate,
+#backFromJoin {
+
+    width: 100%;
+
+    height: 48px;
+
+    margin-top: 10px;
+
+    border: 1px solid rgba(100, 180, 240, 0.25);
+
+    border-radius: 9px;
+
+    background: rgba(10, 30, 55, 0.75);
+
+    color: #d4e8fa;
+
+    font-size: 14px;
+
+    font-weight: 800;
+}
+
+
+#backFromCreate:hover,
+#backFromJoin:hover {
+
+    background: rgba(25, 65, 100, 0.8);
+}
+
+
+/* =========================================================
+   CREATE / JOIN MOBILE
+========================================================= */
+
+@media (max-width: 600px) {
+
+    #createRoomScreen,
+    #joinRoomScreen {
+
+        padding: 15px;
+    }
+
+    #createRoomScreen .home-container,
+    #joinRoomScreen .home-container {
+
+        width: 100%;
+
+        padding: 35px 22px;
+
+        border-radius: 18px;
+    }
+
+    #createRoomScreen h1,
+    #joinRoomScreen h1 {
+
+        font-size: 40px;
+    }
+
+    #createRoomScreen p,
+    #joinRoomScreen p {
+
+        font-size: 16px;
+    }
+
+    #createRoomScreen input,
+    #joinRoomScreen input {
+
+        height: 50px;
+    }
+
+    #confirmCreateRoom,
+    #confirmJoinRoom {
+
+        height: 50px;
+    }
+}
+/* =========================================================
+   ANNOUNCEMENT BOX
+========================================================= */
+
+#announcementBox {
+    position: fixed;
+
+    top: 25px;
+    left: 50%;
+
+    transform: translateX(-50%);
+
+    width: min(650px, 90vw);
+
+    z-index: 99999;
+
+    display: none;
+
+    pointer-events: none;
+
+    animation: announcementSlideIn 0.35s ease;
+}
+
+
+/* Inner announcement card */
+
+.announcement-inner {
+
+    padding: 18px 22px;
+
+    text-align: center;
+
+    background:
+        linear-gradient(
+            180deg,
+            rgba(8, 35, 65, 0.97),
+            rgba(3, 15, 32, 0.97)
+        );
+
+    border: 1px solid rgba(100, 200, 255, 0.45);
+
+    border-radius: 14px;
+
+    box-shadow:
+        0 15px 40px rgba(0, 0, 0, 0.65),
+        0 0 25px rgba(40, 150, 230, 0.25),
+        inset 0 1px rgba(255, 255, 255, 0.12);
+
+    backdrop-filter: blur(8px);
+}
+
+
+/* Announcement title */
+
+#announcementTitle {
+
+    margin-bottom: 7px;
+
+    font-size: 17px;
+
+    font-weight: 900;
+
+    letter-spacing: 1.5px;
+
+    color: #8fd7ff;
+
+    text-shadow:
+        0 0 10px rgba(80, 190, 255, 0.5);
+}
+
+
+/* Announcement message */
+
+#announcementMessage {
+
+    font-size: 16px;
+
+    font-weight: 700;
+
+    line-height: 1.5;
+
+    color: #ffffff;
+
+    word-break: break-word;
+}
+
+
+/* =========================================================
+   ANNOUNCEMENT TYPES
+========================================================= */
+
+
+/* INFO */
+
+#announcementBox.info .announcement-inner {
+
+    border-color:
+        rgba(80, 190, 255, 0.55);
+
+    box-shadow:
+        0 15px 40px rgba(0, 0, 0, 0.65),
+        0 0 25px rgba(50, 160, 255, 0.25);
+}
+
+
+/* SUCCESS */
+
+#announcementBox.success .announcement-inner {
+
+    border-color:
+        rgba(80, 255, 160, 0.6);
+
+    box-shadow:
+        0 15px 40px rgba(0, 0, 0, 0.65),
+        0 0 28px rgba(50, 255, 140, 0.25);
+}
+
+#announcementBox.success #announcementTitle {
+
+    color: #7dffb2;
+}
+
+
+/* DANGER */
+
+#announcementBox.danger .announcement-inner {
+
+    border-color:
+        rgba(255, 90, 90, 0.65);
+
+    box-shadow:
+        0 15px 40px rgba(0, 0, 0, 0.65),
+        0 0 28px rgba(255, 60, 60, 0.25);
+}
+
+#announcementBox.danger #announcementTitle {
+
+    color: #ff8d8d;
+}
+
+
+/* RESTART */
+
+#announcementBox.restart .announcement-inner {
+
+    border-color:
+        rgba(190, 130, 255, 0.65);
+
+    box-shadow:
+        0 15px 40px rgba(0, 0, 0, 0.65),
+        0 0 28px rgba(170, 90, 255, 0.25);
+}
+
+#announcementBox.restart #announcementTitle {
+
+    color: #d09aff;
+}
+
+
+/* =========================================================
+   ANIMATION
+========================================================= */
+
+@keyframes announcementSlideIn {
+
+    from {
+
+        opacity: 0;
+
+        transform:
+            translateX(-50%)
+            translateY(-25px)
+            scale(0.96);
+    }
+
+    to {
+
+        opacity: 1;
+
+        transform:
+            translateX(-50%)
+            translateY(0)
+            scale(1);
+    }
+}
+
+
+/* =========================================================
+   MOBILE ANNOUNCEMENT
+========================================================= */
+
+@media (max-width: 600px) {
+
+    #announcementBox {
+
+        top: 15px;
+
+        width: 94vw;
+    }
+
+    .announcement-inner {
+
+        padding: 15px 16px;
+
+        border-radius: 12px;
+    }
+
+    #announcementTitle {
+
+        font-size: 15px;
+    }
+
+    #announcementMessage {
+
+        font-size: 14px;
+    }
+}
+.logo-icon img {
+    width: 220px;
+    max-width: 70%;
+    height: auto;
+    display: block;
+    margin: 0 auto;
+}
+/* CREATE ROOM KNIGHT - SMALL SIZE */
+#createRoomScreen .create-room-knight {
+    width: 120px;
+    height: auto;
+    max-width: 120px;
+    display: block;
+    margin: 10px auto 20px;
+}
+/* JOIN ROOM KNIGHT - SMALL SIZE */
+#joinRoomScreen .join-room-knight {
+    width: 120px;
+    height: auto;
+    max-width: 120px;
+    display: block;
+    margin: 10px auto 20px;
+}
+
+/* =========================================================
+   MAFIA WARS — FULL CINEMATIC NOIR THEME
+   Visual-only layer. Existing game IDs/classes are preserved.
+========================================================= */
+
+:root {
+    --mw-red: #a51616;
+    --mw-red-dark: #3b0707;
+    --mw-red-bright: #e02a2a;
+    --mw-white: #eeeeea;
+    --mw-gray: #aaa9a3;
+    --mw-panel: rgba(8, 8, 8, .90);
+    --mw-line: rgba(170, 25, 25, .38);
+}
+
+body {
+    font-family: Georgia, "Times New Roman", serif;
+    color: var(--mw-white);
+    background:
+        radial-gradient(circle at 50% 18%, rgba(130,0,0,.18), transparent 34%),
+        linear-gradient(180deg, rgba(0,0,0,.48), rgba(0,0,0,.88)),
+        url("background.png") center/cover fixed no-repeat;
+}
+
+body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background:
+        radial-gradient(ellipse at center, transparent 30%, rgba(0,0,0,.78) 100%),
+        linear-gradient(90deg, rgba(0,0,0,.42), transparent 25%, transparent 75%, rgba(0,0,0,.52));
+}
+
+#homeScreen,
+#createRoomScreen,
+#joinRoomScreen,
+#lobby,
+#gameScreen {
+    position: relative;
+    z-index: 1;
+}
+
+/* ================= HOME ================= */
+
+#homeScreen {
+    background: transparent;
+}
+
+#homeScreen .home-container {
+    width: min(1100px, 95vw);
+    padding: 35px 20px 50px;
+}
+
+#homeScreen .logo-icon img {
+    width: min(760px, 90vw);
+    max-width: 100%;
+    filter: drop-shadow(0 14px 24px rgba(0,0,0,.9));
+}
+
+/* Large movie-poster title */
+#homeScreen .home-container h1 {
+    margin: 5px 0 8px;
+    font-family: Impact, Haettenschweiler, "Arial Black", sans-serif;
+    font-size: clamp(70px, 11vw, 150px);
+    line-height: .84;
+    font-weight: 900;
+    letter-spacing: clamp(2px, .7vw, 9px);
+    text-transform: uppercase;
+    color: #eee;
+    -webkit-text-stroke: 1px #a8a8a4;
+    text-shadow:
+        0 3px 0 #777,
+        0 6px 0 #292929,
+        0 14px 28px rgba(0,0,0,.98);
+}
+
+#homeScreen .home-container > p {
+    margin: 20px 0 30px;
+    font-family: "Arial Black", Arial, sans-serif;
+    font-size: clamp(13px, 2vw, 18px);
+    font-style: normal;
+    font-weight: 900;
+    letter-spacing: 6px;
+    text-transform: uppercase;
+    color: #b51c1c;
+    text-shadow: 0 2px 8px #000;
+}
+
+/* Main red movie buttons */
+#homeScreen .home-buttons button {
+    min-width: 270px;
+    padding: 16px 28px;
+    border: 1px solid #a51b1b;
+    border-radius: 2px;
+    background:
+        linear-gradient(180deg, rgba(130,20,20,.98), rgba(45,5,5,.99));
+    color: #f4f4f0;
+    font-family: "Arial Black", Arial, sans-serif;
+    font-size: 14px;
+    font-weight: 900;
+    letter-spacing: 2px;
+    box-shadow:
+        0 12px 35px rgba(0,0,0,.75),
+        inset 0 1px rgba(255,255,255,.13),
+        0 0 18px rgba(130,0,0,.16);
+}
+
+#homeScreen .home-buttons button:hover {
+    transform: translateY(-3px);
+    background: linear-gradient(180deg, #b52323, #4a0707);
+    border-color: #ed3b3b;
+    box-shadow: 0 16px 40px rgba(0,0,0,.85), 0 0 25px rgba(180,20,20,.28);
+}
+
+/* ================= CREATE / JOIN ================= */
+
+#createRoomScreen .home-container,
+#joinRoomScreen .home-container {
+    width: min(560px, 94vw);
+    padding: 40px 35px;
+    background:
+        linear-gradient(180deg, rgba(18,18,18,.95), rgba(3,3,3,.97));
+    border: 1px solid var(--mw-line);
+    border-radius: 3px;
+    box-shadow: 0 25px 80px rgba(0,0,0,.88);
+}
+
+#createRoomScreen .create-room-knight,
+#joinRoomScreen .join-room-knight {
+    width: 145px;
+    max-width: 145px;
+    filter: grayscale(.85) contrast(1.15) drop-shadow(0 10px 15px #000);
+}
+
+#createRoomScreen h1,
+#joinRoomScreen h1 {
+    font-family: Impact, Haettenschweiler, "Arial Black", sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    color: #eee;
+    text-shadow: 0 3px 0 #444, 0 10px 25px #000;
+}
+
+#createRoomScreen p,
+#joinRoomScreen p {
+    color: #aaa;
+}
+
+#createRoomScreen input,
+#joinRoomScreen input {
+    background: #090909;
+    border: 1px solid rgba(160,30,30,.42);
+    border-radius: 2px;
+    color: #fff;
+}
+
+#createRoomScreen input:focus,
+#joinRoomScreen input:focus {
+    border-color: #c32727;
+    box-shadow: 0 0 15px rgba(170,20,20,.2);
+}
+
+#confirmCreateRoom,
+#confirmJoinRoom {
+    border-radius: 2px;
+    border: 1px solid #a51b1b;
+    background: linear-gradient(180deg, #8c1818, #3a0606);
+}
+
+#confirmCreateRoom:hover,
+#confirmJoinRoom:hover {
+    background: linear-gradient(180deg, #b52323, #4c0707);
+}
+
+#backFromCreate,
+#backFromJoin {
+    border-radius: 2px;
+    background: #111;
+    border-color: #444;
+}
+
+/* ================= LOBBY ================= */
+
+#lobby {
+    padding-top: 35px;
+}
+
+.lobby-container {
+    width: min(1050px, 95vw);
+    background: linear-gradient(180deg, rgba(13,13,13,.95), rgba(3,3,3,.98));
+    border: 1px solid var(--mw-line);
+    border-radius: 3px;
+    box-shadow: 0 25px 80px rgba(0,0,0,.9);
+}
+
+.lobby-container > h1 {
+    font-family: Impact, Haettenschweiler, "Arial Black", sans-serif;
+    font-size: 45px;
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    color: #eee;
+    text-shadow: 0 3px 0 #333, 0 12px 25px #000;
+}
+
+#displayRoomCode {
+    background: #090909;
+    border-color: #702020;
+    color: #ddd;
+}
+
+#playerList li {
+    background: #171717;
+    border-color: #333;
+    color: #ddd;
+}
+
+#waitingForHost,
+#waitingMessage {
+    background: rgba(25,5,5,.65);
+    border-color: rgba(160,30,30,.35);
+    color: #ccc;
+}
+
+#hostIndicator {
+    color: #e32626;
+    text-shadow: 0 0 12px rgba(190,20,20,.35);
+}
+
+.role-settings,
+.grandma-setting {
+    background: rgba(10,10,10,.85);
+    border-color: #3f1717;
+}
+
+.role-settings label {
+    background: rgba(28,28,28,.75);
+    color: #ccc;
+}
+
+.role-settings input[type="number"] {
+    background: #050505;
+    border-color: #542020;
+}
+
+#startGame {
+    border-radius: 2px;
+    background: linear-gradient(180deg, #8c1818, #390606);
+    border: 1px solid #a51b1b;
+}
+
+#startGame:hover {
+    background: linear-gradient(180deg, #b52323, #4c0707);
+}
+
+/* ================= GAME ================= */
+
+.game-container {
+    width: min(1150px, 96vw);
+    background: linear-gradient(180deg, rgba(10,10,10,.95), rgba(2,2,2,.98));
+    border: 1px solid var(--mw-line);
+    border-radius: 3px;
+    box-shadow: 0 25px 90px rgba(0,0,0,.92);
+}
+
+.game-header h1 {
+    font-family: Impact, Haettenschweiler, "Arial Black", sans-serif;
+    font-size: clamp(42px, 6vw, 65px);
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    color: #eee;
+    text-shadow: 0 3px 0 #333, 0 10px 25px #000;
+}
+
+.game-header h2 {
+    color: #b91b1b;
+    font-family: "Arial Black", Arial, sans-serif;
+    letter-spacing: 2px;
+}
+
+.your-role-box {
+    background: #111;
+    border: 1px solid #4c1919;
+    border-radius: 2px;
+}
+
+.players-panel,
+.action-panel,
+.chat-box,
+#grandmafiaPanel,
+#loverPanel {
+    background: rgba(12,12,12,.9);
+    border: 1px solid rgba(130,25,25,.28);
+    border-radius: 3px;
+}
+
+.players-panel h2,
+.action-panel h2,
+.chat-box h2 {
+    color: #ddd;
+}
+
+#gamePlayerList li {
+    background: #181818;
+    border-color: #303030;
+    color: #d4d4d0;
+}
+
+select,
+.chat-input-row input {
+    background: #080808;
+    border-color: #522020;
+    border-radius: 2px;
+}
+
+.action-panel button,
+.chat-input-row button {
+    border-radius: 2px;
+    border: 1px solid #a51b1b;
+    background: linear-gradient(180deg, #8c1818, #390606);
+}
+
+.action-panel button:hover,
+.chat-input-row button:hover {
+    background: linear-gradient(180deg, #b52323, #4c0707);
+}
+
+#chatMessages,
+#mafiaChatMessages {
+    background: #050505;
+    border-color: #2d1717;
+}
+
+.chat-message {
+    background: #191919;
+    color: #d1d1cd;
+}
+
+#announcementBox .announcement-inner {
+    background: linear-gradient(180deg, rgba(30,7,7,.98), rgba(5,2,2,.99));
+    border-color: rgba(190,30,30,.75);
+    border-radius: 3px;
+}
+
+/* Restart */
+#restartGame {
+    border-radius: 2px !important;
+    background: linear-gradient(180deg, #8c1818, #390606) !important;
+    border: 1px solid #a51b1b !important;
+    color: #fff !important;
+}
+
+/* ================= MOBILE ================= */
+
+@media (max-width: 600px) {
+    #homeScreen .home-container h1 {
+        font-size: clamp(30px, 5vw, 50px);
+        letter-spacing: 2px;
+    }
+
+    #homeScreen .logo-icon img {
+        width: 94vw;
+    }
+
+    #homeScreen .home-container > p {
+        letter-spacing: 3px;
+    }
+
+    #homeScreen .home-buttons button {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .lobby-container,
+    .game-container {
+        padding: 15px;
+    }
+}
+/* Make home logo smaller */
+#homeScreen .logo-icon img {
+    width: 300px;
+    max-width: 75vw;
+    height: auto;
+    display: block;
+    margin: 0 auto;
+}
+/* SMALLER MAFIA WARS HOME SCREEN LOGO */
+#homeScreen .logo-icon img {
+    width: 350px !important;
+    max-width: 60vw !important;
+    height: auto !important;
+    display: block;
+    margin: 0 auto;
+}
+#homeScreen .home-container h1 {
+    font-size: 70px !important;
+    line-height: 1.1 !important;
+    letter-spacing: 1px !important;
+}
+/* =========================================================
+   MAFIA WARS — GAME OVER SCREEN
+========================================================= */
+
+#gameOverOverlay {
+    position: fixed;
+    inset: 0;
+    z-index: 99999;
+
+    display: none;
+    align-items: center;
+    justify-content: center;
+
+    background:
+        radial-gradient(
+            circle at center,
+            rgba(130, 0, 0, 0.28) 0%,
+            rgba(0, 0, 0, 0.82) 55%,
+            rgba(0, 0, 0, 0.95) 100%
+        );
+
+    backdrop-filter: blur(7px);
+}
+
+#gameOverOverlay::before {
+    content: "";
+
+    position: absolute;
+
+    width: 420px;
+    height: 420px;
+
+    border-radius: 50%;
+
+    background: rgba(170, 0, 0, 0.18);
+
+    filter: blur(90px);
+
+    pointer-events: none;
+}
+
+#gameOverBox {
+    position: relative;
+    z-index: 2;
+
+    width: min(88vw, 500px);
+
+    padding: 42px 34px 34px;
+
+    text-align: center;
+
+    background:
+        linear-gradient(
+            145deg,
+            rgba(35, 35, 40, 0.98),
+            rgba(8, 8, 10, 0.99)
+        );
+
+    border: 2px solid rgba(170, 0, 0, 0.85);
+
+    border-radius: 18px;
+
+    box-shadow:
+        0 0 10px rgba(180, 0, 0, 0.35),
+        0 0 35px rgba(150, 0, 0, 0.25),
+        0 25px 70px rgba(0, 0, 0, 0.85);
+
+    overflow: hidden;
+}
+
+#gameOverBox::before {
+    content: "";
+
+    position: absolute;
+
+    top: 0;
+    left: 0;
+
+    width: 100%;
+    height: 4px;
+
+    background: linear-gradient(
+        90deg,
+        transparent,
+        #8b0000,
+        #ff2020,
+        #8b0000,
+        transparent
+    );
+
+    box-shadow:
+        0 0 12px rgba(255, 0, 0, 0.8);
+}
+
+#gameOverTitle {
+    position: relative;
+
+    margin-bottom: 18px;
+
+    color: #ffffff;
+
+    font-size: clamp(28px, 6vw, 40px);
+
+    font-weight: 950;
+
+    letter-spacing: 3px;
+
+    text-transform: uppercase;
+
+    text-shadow:
+        0 2px 0 #111,
+        0 0 8px rgba(255, 0, 0, 0.8),
+        0 0 25px rgba(150, 0, 0, 0.65);
+}
+
+#gameOverTitle::after {
+    content: "";
+
+    display: block;
+
+    width: 110px;
+    height: 3px;
+
+    margin: 14px auto 0;
+
+    background: linear-gradient(
+        90deg,
+        transparent,
+        #d00000,
+        transparent
+    );
+
+    box-shadow:
+        0 0 10px rgba(255, 0, 0, 0.7);
+}
+
+#gameOverMessage {
+    margin: 24px auto 30px;
+
+    max-width: 400px;
+
+    color: #eeeeee;
+
+    font-size: 18px;
+
+    font-weight: 700;
+
+    line-height: 1.6;
+
+    text-shadow:
+        0 2px 4px rgba(0, 0, 0, 0.8);
+}
+
+#gameOverBox button {
+    position: relative;
+
+    display: block;
+
+    width: min(100%, 330px);
+
+    margin: 13px auto;
+
+    padding: 15px 20px;
+
+    border-radius: 9px;
+
+    font-size: 16px;
+
+    font-weight: 900;
+
+    letter-spacing: 1px;
+
+    cursor: pointer;
+
+    transition:
+        transform 0.18s ease,
+        box-shadow 0.18s ease,
+        filter 0.18s ease;
+}
+
+#restartGame {
+    color: #ffffff;
+
+    border: 1px solid #ff3030;
+
+    background:
+        linear-gradient(
+            180deg,
+            #b50000,
+            #680000
+        );
+
+    box-shadow:
+        0 4px 0 #3b0000,
+        0 0 18px rgba(190, 0, 0, 0.45);
+}
+
+#restartGame:hover {
+    transform: translateY(-2px);
+
+    filter: brightness(1.18);
+
+    box-shadow:
+        0 5px 0 #3b0000,
+        0 0 28px rgba(255, 0, 0, 0.65);
+}
+
+#restartGame:active {
+    transform: translateY(2px);
+
+    box-shadow:
+        0 2px 0 #3b0000,
+        0 0 12px rgba(255, 0, 0, 0.45);
+}
+
+#backHomeGameOver {
+    color: #eeeeee;
+
+    border: 1px solid #555;
+
+    background:
+        linear-gradient(
+            180deg,
+            #292929,
+            #151515
+        );
+
+    box-shadow:
+        0 4px 0 #080808,
+        0 0 12px rgba(0, 0, 0, 0.6);
+}
+
+#backHomeGameOver:hover {
+    transform: translateY(-2px);
+
+    filter: brightness(1.2);
+
+    border-color: #888;
+
+    box-shadow:
+        0 5px 0 #080808,
+        0 0 18px rgba(255, 255, 255, 0.12);
+}
+
+#backHomeGameOver:active {
+    transform: translateY(2px);
+}
+
+@media (max-width: 600px) {
+
+    #gameOverBox {
+        width: 86vw;
+        padding: 32px 22px 25px;
+        border-radius: 15px;
+    }
+
+    #gameOverMessage {
+        font-size: 16px;
+    }
+
+    #gameOverBox button {
+        width: 100%;
+        padding: 14px 16px;
+    }
+}
+/* =========================================================
+   WINNER LOGO
+========================================================= */
+
+.winner-logo {
+    display: block;
+    width: 220px;
+    height: 220px;
+    object-fit: contain;
+    margin: 0 auto 15px auto;
+}
+
+
+/* =========================================================
+   GAME OVER OVERLAY
+========================================================= */
+
+#gameOverOverlay {
+    position: fixed !important;
+    inset: 0 !important;
+
+    display: none;
+
+    align-items: center;
+    justify-content: center;
+
+    background: rgba(0, 0, 0, 0.85);
+
+    z-index: 999999;
+}
+
+
+#gameOverBox {
+    position: relative;
+
+    width: min(90vw, 500px);
+
+    padding: 30px;
+
+    text-align: center;
+
+    background: #111;
+
+    border-radius: 20px;
+
+    border: 2px solid rgba(255, 255, 255, 0.25);
+
+    box-shadow:
+        0 20px 60px rgba(0, 0, 0, 0.7);
+}
+```css
+/* =========================================================
+   MAFIA WARS — NEW GAME LAYOUT
+========================================================= */
+
+/* Game screen */
+
+#gameScreen {
+    min-height: 100vh;
+    padding: 20px;
+}
+
+
+/* Main game container */
+
+#gameScreen .game-container {
+    width: min(1400px, 97vw);
+    max-width: 1400px;
+    margin: 0 auto;
+
+    padding: 20px;
+
+    background:
+        linear-gradient(
+            180deg,
+            rgba(10, 10, 10, 0.96),
+            rgba(2, 2, 2, 0.99)
+        );
+
+    border: 1px solid rgba(160, 25, 25, 0.45);
+
+    border-radius: 4px;
+
+    box-shadow:
+        0 25px 90px rgba(0, 0, 0, 0.95),
+        0 0 35px rgba(120, 0, 0, 0.12);
+}
+
+
+/* =========================================================
+   HEADER
+========================================================= */
+
+#gameScreen .game-header {
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+
+#gameScreen .game-header h1 {
+    margin: 0;
+
+    font-family:
+        Impact,
+        Haettenschweiler,
+        "Arial Black",
+        sans-serif;
+
+    font-size: clamp(38px, 5vw, 62px);
+
+    letter-spacing: 4px;
+
+    color: #eeeeee;
+
+    text-transform: uppercase;
+
+    text-shadow:
+        0 3px 0 #333,
+        0 10px 25px #000;
+}
+
+
+#gameScreen .game-header h2 {
+    margin-top: 4px;
+
+    font-family:
+        "Arial Black",
+        Arial,
+        sans-serif;
+
+    font-size: 21px;
+
+    letter-spacing: 3px;
+
+    color: #d02020;
+
+    text-shadow:
+        0 0 12px rgba(200, 0, 0, 0.35);
+}
+
+
+/* Waiting for players */
+
+.game-waiting-message {
+    display: inline-block;
+
+    margin-top: 8px;
+
+    padding: 8px 18px;
+
+    border-radius: 3px;
+
+    background: rgba(50, 5, 5, 0.7);
+
+    border: 1px solid rgba(170, 25, 25, 0.4);
+
+    color: #cfcfcf;
+
+    font-size: 14px;
+
+    font-weight: 800;
+
+    letter-spacing: 1px;
+
+    box-shadow:
+        0 0 15px rgba(130, 0, 0, 0.12);
+}
+
+
+/* =========================================================
+   THREE COLUMN LAYOUT
+========================================================= */
+
+.game-layout {
+
+    display: grid;
+
+    grid-template-columns:
+        minmax(190px, 0.8fr)
+        minmax(380px, 1.6fr)
+        minmax(260px, 0.95fr);
+
+    gap: 15px;
+
+    align-items: stretch;
+}
+
+
+/* =========================================================
+   LEFT PLAYER PANEL
+========================================================= */
+
+.players-panel {
+
+    margin: 0 !important;
+
+    min-height: 600px;
+
+    padding: 18px !important;
+
+    background:
+        linear-gradient(
+            180deg,
+            rgba(18, 18, 18, 0.96),
+            rgba(8, 8, 8, 0.96)
+        ) !important;
+
+    border: 1px solid rgba(130, 25, 25, 0.35) !important;
+
+    border-radius: 3px !important;
+
+    box-shadow:
+        inset 0 1px rgba(255,255,255,0.03);
+}
+
+
+.players-panel h2 {
+
+    font-size: 20px;
+
+    padding-bottom: 12px;
+
+    margin-bottom: 12px !important;
+
+    border-bottom:
+        1px solid rgba(150, 30, 30, 0.35);
+
+    color: #eeeeee !important;
+}
+
+
+#gamePlayerList {
+
+    display: flex !important;
+
+    flex-direction: column;
+
+    gap: 7px !important;
+
+    max-height: 540px;
+
+    overflow-y: auto;
+
+    padding-right: 4px;
+}
+
+
+#gamePlayerList li {
+
+    padding: 11px 12px !important;
+
+    background:
+        linear-gradient(
+            90deg,
+            rgba(35, 35, 35, 0.95),
+            rgba(20, 20, 20, 0.95)
+        ) !important;
+
+    border:
+        1px solid rgba(100, 100, 100, 0.25) !important;
+
+    border-left:
+        3px solid #741010 !important;
+
+    border-radius: 2px !important;
+
+    color: #dddddd !important;
+
+    transition:
+        background 0.15s,
+        border-color 0.15s;
+}
+
+
+#gamePlayerList li:hover {
+
+    background: #292929 !important;
+
+    border-left-color: #c82020 !important;
+}
+
+
+/* =========================================================
+   CENTER COLUMN
+========================================================= */
+
+.center-game-column {
+
+    display: flex;
+
+    flex-direction: column;
+
+    gap: 15px;
+
+    min-width: 0;
+}
+
+
+/* =========================================================
+   ACTION PANEL
+========================================================= */
+
+.center-game-column .action-panel {
+
+    margin: 0 !important;
+
+    min-height: 285px;
+
+    padding: 18px !important;
+
+    background:
+        linear-gradient(
+            180deg,
+            rgba(18, 18, 18, 0.97),
+            rgba(8, 8, 8, 0.97)
+        ) !important;
+
+    border:
+        1px solid rgba(150, 25, 25, 0.4) !important;
+
+    border-radius: 3px !important;
+}
+
+
+.action-panel h2 {
+
+    color: #eeeeee !important;
+
+    font-size: 21px;
+
+    margin-bottom: 10px !important;
+}
+
+
+.action-panel p {
+
+    color: #999999 !important;
+
+    margin-bottom: 10px !important;
+}
+
+
+.action-panel select {
+
+    margin: 5px 0 !important;
+
+    height: 43px;
+
+    background: #070707 !important;
+
+    border:
+        1px solid #542020 !important;
+
+    color: #eeeeee !important;
+}
+
+
+.action-panel > button {
+
+    width: 100%;
+
+    min-height: 43px;
+
+    margin-top: 7px !important;
+
+    font-size: 13px;
+
+    letter-spacing: 1px;
+}
+
+
+/* Guide button */
+
+.action-panel .guide-button {
+
+    margin-top: 15px !important;
+
+    background:
+        linear-gradient(
+            180deg,
+            #292929,
+            #111111
+        ) !important;
+
+    border:
+        1px solid #666 !important;
+
+    color: #eeeeee !important;
+}
+
+
+.action-panel .guide-button:hover {
+
+    background:
+        linear-gradient(
+            180deg,
+            #444444,
+            #191919
+        ) !important;
+
+    border-color: #aaa !important;
+}
+
+
+/* Special panels */
+
+#grandmafiaPanel,
+#loverPanel {
+
+    margin-top: 12px !important;
+
+    padding: 12px !important;
+
+    background:
+        rgba(20, 8, 8, 0.9) !important;
+
+    border-color:
+        rgba(150, 30, 30, 0.35) !important;
+}
+
+
+/* =========================================================
+   PUBLIC CHAT
+========================================================= */
+
+.public-chat-box {
+
+    margin: 0 !important;
+
+    flex: 1;
+
+    min-height: 300px;
+
+    padding: 18px !important;
+
+    background:
+        linear-gradient(
+            180deg,
+            rgba(15, 15, 15, 0.97),
+            rgba(7, 7, 7, 0.98)
+        ) !important;
+}
+
+
+.public-chat-box h2 {
+
+    color: #eeeeee !important;
+
+    font-size: 20px;
+
+    margin-bottom: 10px !important;
+}
+
+
+#chatMessages {
+
+    height: 190px !important;
+
+    margin-bottom: 10px !important;
+
+    background: #030303 !important;
+
+    border-color: #321717 !important;
+}
+
+
+.chat-input-row {
+
+    display: flex;
+
+    gap: 7px;
+
+    width: 100%;
+}
+
+
+.chat-input-row input {
+
+    min-width: 0;
+
+    height: 42px;
+}
+
+
+.chat-input-row button {
+
+    height: 42px;
+
+    min-width: 75px;
+
+    padding: 8px 13px !important;
+}
+
+
+/* =========================================================
+   RIGHT COLUMN
+========================================================= */
+
+.right-game-column {
+
+    display: flex;
+
+    flex-direction: column;
+
+    gap: 15px;
+
+    min-width: 0;
+}
+
+
+/* =========================================================
+   YOUR ROLE
+========================================================= */
+
+.your-role-panel {
+
+    min-height: 190px;
+
+    padding: 18px;
+
+    text-align: center;
+
+    background:
+        linear-gradient(
+            180deg,
+            rgba(25, 8, 8, 0.97),
+            rgba(8, 5, 5, 0.98)
+        );
+
+    border:
+        1px solid rgba(170, 30, 30, 0.45);
+
+    border-radius: 3px;
+
+    box-shadow:
+        0 10px 30px rgba(0,0,0,0.5);
+}
+
+
+.your-role-panel h2 {
+
+    margin-bottom: 15px;
+
+    color: #eeeeee;
+
+    font-size: 20px;
+
+    padding-bottom: 10px;
+
+    border-bottom:
+        1px solid rgba(150, 30, 30, 0.35);
+}
+
+
+.your-role-panel .your-role-box {
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: center;
+
+    min-height: 95px;
+
+    margin: 0;
+
+    padding: 15px;
+
+    background:
+        radial-gradient(
+            circle,
+            rgba(130, 0, 0, 0.25),
+            rgba(10, 5, 5, 0.95)
+        );
+
+    border:
+        1px solid rgba(160, 30, 30, 0.45);
+
+    border-radius: 3px;
+}
+
+
+.your-role-panel .your-role-box strong {
+
+    margin: 0;
+
+    font-family:
+        "Arial Black",
+        Arial,
+        sans-serif;
+
+    font-size: 24px;
+
+    letter-spacing: 2px;
+
+    color: #f0f0f0;
+
+    text-transform: uppercase;
+
+    text-shadow:
+        0 0 12px rgba(200, 0, 0, 0.4);
+}
+
+
+/* =========================================================
+   MAFIA CHAT
+========================================================= */
+
+.mafia-chat-box {
+
+    margin: 0 !important;
+
+    flex: 1;
+
+    min-height: 405px;
+
+    padding: 18px !important;
+
+    background:
+        linear-gradient(
+            180deg,
+            rgba(28, 7, 7, 0.96),
+            rgba(8, 5, 5, 0.98)
+        ) !important;
+
+    border:
+        1px solid rgba(170, 25, 25, 0.48) !important;
+}
+
+
+.mafia-chat-box h2 {
+
+    color: #e2dddd !important;
+
+    font-size: 20px;
+
+    margin-bottom: 10px !important;
+}
+
+
+#mafiaChatMessages {
+
+    height: 280px !important;
+
+    background:
+        rgba(2, 2, 2, 0.85) !important;
+
+    border-color:
+        rgba(120, 20, 20, 0.4) !important;
+}
+
+
+/* =========================================================
+   GUIDE POPUP
+========================================================= */
+
+.guide-overlay {
+
+    position: fixed;
+
+    inset: 0;
+
+    z-index: 100000;
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: center;
+
+    padding: 20px;
+
+    background:
+        rgba(0, 0, 0, 0.84);
+
+    backdrop-filter: blur(6px);
+}
+
+
+.guide-box {
+
+    position: relative;
+
+    width: min(600px, 94vw);
+
+    max-height: 85vh;
+
+    overflow-y: auto;
+
+    padding: 28px;
+
+    background:
+        linear-gradient(
+            145deg,
+            #1b1b1b,
+            #070707
+        );
+
+    border:
+        2px solid rgba(170, 30, 30, 0.7);
+
+    border-radius: 5px;
+
+    box-shadow:
+        0 25px 80px rgba(0,0,0,.95),
+        0 0 35px rgba(150,0,0,.2);
+}
+
+
+.guide-box h2 {
+
+    margin-bottom: 20px;
+
+    text-align: center;
+
+    font-family:
+        Impact,
+        Haettenschweiler,
+        "Arial Black",
+        sans-serif;
+
+    font-size: 32px;
+
+    letter-spacing: 2px;
+
+    color: #eeeeee;
+
+    text-shadow:
+        0 0 15px rgba(180,0,0,.35);
+}
+
+
+.guide-content h3 {
+
+    margin-top: 15px;
+
+    margin-bottom: 5px;
+
+    color: #d52222;
+
+    font-size: 17px;
+}
+
+
+.guide-content p {
+
+    color: #bdbdbd;
+
+    line-height: 1.5;
+
+    font-size: 14px;
+}
+
+
+.close-guide {
+
+    position: absolute;
+
+    top: 10px;
+
+    right: 12px;
+
+    width: 35px;
+
+    height: 35px;
+
+    border: 1px solid #555;
+
+    border-radius: 3px;
+
+    background: #151515;
+
+    color: #ddd;
+
+    font-size: 17px;
+}
+
+
+.close-guide:hover {
+
+    background: #8b1111;
+
+    border-color: #d22;
+}
+
+
+.guide-close-button {
+
+    display: block;
+
+    width: 100%;
+
+    margin-top: 22px;
+
+    padding: 12px;
+
+    border: 1px solid #a51b1b;
+
+    border-radius: 3px;
+
+    background:
+        linear-gradient(
+            180deg,
+            #8c1818,
+            #390606
+        );
+
+    color: white;
+
+    font-weight: 900;
+
+    letter-spacing: 1px;
+}
+
+
+.guide-close-button:hover {
+
+    background:
+        linear-gradient(
+            180deg,
+            #b52323,
+            #4c0707
+        );
+}
+
+
+/* =========================================================
+   RESPONSIVE
+========================================================= */
+
+@media (max-width: 900px) {
+
+    .game-layout {
+
+        grid-template-columns:
+            1fr 1.5fr;
+
+    }
+
+    .right-game-column {
+
+        grid-column: 1 / -1;
+
+        display: grid;
+
+        grid-template-columns: 1fr 1.5fr;
+
+    }
+
+    .your-role-panel {
+
+        min-height: 220px;
+
+    }
+
+    .mafia-chat-box {
+
+        min-height: 300px;
+
+    }
+
+}
+
+
+@media (max-width: 650px) {
+
+    #gameScreen {
+
+        padding: 10px;
+
+    }
+
+    #gameScreen .game-container {
+
+        padding: 10px;
+
+    }
+
+    .game-layout {
+
+        grid-template-columns: 1fr;
+
+    }
+
+    .players-panel {
+
+        min-height: auto;
+
+    }
+
+    #gamePlayerList {
+
+        max-height: 250px;
+
+    }
+
+    .right-game-column {
+
+        grid-column: auto;
+
+        display: flex;
+
+    }
+
+    .your-role-panel {
+
+        min-height: 160px;
+
+    }
+
+    .mafia-chat-box {
+
+        min-height: 300px;
+
+    }
+
+    #mafiaChatMessages {
+
+        height: 200px !important;
+
+    }
+
+    #chatMessages {
+
+        height: 180px !important;
+
+    }
+
+    .game-waiting-message {
+
+        font-size: 12px;
+
+    }
+
+}
+```css
+/* =========================================================
+   GUIDE ROLE EXPLANATIONS
+========================================================= */
+
+.guide-content h3 {
+    padding: 10px 12px;
+
+    margin-top: 14px;
+    margin-bottom: 5px;
+
+    background:
+        linear-gradient(
+            90deg,
+            rgba(100, 10, 10, 0.35),
+            rgba(20, 20, 20, 0.2)
+        );
+
+    border-left: 3px solid #a51b1b;
+
+    color: #eeeeee;
+
+    font-family:
+        "Arial Black",
+        Arial,
+        sans-serif;
+
+    font-size: 16px;
+
+    letter-spacing: 0.5px;
+}
+
+
+.guide-content p {
+    padding: 0 12px 8px 15px;
+
+    color: #bdbdbd;
+
+    line-height: 1.55;
+
+    font-size: 14px;
+}
+
+
+.guide-divider {
+    height: 1px;
+
+    margin: 22px 0 10px;
+
+    background:
+        linear-gradient(
+            90deg,
+            transparent,
+            rgba(170, 30, 30, 0.7),
+            transparent
+        );
+}
+/* =========================================================
+   YOUR ROLE LOGO
+========================================================= */
+
+.your-role-panel {
+    text-align: center;
+}
+
+.your-role-panel h2 {
+    margin-bottom: 15px;
+}
+
+.your-role-box {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+}
+
+.your-role-logo {
+    width: 150px;
+    height: 150px;
+    object-fit: contain;
+    display: block;
+}
+
+#yourRole {
+    font-size: 22px;
+    font-weight: 800;
+    text-transform: uppercase;
+}

@@ -1,0 +1,25 @@
+{
+  "name": "mafia-online",
+  "version": "1.0.0",
+  "description": "Online Mafia Game",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.22.2",
+    "socket.io": "^4.8.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BloodHunter24/mafia-online.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/BloodHunter24/mafia-online/issues"
+  },
+  "homepage": "https://github.com/BloodHunter24/mafia-online#readme"
+}

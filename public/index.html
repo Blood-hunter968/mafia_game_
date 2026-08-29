@@ -1,0 +1,910 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <link rel="icon" type="image/x-icon" href="/mafia-wars-chrome-icon.ico">
+
+    <title>Mafia Wars</title>
+
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+    <!-- =====================================================
+         HOME / STARTING SCREEN
+    ====================================================== -->
+
+    <section id="homeScreen">
+
+        <div class="home-container">
+
+            <div class="logo-icon">
+                <img src="mafia-wars-main-logo.png" alt="Mafia Wars">
+            </div>
+
+            <h1>Mafia Wars</h1>
+
+            <p>
+                Welcome to Mafia-wars 
+            </p>
+
+            <div class="home-buttons">
+
+                <button id="createRoom">
+                    CREATE ROOM
+                </button>
+
+                <button id="joinRoom">
+                    JOIN ROOM
+                </button>
+
+            </div>
+
+        </div>
+
+    </section>
+
+
+    <!-- =====================================================
+         CREATE ROOM SCREEN
+    ====================================================== -->
+
+    <section id="createRoomScreen" style="display:none;">
+
+        <div class="home-container">
+
+            <div class="logo-icon">
+            </div>
+
+            <img
+                class="create-room-knight"
+                src="knight.png"
+                alt="Mafia Wars Knight"
+            >
+
+            <h1>Create Room</h1>
+
+            <p>
+                Enter your name to create a room
+            </p>
+
+            <input
+                id="createPlayerName"
+                type="text"
+                maxlength="20"
+                placeholder="Enter your name"
+                autocomplete="off"
+            >
+
+            <button id="confirmCreateRoom">
+                CREATE ROOM
+            </button>
+
+            <button id="backFromCreate">
+                ⬅ BACK
+            </button>
+
+        </div>
+
+    </section>
+
+
+    <!-- =====================================================
+         JOIN ROOM SCREEN
+    ====================================================== -->
+
+    <section id="joinRoomScreen" style="display:none;">
+
+        <div class="home-container">
+
+            <div class="logo-icon">
+                <img
+                    class="join-room-knight"
+                    src="knight.png"
+                    alt="Mafia Wars Knight"
+                >
+            </div>
+
+            <h1>Join Room</h1>
+
+            <p>
+                Enter your name and room code
+            </p>
+
+            <input
+                id="joinPlayerName"
+                type="text"
+                maxlength="20"
+                placeholder="Enter your name"
+                autocomplete="off"
+            >
+
+            <input
+                id="joinRoomCode"
+                type="text"
+                maxlength="6"
+                placeholder="Enter room code"
+                autocomplete="off"
+            >
+
+            <button id="confirmJoinRoom">
+                JOIN ROOM
+            </button>
+
+            <button id="backFromJoin">
+                ⬅ BACK
+            </button>
+
+        </div>
+
+    </section>
+
+
+    <!-- =====================================================
+         LOBBY
+    ====================================================== -->
+
+    <section id="lobby" style="display:none;">
+
+        <div class="lobby-container">
+
+            <h1>Mafia Wars</h1>
+
+            <h2>Room</h2>
+
+            <div id="displayRoomCode">
+                -----
+            </div>
+
+            <h3>
+                Players:
+                <span id="rolePlayerCount">0</span>
+            </h3>
+
+            <ul id="playerList"></ul>
+
+
+            <!-- WAITING MESSAGE -->
+
+            <div
+                id="waitingMessage"
+                style="display:none;"
+            >
+
+                <h2>⏳ Waiting for the host</h2>
+
+                <p>
+                    Waiting for the host to start the game...
+                </p>
+
+            </div>
+
+
+            <!-- HOST INDICATOR -->
+
+            <div
+                id="hostIndicator"
+                style="display:none;"
+            >
+
+                👑 You are the Host
+
+            </div>
+
+
+            <!-- HOST SETTINGS -->
+
+            <div
+                id="hostSettings"
+                class="role-settings"
+            >
+
+                <h2>⚙️ Role Settings</h2>
+
+
+                <!-- MAFIA -->
+
+                <label>
+                    Mafia
+
+                    <input
+                        id="mafiaCount"
+                        type="number"
+                        min="0"
+                        value="1"
+                    >
+                </label>
+
+
+                <!-- GODFATHER -->
+
+                <label>
+                    Godfather
+
+                    <input
+                        id="godfatherCount"
+                        type="number"
+                        min="0"
+                        value="0"
+                    >
+                </label>
+
+
+                <!-- GRANDMAFIA -->
+
+                <label>
+                    Grandmafia
+
+                    <input
+                        id="grandmafiaCount"
+                        type="number"
+                        min="0"
+                        value="0"
+                    >
+                </label>
+
+
+                <!-- GRANDMA -->
+
+                <div class="grandma-setting">
+
+                    <p>Grandma</p>
+
+                    <label>
+
+                        <input
+                            id="grandmaYes"
+                            type="radio"
+                            name="grandma"
+                        >
+
+                        Yes
+
+                    </label>
+
+                    <label>
+
+                        <input
+                            id="grandmaNo"
+                            type="radio"
+                            name="grandma"
+                            checked
+                        >
+
+                        No
+
+                    </label>
+
+                    <input
+                        id="grandmaCount"
+                        type="number"
+                        min="0"
+                        value="0"
+                        disabled
+                    >
+
+                </div>
+
+
+                <!-- DOCTOR -->
+
+                <label>
+                    Doctor
+
+                    <input
+                        id="doctorCount"
+                        type="number"
+                        min="0"
+                        value="0"
+                    >
+                </label>
+
+
+                <!-- DETECTIVE -->
+
+                <label>
+                    Detective
+
+                    <input
+                        id="detectiveCount"
+                        type="number"
+                        min="0"
+                        value="0"
+                    >
+                </label>
+
+
+                <!-- JESTER -->
+
+                <label>
+                    Jester
+
+                    <input
+                        id="jesterCount"
+                        type="number"
+                        min="0"
+                        max="1"
+                        value="0"
+                    >
+                </label>
+
+
+                <!-- CLUPID -->
+                <!-- FIX: id changed from "clupidCount" to "loverCount"
+                     so it matches what client.js reads via $("loverCount") -->
+
+                <label>
+                    clupid
+
+                    <input
+                        id="loverCount"
+                        type="number"
+                        min="0"
+                        max="1"
+                        value="0"
+                    >
+                </label>
+
+
+                <!-- CIVILIANS -->
+
+                <label>
+                    Civilians
+
+                    <input
+                        id="civilianCount"
+                        type="number"
+                        value="0"
+                        readonly
+                    >
+                </label>
+
+
+                <!-- START GAME -->
+
+                <button id="startGame">
+                    🎮 START GAME
+                </button>
+
+            </div>
+
+        </div>
+
+    </section>
+
+
+    <!-- =====================================================
+         GAME SCREEN
+    ====================================================== -->
+
+    ```html
+<!-- =====================================================
+     GAME SCREEN
+====================================================== -->
+
+<section id="gameScreen" style="display:none;">
+
+    <div class="game-container">
+
+        <!-- ================= GAME HEADER ================= -->
+
+        <header class="game-header">
+
+            <h1>
+                MAFIA WARS
+            </h1>
+
+            <h2 id="phaseTitle">
+                🌙 NIGHT 1
+            </h2>
+
+            <!-- WAITING STATUS -->
+
+            <div id="gameWaitingMessage" class="game-waiting-message">
+                ⏳ Waiting for players...
+            </div>
+
+        </header>
+
+
+        <!-- ================= MAIN GAME GRID ================= -->
+
+        <div class="game-layout">
+
+
+            <!-- ================= LEFT: PLAYERS ================= -->
+
+            <aside class="players-panel">
+
+                <h2>
+                    👥 Players
+                </h2>
+
+                <ul id="gamePlayerList"></ul>
+
+            </aside>
+
+
+
+            <!-- ================= CENTER ================= -->
+
+            <main class="center-game-column">
+
+
+                <!-- ACTION PANEL -->
+
+                <div class="action-panel">
+
+                    <h2>
+                        🎯 Your Action
+                    </h2>
+
+                    <p id="actionMessage">
+                        🌙 Choose your night action.
+                    </p>
+
+
+                    <!-- TARGET -->
+
+                    <select id="targetPlayer">
+
+                        <option value="">
+                            -- Select a player --
+                        </option>
+
+                    </select>
+
+
+                    <!-- CONFIRM -->
+
+                    <button id="confirmAction">
+                        CONFIRM
+                    </button>
+
+
+                    <!-- GRANDMAFIA -->
+
+                    <div
+                        id="grandmafiaPanel"
+                        style="display:none;"
+                    >
+
+                        <h3>
+                            👵 Grandmafia Ability
+                        </h3>
+
+                        <p>
+                            Choose who becomes Baby Mafia.
+                        </p>
+
+                        <select id="grandmafiaTarget">
+
+                            <option value="">
+                                -- Choose Baby Mafia --
+                            </option>
+
+                        </select>
+
+                    </div>
+
+
+                    <button
+                        id="grandmafiaButton"
+                        style="display:none;"
+                    >
+                        👶 MAKE BABY MAFIA
+                    </button>
+
+
+                    <!-- CLUPID / LOVER -->
+
+                    <div
+                        id="loverPanel"
+                        style="display:none;"
+                    >
+
+                        <h3>
+                            💕 Lover Ability
+                        </h3>
+
+                        <p>
+                            Choose two players to link.
+                        </p>
+
+                        <select id="lover1">
+
+                            <option value="">
+                                -- Select clupid --
+                            </option>
+
+                        </select>
+
+                        <select id="lover2">
+
+                            <option value="">
+                                -- Select clupid --
+                            </option>
+
+                        </select>
+
+                    </div>
+
+
+                    <button
+                        id="loverButton"
+                        style="display:none;"
+                    >
+                        💕 LINK CLUPID
+                    </button>
+
+
+                    <!-- GUIDE BUTTON -->
+
+                    <button
+                        id="guideButton"
+                        class="guide-button"
+                        type="button"
+                    >
+                        📖 GUIDE
+                    </button>
+
+                </div>
+
+
+
+                <!-- ================= PUBLIC CHAT ================= -->
+
+                <div class="chat-box public-chat-box">
+
+                    <h2>
+                        💬 Public Chat
+                    </h2>
+
+                    <div id="chatMessages"></div>
+
+                    <div class="chat-input-row">
+
+                        <input
+                            id="chatInput"
+                            type="text"
+                            maxlength="200"
+                            placeholder="Type a message..."
+                        >
+
+                        <button id="sendMessage">
+                            SEND
+                        </button>
+
+                    </div>
+
+                </div>
+
+            </main>
+
+
+
+            <!-- ================= RIGHT ================= -->
+
+            <aside class="right-game-column">
+
+
+                <!-- YOUR ROLE -->
+
+<div class="your-role-panel">
+
+    <h2>
+        YOUR ROLE
+    </h2>
+
+    <div class="your-role-box">
+
+        <img
+            id="yourRoleLogo"
+            class="your-role-logo"
+            src=""
+            alt="Your Role"
+            style="display:none;"
+        >
+
+        <strong id="yourRole">
+            Unknown
+        </strong>
+
+    </div>
+
+</div>
+
+
+                <!-- MAFIA CHAT -->
+
+                <div
+                    id="mafiaChatBox"
+                    class="chat-box mafia-chat-box"
+                    style="display:none;"
+                >
+
+                    <h2>
+                        🔴 Mafia Chat
+                    </h2>
+
+                    <div id="mafiaChatMessages"></div>
+
+                    <div class="chat-input-row">
+
+                        <input
+                            id="mafiaChatInput"
+                            type="text"
+                            maxlength="200"
+                            placeholder="Mafia message..."
+                        >
+
+                        <button id="sendMafiaMessage">
+                            SEND
+                        </button>
+
+                    </div>
+
+                </div>
+
+            </aside>
+
+        </div>
+
+
+        <!-- ================= GUIDE POPUP ================= -->
+
+        <div
+            id="guideOverlay"
+            class="guide-overlay"
+            style="display:none;"
+        >
+
+            <div class="guide-box">
+
+                <button
+                    id="closeGuide"
+                    class="close-guide"
+                    type="button"
+                >
+                    ✕
+                </button>
+
+                <h2>
+                    📖 MAFIA WARS GUIDE
+                </h2>
+
+                <div class="guide-content">
+
+                ```html
+<div class="guide-content">
+
+    <h3>👤 Civilian</h3>
+    <p>
+        Civilians are normal Town players. They do not have
+        a special night ability. Their goal is to work together
+        with the Town and identify the Mafia.
+    </p>
+
+    <h3>🔴 Mafia</h3>
+    <p>
+        Mafia members work together during the night.
+        Mafia players can communicate privately through
+        Mafia Chat and choose players to eliminate.
+    </p>
+
+    <h3>👑 Godfather</h3>
+    <p>
+        The Godfather is an important member of the Mafia team.
+        The Godfather works with the Mafia to eliminate the Town
+        and help the Mafia team win.
+    </p>
+
+    <h3>🔥 Grandmafia</h3>
+    <p>
+        Grandmafia is a special Mafia role.
+        On the first night, Grandmafia can choose a player
+        to become Baby Mafia.
+    </p>
+
+    <h3>👵 Grandma</h3>
+    <p>
+        Grandma is a special Town role. Her abilities can affect
+        the game according to the rules configured by the host.
+    </p>
+
+    <h3>🩺 Doctor</h3>
+    <p>
+        The Doctor can protect a player during the night.
+        Choose a player and use the Doctor action to save them.
+    </p>
+
+    <h3>🔎 Detective</h3>
+    <p>
+        The Detective investigates players during the night.
+        The Detective receives information that can help discover
+        the Mafia.
+    </p>
+
+    <h3>🤡 Jester</h3>
+    <p>
+        The Jester has a special objective and does not simply
+        try to help the Town. The Jester must follow the special
+        win condition defined by the game.
+    </p>
+
+    <h3>💕 Clupid</h3>
+    <p>
+        Clupid can link two players together.
+        On the first night, Clupid chooses two different players
+        and creates a special connection between them.
+    </p>
+
+    <div class="guide-divider"></div>
+
+    <h3>🌙 Night</h3>
+    <p>
+        During the night, players with special abilities can
+        perform their actions.
+    </p>
+
+    <h3>☀️ Day</h3>
+    <p>
+        During the day, everyone can discuss the game and vote
+        for a player they suspect.
+    </p>
+
+    <h3>🎯 Your Action</h3>
+    <p>
+        If your role has an available action, select a player
+        and press the action button.
+    </p>
+
+    <h3>💬 Public Chat</h3>
+    <p>
+        Public Chat is visible to everyone in the game.
+        Use it to discuss and share information.
+    </p>
+
+    <h3>🔴 Mafia Chat</h3>
+    <p>
+        Mafia Chat is private to Mafia-team players.
+        Use it to communicate with your teammates.
+    </p>
+
+</div>
+
+
+                    <h3>🌙 Night</h3>
+                    <p>
+                        During the night, special roles can use
+                        their abilities.
+                    </p>
+
+                    <h3>🎯 Your Action</h3>
+                    <p>
+                        Select a player and choose your available
+                        action, then press CONFIRM.
+                    </p>
+
+                    <h3>👥 Players</h3>
+                    <p>
+                        The player list shows everyone currently
+                        in the game.
+                    </p>
+
+                    <h3>💬 Public Chat</h3>
+                    <p>
+                        Use the public chat to communicate with
+                        everyone.
+                    </p>
+
+                    <h3>🔴 Mafia Chat</h3>
+                    <p>
+                        Mafia members can use Mafia Chat to
+                        communicate privately with other Mafia
+                        players.
+                    </p>
+
+                    <h3>🎭 Your Role</h3>
+                    <p>
+                        Your role is shown on the right side of
+                        the screen.
+                    </p>
+
+                </div>
+
+                <button
+                    id="closeGuideBottom"
+                    class="guide-close-button"
+                    type="button"
+                >
+                    CLOSE
+                </button>
+
+            </div>
+
+        </div>
+
+
+
+        <!-- ================= GAME OVER ================= -->
+
+        <div
+            id="gameOverOverlay"
+            style="display:none;"
+        >
+
+            <div id="gameOverBox">
+
+                <img
+                    id="winnerLogo"
+                    class="winner-logo"
+                    src=""
+                    alt="Winner Logo"
+                >
+
+                <div id="gameOverTitle">
+                    🏆 GAME OVER
+                </div>
+
+                <div id="gameOverMessage"></div>
+
+                <button id="restartGame">
+                    🔄 RESTART GAME
+                </button>
+
+                <button id="backHomeGameOver">
+                    🏠 BACK TO HOME
+                </button>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</section>
+
+    <!-- =====================================================
+         SOCKET.IO
+    ====================================================== -->
+
+    <script src="/socket.io/socket.io.js"></script>
+
+    <!-- YOUR JAVASCRIPT -->
+
+    <script src="client.js"></script>
+
+<script>
+    const guideButton = document.getElementById("guideButton");
+    const guideOverlay = document.getElementById("guideOverlay");
+    const closeGuide = document.getElementById("closeGuide");
+    const closeGuideBottom = document.getElementById("closeGuideBottom");
+
+    function openGuide() {
+        guideOverlay.style.display = "flex";
+    }
+
+    function hideGuide() {
+        guideOverlay.style.display = "none";
+    }
+
+    guideButton.addEventListener("click", openGuide);
+    closeGuide.addEventListener("click", hideGuide);
+    closeGuideBottom.addEventListener("click", hideGuide);
+
+    guideOverlay.addEventListener("click", function (event) {
+        if (event.target === guideOverlay) {
+            hideGuide();
+        }
+    });
+</script>
+
+
+</body>
+
+</html>
