@@ -173,6 +173,7 @@ function resetGameState(room) {
     room.settings = null;
 
     room.grandmafiaUsed = false;
+    room.grandmafiaTarget = null;
 
     room.nightNumber = 1;
 
@@ -435,6 +436,46 @@ function eliminatePlayerWithClupid(room, player) {
         });
     }
 
+    /* =====================================================
+       GRANDMAFIA DEATH → ACTIVATE BABY MAFIA
+
+       Grandmafia only selects the future Baby Mafia on
+       Night 1. The selected player keeps their original
+       role while Grandmafia is alive.
+
+       When Grandmafia dies, the selected living player
+       becomes Baby Mafia.
+    ===================================================== */
+
+    if (
+        eliminated.some(
+            p => p.role === "Grandmafia"
+        )
+    ) {
+
+        const babyMafia =
+            room.players.find(
+                p =>
+                    p.id === room.grandmafiaTarget &&
+                    p.alive
+            );
+
+        if (babyMafia) {
+
+            babyMafia.role = "Baby Mafia";
+
+            io.to(babyMafia.id).emit(
+                "roleChanged",
+                {
+                    role: "Baby Mafia"
+                }
+            );
+
+        }
+
+        room.grandmafiaTarget = null;
+    }
+
     return eliminated;
 }
 
@@ -529,6 +570,45 @@ function checkWinner(roomCode) {
         !room ||
         room.phase === "gameover"
     ) {
+        return true;
+    }
+
+    /* =====================================================
+       JESTER WIN
+
+       The Jester wins immediately if they are eliminated
+       for ANY reason: daytime vote, night kill, Clupid
+       chain, or another existing elimination mechanic.
+
+       This check MUST happen before Mafia/Civilian wins.
+    ===================================================== */
+
+    const deadJester =
+        room.players.find(
+            p =>
+                p.role === "Jester" &&
+                !p.alive
+        );
+
+    if (deadJester) {
+
+        room.phase = "gameover";
+
+        announce(
+            roomCode,
+            `🤡 ${deadJester.name} was the Jester and wins!`,
+            "special"
+        );
+
+        io.to(roomCode).emit(
+            "gameOver",
+            {
+                winner: "Jester",
+                message:
+                    "The Jester was eliminated and wins the game!"
+            }
+        );
+
         return true;
     }
 
@@ -763,6 +843,11 @@ function endNight(roomCode) {
 
     /* =====================================================
        GRANDMAFIA → BABY MAFIA
+
+       On Night 1, Grandmafia only SELECTS a player.
+       The selected player keeps their original role while
+       Grandmafia is alive. The role changes to Baby Mafia
+       only when Grandmafia is later eliminated.
     ===================================================== */
 
     if (
@@ -794,30 +879,15 @@ function endNight(roomCode) {
                 !isMafiaTeam(target.role)
             ) {
 
-                target.role =
-                    "Baby Mafia";
-
-                babyMafiaCreated = true;
-
-                io.to(target.id).emit(
-                    "roleChanged",
-                    {
-                        role: "Baby Mafia"
-                    }
-                );
+                // IMPORTANT: do NOT change the role yet.
+                room.grandmafiaTarget = target.id;
 
                 io.to(grandmafia.id).emit(
                     "grandmafiaResult",
                     {
                         message:
-                            `${target.name} became Baby Mafia.`
+                            `${target.name} has been selected as the future Baby Mafia.`
                     }
-                );
-
-                announce(
-                    roomCode,
-                    `👶 ${target.name} became Baby Mafia!`,
-                    "special"
                 );
             }
         }
@@ -1293,52 +1363,6 @@ function endVoting(roomCode) {
     room.votes = {};
 
     /* =====================================================
-       JESTER WIN
-    ===================================================== */
-
-    if (
-        eliminatedPlayer.role ===
-        "Jester"
-    ) {
-
-        room.phase = "gameover";
-
-        announce(
-            roomCode,
-            `🤡 ${eliminatedPlayer.name} was the Jester and wins!`,
-            "special"
-        );
-
-        io.to(roomCode).emit(
-            "voteResult",
-            {
-                eliminatedPlayer:
-                    eliminatedPlayer.name,
-
-                eliminatedPlayers:
-                    names,
-
-                grandmafiaDeath,
-                godfatherDeath,
-
-                tie: false
-            }
-        );
-
-        io.to(roomCode).emit(
-            "gameOver",
-            {
-                winner: "Jester",
-
-                message:
-                    "The Jester was voted out and wins the game!"
-            }
-        );
-
-        return;
-    }
-
-    /* =====================================================
        NORMAL VOTE RESULT
     ===================================================== */
 
@@ -1447,6 +1471,9 @@ io.on(
 
                     grandmafiaUsed:
                         false,
+
+                    grandmafiaTarget:
+                        null,
 
                     nightNumber:
                         1,
@@ -1721,6 +1748,7 @@ room.gameStarted = true;
 room.phase = "night";
 
 room.grandmafiaUsed = false;
+room.grandmafiaTarget = null;
 
 room.nightNumber = 1;
 
@@ -1744,15 +1772,6 @@ room.players.forEach(player => {
 /* =========================
    ASSIGN NEW ROLES
 ========================= */
-
-assignRoles(
-    room.players,
-    settings
-);
-room.players.forEach(player => {
-    player.role = null;
-    player.alive = true;
-});
 
 assignRoles(
     room.players,
