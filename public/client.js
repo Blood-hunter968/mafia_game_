@@ -6,6 +6,8 @@ let players = [];
 let currentPhase = "";
 let isHost = false;
 let hasVoted = false;
+let phaseTimerInterval = null;
+let currentPhaseEndsAt = null;
 
 const $ = id => document.getElementById(id);
 
@@ -911,6 +913,75 @@ function updateRoleDisplay(role) {
 }
 
 /* =========================================================
+   2-MINUTE PHASE TIMER
+========================================================= */
+
+function ensurePhaseTimer() {
+    let timer = $("phaseTimer");
+    if (timer) return timer;
+
+    const header = document.querySelector(".game-header");
+    if (!header) return null;
+
+    timer = document.createElement("div");
+    timer.id = "phaseTimer";
+    timer.className = "phase-timer";
+    timer.textContent = "⏱️ 02:00";
+
+    const phaseTitle = $("phaseTitle");
+    if (phaseTitle) {
+        phaseTitle.insertAdjacentElement("afterend", timer);
+    } else {
+        header.appendChild(timer);
+    }
+
+    return timer;
+}
+
+function updatePhaseTimer(endsAt, phase) {
+    currentPhaseEndsAt = endsAt || null;
+
+    if (phaseTimerInterval) {
+        clearInterval(phaseTimerInterval);
+        phaseTimerInterval = null;
+    }
+
+    const timer = ensurePhaseTimer();
+    if (!timer) return;
+
+    if (!endsAt || (phase !== "night" && phase !== "day")) {
+        timer.style.display = "none";
+        return;
+    }
+
+    timer.style.display = "inline-block";
+
+    const tick = () => {
+        const remaining = Math.max(0, Number(currentPhaseEndsAt) - Date.now());
+        const totalSeconds = Math.ceil(remaining / 1000);
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = totalSeconds % 60;
+
+        timer.textContent =
+            `⏱️ ${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+
+        if (totalSeconds <= 10) {
+            timer.classList.add("phase-timer-warning");
+        } else {
+            timer.classList.remove("phase-timer-warning");
+        }
+
+        if (remaining <= 0 && phaseTimerInterval) {
+            clearInterval(phaseTimerInterval);
+            phaseTimerInterval = null;
+        }
+    };
+
+    tick();
+    phaseTimerInterval = setInterval(tick, 250);
+}
+
+/* =========================================================
    GAME INFORMATION
 ========================================================= */
 
@@ -949,6 +1020,7 @@ socket.on(
         setScreen("gameScreen");
 
         updatePhaseTitle(data);
+        updatePhaseTimer(data.phaseEndsAt, data.phase);
 
         updateRoleDisplay(myRole);
 
@@ -2092,6 +2164,7 @@ function setupBackHomeGameOver() {
             currentPhase = "";
             hasVoted = false;
             isHost = false;
+            updatePhaseTimer(null, "");
 
             setScreen("homeScreen");
         }
@@ -2133,6 +2206,7 @@ socket.on(
         currentPhase = "lobby";
 
         hasVoted = false;
+        updatePhaseTimer(null, "");
 
         /* Clear selected targets/actions */
 
