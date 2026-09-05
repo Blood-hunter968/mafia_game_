@@ -184,6 +184,17 @@
             </div>
 
 
+            <!-- LOBBY GUIDE BUTTON -->
+
+            <button
+                id="lobbyGuideButton"
+                class="guide-button"
+                type="button"
+            >
+                📖 GUIDE
+            </button>
+
+
             <!-- HOST INDICATOR -->
 
             <div
@@ -375,6 +386,188 @@
         </div>
 
     </section>
+
+
+        <!-- ================= GUIDE POPUP ================= -->
+
+        <div
+            id="guideOverlay"
+            class="guide-overlay"
+            style="display:none;"
+        >
+
+            <div class="guide-box">
+
+                <button
+                    id="closeGuide"
+                    class="close-guide"
+                    type="button"
+                >
+                    ✕
+                </button>
+
+                <h2>
+                    📖 MAFIA WARS GUIDE
+                </h2>
+
+                <div class="guide-content">
+
+                ```html
+<div class="guide-content">
+
+    <h3>👤 Civilian</h3>
+    <p>
+        Civilians are normal Town players. They do not have
+        a special night ability. Their goal is to work together
+        with the Town and identify the Mafia.
+    </p>
+
+    <h3>🔴 Mafia</h3>
+    <p>
+        Mafia members work together during the night.
+        Mafia players can communicate privately through
+        Mafia Chat and choose players to eliminate.
+    </p>
+
+    <h3>👑 Godfather</h3>
+    <p>
+        The Godfather is an important member of the Mafia team.
+        The Godfather works with the Mafia to eliminate the Town
+        and help the Mafia team win and if Godfather die every 
+        member of mafia team also die.
+    </p>
+
+    <h3>🔥 Grandmafia</h3>
+    <p>
+        Grandmafia is a special Mafia role.
+        On the first night, Grandmafia can choose a player
+        to become Baby Mafia and the baby mafia will active 
+        after the death of grandmafia.
+    </p>
+
+    <h3>👵 Grandma</h3>
+    <p>
+        Grandma is a special powers that if any member of mafia team
+        attack grandma the first attacker die.
+    </p>
+
+    <h3>🩺 Doctor</h3>
+    <p>
+        The Doctor can protect a player during the night.
+        Choose a player and use the Doctor action to save them and doctor 
+        can choose 1 person at  night if the doctor want to save the same
+        person first he have to save all the player to save the same person.
+    </p>
+
+    <h3>🔎 Detective</h3>
+    <p>
+        The Detective investigates players during the night.
+        The Detective receives information that can help discover
+        the Mafia.
+    </p>
+
+    <h3>🤡 Jester</h3>
+    <p>
+        The Jester has a special powers that if he voted out or killed 
+        by mafia member the jester win jester is neutral he is not in 
+        the team of civilian or mafia.
+    </p>
+
+    <h3>💕 Clupid</h3>
+    <p>
+        Clupid can link two players together.
+        On the first night, Clupid chooses two different players
+        and creates a special connection between them and if one 
+        person die the second person also die
+    </p>
+
+    <div class="guide-divider"></div>
+
+    <h3>🌙 Night</h3>
+    <p>
+        During the night, players with special abilities can
+        perform their actions.
+    </p>
+
+    <h3>☀️ Day</h3>
+    <p>
+        During the day, everyone can discuss the game and vote
+        for a player they suspect.
+    </p>
+
+    <h3>🎯 Your Action</h3>
+    <p>
+        If your role has an available action, select a player
+        and press the action button.
+    </p>
+
+    <h3>💬 Public Chat</h3>
+    <p>
+        Public Chat is visible to everyone in the game.
+        Use it to discuss and share information.
+    </p>
+
+    <h3>🔴 Mafia Chat</h3>
+    <p>
+        Mafia Chat is private to Mafia-team players.
+        Use it to communicate with your teammates.
+    </p>
+
+</div>
+
+
+                    <h3>🌙 Night</h3>
+                    <p>
+                        During the night, special roles can use
+                        their abilities.
+                    </p>
+
+                    <h3>🎯 Your Action</h3>
+                    <p>
+                        Select a player and choose your available
+                        action, then press CONFIRM.
+                    </p>
+
+                    <h3>👥 Players</h3>
+                    <p>
+                        The player list shows everyone currently
+                        in the game.
+                    </p>
+
+                    <h3>💬 Public Chat</h3>
+                    <p>
+                        Use the public chat to communicate with
+                        everyone.
+                    </p>
+
+                    <h3>🔴 Mafia Chat</h3>
+                    <p>
+                        Mafia members can use Mafia Chat to
+                        communicate privately with other Mafia
+                        players.
+                    </p>
+
+                    <h3>🎭 Your Role</h3>
+                    <p>
+                        Your role is shown on the right side of
+                        the screen.
+                    </p>
+
+                </div>
+
+                <button
+                    id="closeGuideBottom"
+                    class="guide-close-button"
+                    type="button"
+                >
+                    CLOSE
+                </button>
+
+            </div>
+
+        </div>
+
+
 
 
     <!-- =====================================================
@@ -655,187 +848,6 @@
         </div>
 
 
-        <!-- ================= GUIDE POPUP ================= -->
-
-        <div
-            id="guideOverlay"
-            class="guide-overlay"
-            style="display:none;"
-        >
-
-            <div class="guide-box">
-
-                <button
-                    id="closeGuide"
-                    class="close-guide"
-                    type="button"
-                >
-                    ✕
-                </button>
-
-                <h2>
-                    📖 MAFIA WARS GUIDE
-                </h2>
-
-                <div class="guide-content">
-
-                ```html
-<div class="guide-content">
-
-    <h3>👤 Civilian</h3>
-    <p>
-        Civilians are normal Town players. They do not have
-        a special night ability. Their goal is to work together
-        with the Town and identify the Mafia.
-    </p>
-
-    <h3>🔴 Mafia</h3>
-    <p>
-        Mafia members work together during the night.
-        Mafia players can communicate privately through
-        Mafia Chat and choose players to eliminate.
-    </p>
-
-    <h3>👑 Godfather</h3>
-    <p>
-        The Godfather is an important member of the Mafia team.
-        The Godfather works with the Mafia to eliminate the Town
-        and help the Mafia team win and if Godfather die every 
-        member of mafia team also die.
-    </p>
-
-    <h3>🔥 Grandmafia</h3>
-    <p>
-        Grandmafia is a special Mafia role.
-        On the first night, Grandmafia can choose a player
-        to become Baby Mafia and the baby mafia will active 
-        after the death of grandmafia.
-    </p>
-
-    <h3>👵 Grandma</h3>
-    <p>
-        Grandma is a special powers that if any member of mafia team
-        attack grandma the first attacker die.
-    </p>
-
-    <h3>🩺 Doctor</h3>
-    <p>
-        The Doctor can protect a player during the night.
-        Choose a player and use the Doctor action to save them and doctor 
-        can choose 1 person at  night if the doctor want to save the same
-        person first he have to save all the player to save the same person.
-    </p>
-
-    <h3>🔎 Detective</h3>
-    <p>
-        The Detective investigates players during the night.
-        The Detective receives information that can help discover
-        the Mafia.
-    </p>
-
-    <h3>🤡 Jester</h3>
-    <p>
-        The Jester has a special powers that if he voted out or killed 
-        by mafia member the jester win jester is neutral he is not in 
-        the team of civilian or mafia.
-    </p>
-
-    <h3>💕 Clupid</h3>
-    <p>
-        Clupid can link two players together.
-        On the first night, Clupid chooses two different players
-        and creates a special connection between them and if one 
-        person die the second person also die
-    </p>
-
-    <div class="guide-divider"></div>
-
-    <h3>🌙 Night</h3>
-    <p>
-        During the night, players with special abilities can
-        perform their actions.
-    </p>
-
-    <h3>☀️ Day</h3>
-    <p>
-        During the day, everyone can discuss the game and vote
-        for a player they suspect.
-    </p>
-
-    <h3>🎯 Your Action</h3>
-    <p>
-        If your role has an available action, select a player
-        and press the action button.
-    </p>
-
-    <h3>💬 Public Chat</h3>
-    <p>
-        Public Chat is visible to everyone in the game.
-        Use it to discuss and share information.
-    </p>
-
-    <h3>🔴 Mafia Chat</h3>
-    <p>
-        Mafia Chat is private to Mafia-team players.
-        Use it to communicate with your teammates.
-    </p>
-
-</div>
-
-
-                    <h3>🌙 Night</h3>
-                    <p>
-                        During the night, special roles can use
-                        their abilities.
-                    </p>
-
-                    <h3>🎯 Your Action</h3>
-                    <p>
-                        Select a player and choose your available
-                        action, then press CONFIRM.
-                    </p>
-
-                    <h3>👥 Players</h3>
-                    <p>
-                        The player list shows everyone currently
-                        in the game.
-                    </p>
-
-                    <h3>💬 Public Chat</h3>
-                    <p>
-                        Use the public chat to communicate with
-                        everyone.
-                    </p>
-
-                    <h3>🔴 Mafia Chat</h3>
-                    <p>
-                        Mafia members can use Mafia Chat to
-                        communicate privately with other Mafia
-                        players.
-                    </p>
-
-                    <h3>🎭 Your Role</h3>
-                    <p>
-                        Your role is shown on the right side of
-                        the screen.
-                    </p>
-
-                </div>
-
-                <button
-                    id="closeGuideBottom"
-                    class="guide-close-button"
-                    type="button"
-                >
-                    CLOSE
-                </button>
-
-            </div>
-
-        </div>
-
-
-
         <!-- ================= GAME OVER ================= -->
 
         <div
@@ -886,23 +898,25 @@
 
 <script>
     const guideButton = document.getElementById("guideButton");
+    const lobbyGuideButton = document.getElementById("lobbyGuideButton");
     const guideOverlay = document.getElementById("guideOverlay");
     const closeGuide = document.getElementById("closeGuide");
     const closeGuideBottom = document.getElementById("closeGuideBottom");
 
     function openGuide() {
-        guideOverlay.style.display = "flex";
+        if (guideOverlay) guideOverlay.style.display = "flex";
     }
 
     function hideGuide() {
-        guideOverlay.style.display = "none";
+        if (guideOverlay) guideOverlay.style.display = "none";
     }
 
-    guideButton.addEventListener("click", openGuide);
-    closeGuide.addEventListener("click", hideGuide);
-    closeGuideBottom.addEventListener("click", hideGuide);
+    guideButton?.addEventListener("click", openGuide);
+    lobbyGuideButton?.addEventListener("click", openGuide);
+    closeGuide?.addEventListener("click", hideGuide);
+    closeGuideBottom?.addEventListener("click", hideGuide);
 
-    guideOverlay.addEventListener("click", function (event) {
+    guideOverlay?.addEventListener("click", function (event) {
         if (event.target === guideOverlay) {
             hideGuide();
         }
