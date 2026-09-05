@@ -11,6 +11,46 @@ app.use(express.static("public"));
 const rooms = {};
 
 /* =========================================================
+   2-MINUTE PHASE TIMER
+========================================================= */
+
+const PHASE_TIME_LIMIT = 3 * 60 * 1000;
+
+function clearPhaseTimer(room) {
+    if (!room) return;
+
+    if (room.phaseTimer) {
+        clearTimeout(room.phaseTimer);
+        room.phaseTimer = null;
+    }
+
+    room.phaseEndsAt = null;
+}
+
+function startPhaseTimer(roomCode) {
+    const room = rooms[roomCode];
+    if (!room || (room.phase !== "night" && room.phase !== "day")) return;
+
+    clearPhaseTimer(room);
+    room.phaseEndsAt = Date.now() + PHASE_TIME_LIMIT;
+
+    room.phaseTimer = setTimeout(() => {
+        const currentRoom = rooms[roomCode];
+        if (!currentRoom) return;
+
+        currentRoom.phaseTimer = null;
+
+        if (currentRoom.phase === "night") {
+            announce(roomCode, "⏰ 3 minutes are over. Night is ending even if someone did not choose an action.", "info");
+            endNight(roomCode);
+        } else if (currentRoom.phase === "day") {
+            announce(roomCode, "⏰ 3 minutes are over. Voting is ending even if someone did not vote.", "info");
+            endVoting(roomCode);
+        }
+    }, PHASE_TIME_LIMIT);
+}
+
+/* =========================================================
    ROOM CODE
 ========================================================= */
 
@@ -515,6 +555,9 @@ function sendGameInformation(roomCode) {
                 phase:
                     room.phase,
 
+                phaseEndsAt:
+                    room.phaseEndsAt,
+
                 nightNumber:
                     room.nightNumber,
 
@@ -839,6 +882,8 @@ function endNight(roomCode) {
         return;
     }
 
+    clearPhaseTimer(room);
+
     let babyMafiaCreated = false;
 
     /* =====================================================
@@ -1131,6 +1176,7 @@ function endNight(roomCode) {
         }
     );
 
+    startPhaseTimer(roomCode);
     sendGameInformation(roomCode);
 }
 
@@ -1148,6 +1194,8 @@ function startNextNight(roomCode) {
     ) {
         return;
     }
+
+    clearPhaseTimer(room);
 
     if (checkWinner(roomCode)) {
 
@@ -1170,6 +1218,7 @@ function startNextNight(roomCode) {
         "night"
     );
 
+    startPhaseTimer(roomCode);
     sendGameInformation(roomCode);
 }
 
@@ -1187,6 +1236,8 @@ function endVoting(roomCode) {
     ) {
         return;
     }
+
+    clearPhaseTimer(room);
 
     const voteCounts = {};
 
@@ -1493,7 +1544,13 @@ io.on(
                     },
 
                     votes:
-                        {}
+                        {},
+
+                    phaseTimer:
+                        null,
+
+                    phaseEndsAt:
+                        null
                 };
 
                 socket.join(roomCode);
@@ -1782,6 +1839,8 @@ assignRoles(
                     "🎭 The game has started! Night 1 begins.",
                     "night"
                 );
+
+                startPhaseTimer(roomCode);
 
                 sendGameInformation(
                     roomCode
@@ -2677,6 +2736,26 @@ assignRoles(
                     delete room.clupidPairs[
                         socket.id
                     ];
+
+                    announce(
+                        roomCode,
+                        `🚪 ${disconnected.name} was kicked from the game because they disconnected.`,
+                        "danger"
+                    );
+
+                    /* =========================
+                       CHECK WINNER AFTER DISCONNECT
+                    ========================= */
+
+                    if (
+                        room.gameStarted &&
+                        room.phase !== "lobby" &&
+                        checkWinner(roomCode)
+                    ) {
+                        clearPhaseTimer(room);
+                        sendGameInformation(roomCode);
+                        continue;
+                    }
 
                     /* =========================
                        UPDATE LOBBY
