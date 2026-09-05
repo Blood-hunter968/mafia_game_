@@ -3026,3 +3026,339 @@ select,
     font-weight: 800;
     text-transform: uppercase;
 }
+/* =========================================================
+   2-MINUTE PHASE TIMER
+========================================================= */
+
+.phase-timer {
+    display: inline-block;
+    margin-top: 8px;
+    padding: 7px 14px;
+    border: 1px solid rgba(170, 30, 30, 0.55);
+    border-radius: 6px;
+    background: rgba(20, 8, 8, 0.9);
+    color: #eeeeee;
+    font-size: 15px;
+    font-weight: 900;
+    letter-spacing: 1px;
+}
+
+.phase-timer-warning {
+    animation: phaseTimerPulse 0.7s ease-in-out infinite alternate;
+}
+
+@keyframes phaseTimerPulse {
+    from { transform: scale(1); }
+    to { transform: scale(1.05); }
+}
+
+
+/* =========================================================
+   MOBILE GAME LAYOUT
+   Existing desktop/tablet styling stays unchanged.
+========================================================= */
+
+@media (max-width: 650px) {
+
+    html,
+    body {
+        width: 100%;
+        max-width: 100%;
+        overflow-x: hidden;
+    }
+
+    #gameScreen {
+        width: 100%;
+        min-height: 100vh;
+        padding: 6px !important;
+    }
+
+    #gameScreen .game-container {
+        width: 100%;
+        max-width: 100%;
+        margin: 0;
+        padding: 9px !important;
+        border-radius: 10px;
+    }
+
+    .game-header {
+        margin-bottom: 10px;
+    }
+
+    .game-header h1 {
+        font-size: clamp(22px, 8vw, 32px);
+        letter-spacing: 1px;
+    }
+
+    .game-header h2 {
+        font-size: clamp(17px, 6vw, 23px);
+        margin-top: 6px;
+    }
+
+    .phase-timer {
+        margin-top: 6px;
+        padding: 6px 12px;
+        font-size: 14px;
+    }
+
+    .game-layout {
+        display: flex !important;
+        flex-direction: column;
+        gap: 9px;
+        width: 100%;
+    }
+
+    .players-panel,
+    .center-game-column,
+    .right-game-column {
+        width: 100%;
+        min-width: 0 !important;
+        max-width: 100%;
+    }
+
+    .players-panel,
+    .center-game-column .action-panel,
+    .chat-box,
+    .your-role-panel {
+        padding: 12px !important;
+        margin-top: 0 !important;
+        border-radius: 8px !important;
+    }
+
+    .players-panel {
+        min-height: 0 !important;
+    }
+
+    .players-panel h2,
+    .action-panel h2,
+    .chat-box h2,
+    .your-role-panel h2 {
+        font-size: 17px;
+        margin-bottom: 9px !important;
+    }
+
+    #gamePlayerList {
+        max-height: 190px !important;
+        gap: 5px !important;
+        padding-right: 0;
+    }
+
+    #gamePlayerList li {
+        padding: 9px 10px !important;
+        font-size: 14px;
+    }
+
+    .center-game-column {
+        gap: 9px;
+    }
+
+    .center-game-column .action-panel {
+        min-height: 0 !important;
+    }
+
+    .action-panel p {
+        font-size: 13px;
+    }
+
+    .action-panel select,
+    .action-panel button,
+    .chat-input-row input,
+    .chat-input-row button {
+        min-height: 46px;
+        font-size: 15px;
+    }
+
+    .action-panel select {
+        width: 100%;
+    }
+
+    .action-panel > button {
+        width: 100%;
+        margin-top: 6px !important;
+    }
+
+    #grandmafiaPanel,
+    #loverPanel {
+        width: 100%;
+        margin-top: 8px !important;
+        padding: 9px !important;
+    }
+
+    #loverPanel select,
+    #grandmafiaPanel select {
+        width: 100%;
+        margin: 4px 0 !important;
+    }
+
+    .right-game-column {
+        display: flex !important;
+        flex-direction: column;
+        gap: 9px;
+    }
+
+    .your-role-panel {
+        min-height: 0 !important;
+    }
+
+    .your-role-panel .your-role-box {
+        min-height: 80px;
+        padding: 8px;
+    }
+
+    .your-role-logo {
+        width: 95px !important;
+        height: 95px !important;
+    }
+
+    .your-role-panel .your-role-box strong,
+    #yourRole {
+        font-size: 18px !important;
+    }
+
+    .mafia-chat-box {
+        min-height: 0 !important;
+    }
+
+    #chatMessages,
+    #mafiaChatMessages {
+        width: 100%;
+        max-width: 100%;
+        height: 170px !important;
+    }
+
+    .chat-input-row {
+        display: flex;
+        gap: 6px;
+        width: 100%;
+    }
+
+    .chat-input-row input {
+        min-width: 0;
+        flex: 1;
+    }
+
+    .chat-input-row button {
+        width: auto !important;
+        min-width: 78px;
+        padding: 8px 10px;
+    }
+
+    .guide-overlay {
+        padding: 8px;
+    }
+
+    .guide-box {
+        width: 100%;
+        max-width: 100%;
+        max-height: 92vh;
+        padding: 14px !important;
+        overflow-y: auto;
+    }
+}
+
+
+/* Very small phones */
+@media (max-width: 380px) {
+
+    #gameScreen .game-container {
+        padding: 6px !important;
+    }
+
+    .game-header h1 {
+        font-size: 22px;
+    }
+
+    .game-header h2 {
+        font-size: 17px;
+    }
+
+    .players-panel,
+    .center-game-column .action-panel,
+    .chat-box,
+    .your-role-panel {
+        padding: 9px !important;
+    }
+
+    .chat-input-row {
+        flex-direction: column;
+    }
+
+    .chat-input-row button {
+        width: 100% !important;
+    }
+}
+
+/* Mobile game order: Your Role first, then Your Action, without removing any features */
+@media (max-width: 650px) {
+    .game-layout {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .game-layout > .right-game-column,
+    .game-layout > .center-game-column {
+        display: contents;
+    }
+
+    .game-layout > .players-panel {
+        order: 3;
+    }
+
+    .game-layout .your-role-panel {
+        order: 1;
+    }
+
+    .game-layout .action-panel {
+        order: 2;
+    }
+
+    .game-layout .public-chat-box {
+        order: 4;
+    }
+
+    .game-layout .mafia-chat-box {
+        order: 5;
+    }
+}
+
+
+/* ================= LOBBY GUIDE BUTTON ================= */
+#lobbyGuideButton {
+    display: block;
+    width: min(260px, 100%);
+    min-height: 50px;
+    margin: 22px auto 4px;
+    padding: 12px 22px;
+    border: 1px solid #6f2525;
+    border-radius: 4px;
+    background: linear-gradient(180deg, #242424, #0d0d0d);
+    color: #f1f1f1;
+    font-family: Impact, Haettenschweiler, "Arial Black", sans-serif;
+    font-size: 16px;
+    font-weight: 900;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    cursor: pointer;
+    box-shadow: 0 8px 20px rgba(0,0,0,.55), inset 0 1px rgba(255,255,255,.08);
+    transition: transform .18s ease, background .18s ease, border-color .18s ease, box-shadow .18s ease;
+}
+
+#lobbyGuideButton:hover {
+    transform: translateY(-2px);
+    background: linear-gradient(180deg, #3a3a3a, #151515);
+    border-color: #a33a3a;
+    box-shadow: 0 12px 28px rgba(0,0,0,.65), 0 0 18px rgba(150,20,20,.16);
+}
+
+#lobbyGuideButton:active {
+    transform: translateY(0);
+}
+
+@media (max-width: 650px) {
+    #lobbyGuideButton {
+        width: 100%;
+        min-height: 48px;
+        margin-top: 18px;
+        font-size: 15px;
+    }
+}
