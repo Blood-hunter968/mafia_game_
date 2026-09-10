@@ -14,7 +14,8 @@ const rooms = {};
    2-MINUTE PHASE TIMER
 ========================================================= */
 
-const PHASE_TIME_LIMIT = 3 * 60 * 1000;
+const PHASE_TIME_LIMIT = 60 * 1000;
+const NIGHT_TURN_TIME_LIMIT = 30 * 1000;
 
 function clearPhaseTimer(room) {
     if (!room) return;
@@ -48,6 +49,198 @@ function startPhaseTimer(roomCode) {
             endVoting(roomCode);
         }
     }, PHASE_TIME_LIMIT);
+}
+
+
+/* =========================================================
+   SEQUENTIAL NIGHT ROLE TURNS
+   Mafia -> Doctor -> Detective -> Cupid
+   Each active role gets 30 seconds.
+========================================================= */
+
+const NIGHT_TURN_ORDER = [
+    "mafia",
+    "doctor",
+    "detective",
+    "cupid"
+];
+
+function clearNightTurnTimer(room) {
+    if (!room) return;
+
+    if (room.nightTurnTimer) {
+        clearTimeout(room.nightTurnTimer);
+        room.nightTurnTimer = null;
+    }
+
+    room.nightTurnEndsAt = null;
+}
+
+function hasLivingRoleForTurn(room, turn) {
+    if (!room) return false;
+
+    if (turn === "mafia") {
+        return room.players.some(
+            p => p.alive && isMafiaTeam(p.role)
+        );
+    }
+
+    if (turn === "doctor") {
+        return room.players.some(
+            p => p.alive && p.role === "Doctor"
+        );
+    }
+
+    if (turn === "detective") {
+        return room.players.some(
+            p => p.alive && p.role === "Detective"
+        );
+    }
+
+    if (turn === "cupid") {
+        return room.nightNumber === 1 && room.players.some(
+            p => p.alive && p.role === "Clupid"
+        );
+    }
+
+    return false;
+}
+
+function nightTurnName(turn) {
+    return {
+        mafia: "MAFIA",
+        doctor: "DOCTOR",
+        detective: "DETECTIVE",
+        cupid: "CUPID"
+    }[turn] || "NIGHT";
+}
+
+function startNightTurn(roomCode, requestedIndex = 0) {
+    const room = rooms[roomCode];
+    if (!room || room.phase !== "night") return;
+
+    clearNightTurnTimer(room);
+
+    let index = requestedIndex;
+    while (
+        index < NIGHT_TURN_ORDER.length &&
+        !hasLivingRoleForTurn(room, NIGHT_TURN_ORDER[index])
+    ) {
+        index += 1;
+    }
+
+    if (index >= NIGHT_TURN_ORDER.length) {
+        room.nightTurn = null;
+        room.nightTurnIndex = NIGHT_TURN_ORDER.length;
+        room.nightTurnEndsAt = null;
+        endNight(roomCode);
+        return;
+    }
+
+    room.nightTurnIndex = index;
+    room.nightTurn = NIGHT_TURN_ORDER[index];
+    room.nightTurnEndsAt = Date.now() + NIGHT_TURN_TIME_LIMIT;
+
+    room.nightTurnTimer = setTimeout(() => {
+        const currentRoom = rooms[roomCode];
+        if (!currentRoom || currentRoom.phase !== "night") return;
+
+        currentRoom.nightTurnTimer = null;
+        currentRoom.nightTurnEndsAt = null;
+
+        announce(
+            roomCode,
+            `⏰ ${nightTurnName(currentRoom.nightTurn)} turn is over.`,
+            "info"
+        );
+
+        startNightTurn(
+            roomCode,
+            currentRoom.nightTurnIndex + 1
+        );
+    }, NIGHT_TURN_TIME_LIMIT);
+
+    announce(
+        roomCode,
+        `🌙 ${nightTurnName(room.nightTurn)} turn has begun.`,
+        "night"
+    );
+
+    sendGameInformation(roomCode);
+}
+
+function currentTurnActionsDone(room) {
+    if (!room || room.phase !== "night") return false;
+
+    const turn = room.nightTurn;
+
+    if (turn === "mafia") {
+        const mafia = room.players.filter(
+            p => p.alive && isMafiaTeam(p.role)
+        );
+
+        if (mafia.some(p => !room.nightActions.mafia[p.id])) {
+            return false;
+        }
+
+        if (
+            room.nightNumber === 1 &&
+            !room.grandmafiaUsed
+        ) {
+            const grandmas = room.players.filter(
+                p => p.alive && p.role === "Grandmafia"
+            );
+
+            if (grandmas.some(
+                p => !room.nightActions.grandmafia[p.id]
+            )) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    if (turn === "doctor") {
+        const doctors = room.players.filter(
+            p => p.alive && p.role === "Doctor"
+        );
+        return !doctors.some(
+            p => !room.nightActions.doctor[p.id]
+        );
+    }
+
+    if (turn === "detective") {
+        const detectives = room.players.filter(
+            p => p.alive && p.role === "Detective"
+        );
+        return !detectives.some(
+            p => !room.nightActions.detective[p.id]
+        );
+    }
+
+    if (turn === "cupid") {
+        const clupids = room.players.filter(
+            p => p.alive && p.role === "Clupid"
+        );
+        return !clupids.some(
+            p => !room.nightActions.clupid[p.id]
+        );
+    }
+
+    return true;
+}
+
+function checkNightTurnActions(roomCode) {
+    const room = rooms[roomCode];
+    if (!room || room.phase !== "night") return;
+
+    if (!currentTurnActionsDone(room)) return;
+
+    startNightTurn(
+        roomCode,
+        room.nightTurnIndex + 1
+    );
 }
 
 /* =========================================================
@@ -222,6 +415,10 @@ function resetGameState(room) {
 
     room.votes = {};
 
+    clearNightTurnTimer(room);
+    room.nightTurn = null;
+    room.nightTurnIndex = 0;
+
     resetNightActions(room);
 
     room.players.forEach(player => {
@@ -233,13 +430,27 @@ function resetGameState(room) {
    PUBLIC PLAYER DATA
 ========================================================= */
 
-function getPublicPlayers(room) {
+function getPublicPlayers(room, viewer) {
 
-    return room.players.map(player => ({
-        id: player.id,
-        name: player.name,
-        alive: player.alive
-    }));
+    const viewerIsMafia = Boolean(
+        viewer && isMafiaTeam(viewer.role)
+    );
+
+    return room.players.map(player => {
+        const visibleRole =
+            viewer &&
+            (player.id === viewer.id ||
+             (viewerIsMafia && isMafiaTeam(player.role)))
+                ? player.role
+                : null;
+
+        return {
+            id: player.id,
+            name: player.name,
+            alive: player.alive,
+            role: visibleRole
+        };
+    });
 }
 
 /* =========================================================
@@ -285,6 +496,10 @@ function getActionTargets(room, player) {
 
     if (isMafiaTeam(player.role)) {
 
+        if (room.nightTurn !== "mafia") {
+            return [];
+        }
+
         if (
             room.nightActions.mafia[player.id]
         ) {
@@ -306,6 +521,10 @@ function getActionTargets(room, player) {
 
     if (player.role === "Doctor") {
 
+        if (room.nightTurn !== "doctor") {
+            return [];
+        }
+
         if (
             room.nightActions.doctor[player.id]
         ) {
@@ -322,6 +541,10 @@ function getActionTargets(room, player) {
     ========================= */
 
     if (player.role === "Detective") {
+
+        if (room.nightTurn !== "detective") {
+            return [];
+        }
 
         if (
             room.nightActions.detective[player.id]
@@ -351,6 +574,7 @@ function getGrandmafiaTargets(room, player) {
         !player ||
         !player.alive ||
         player.role !== "Grandmafia" ||
+        room.nightTurn !== "mafia" ||
         room.nightNumber !== 1 ||
         room.grandmafiaUsed ||
         room.nightActions.grandmafia[player.id]
@@ -378,6 +602,7 @@ function getClupidTargets(room, player) {
         !player ||
         !player.alive ||
         player.role !== "Clupid" ||
+        room.nightTurn !== "cupid" ||
         room.nightNumber !== 1 ||
         room.clupidUsed[player.id]
     ) {
@@ -520,6 +745,41 @@ function eliminatePlayerWithClupid(room, player) {
 }
 
 /* =========================================================
+   PRIVATE DEATH SCREEN
+   Only the players who were actually eliminated receive
+   the death reveal. Other players keep their normal screen.
+========================================================= */
+
+function sendDeathReveal(roomCode, eliminatedPlayers) {
+
+    if (!rooms[roomCode] || !Array.isArray(eliminatedPlayers)) {
+        return;
+    }
+
+    const names = eliminatedPlayers
+        .filter(player => player && player.id)
+        .map(player => player.name);
+
+    if (!names.length) {
+        return;
+    }
+
+    eliminatedPlayers.forEach(player => {
+
+        if (!player || !player.id) {
+            return;
+        }
+
+        io.to(player.id).emit(
+            "deathReveal",
+            {
+                names
+            }
+        );
+    });
+}
+
+/* =========================================================
    SEND GAME INFORMATION
 ========================================================= */
 
@@ -540,7 +800,7 @@ function sendGameInformation(roomCode) {
                     player.role,
 
                 players:
-                    getPublicPlayers(room),
+                    getPublicPlayers(room, player),
 
                 /*
                    IMPORTANT:
@@ -557,6 +817,15 @@ function sendGameInformation(roomCode) {
 
                 phaseEndsAt:
                     room.phaseEndsAt,
+
+                nightTurn:
+                    room.nightTurn,
+
+                nightTurnEndsAt:
+                    room.nightTurnEndsAt,
+
+                nightTurnIndex:
+                    room.nightTurnIndex,
 
                 nightNumber:
                     room.nightNumber,
@@ -850,21 +1119,7 @@ function allRequiredNightActionsDone(room) {
 ========================================================= */
 
 function checkNightActions(roomCode) {
-
-    const room = rooms[roomCode];
-
-    if (
-        !room ||
-        room.phase !== "night"
-    ) {
-        return;
-    }
-
-    if (
-        allRequiredNightActionsDone(room)
-    ) {
-        endNight(roomCode);
-    }
+    checkNightTurnActions(roomCode);
 }
 
 /* =========================================================
@@ -883,6 +1138,9 @@ function endNight(roomCode) {
     }
 
     clearPhaseTimer(room);
+    clearNightTurnTimer(room);
+    room.nightTurn = null;
+    room.nightTurnIndex = 0;
 
     let babyMafiaCreated = false;
 
@@ -1121,6 +1379,15 @@ function endNight(roomCode) {
     }
 
     /* =====================================================
+       PRIVATE DEATH SCREEN
+       Send only to players who died in this night.
+    ===================================================== */
+
+    if (eliminatedPlayers.length) {
+        sendDeathReveal(roomCode, eliminatedPlayers);
+    }
+
+    /* =====================================================
        CHECK WINNER
     ===================================================== */
 
@@ -1196,6 +1463,7 @@ function startNextNight(roomCode) {
     }
 
     clearPhaseTimer(room);
+    clearNightTurnTimer(room);
 
     if (checkWinner(roomCode)) {
 
@@ -1218,8 +1486,11 @@ function startNextNight(roomCode) {
         "night"
     );
 
-    startPhaseTimer(roomCode);
-    sendGameInformation(roomCode);
+    room.nightTurn = null;
+    room.nightTurnIndex = 0;
+    room.nightTurnEndsAt = null;
+
+    startNightTurn(roomCode, 0);
 }
 
 /* =========================================================
@@ -1414,6 +1685,15 @@ function endVoting(roomCode) {
     room.votes = {};
 
     /* =====================================================
+       PRIVATE DEATH SCREEN
+       Send only to players who died from this vote.
+    ===================================================== */
+
+    if (eliminatedPlayers.length) {
+        sendDeathReveal(roomCode, eliminatedPlayers);
+    }
+
+    /* =====================================================
        NORMAL VOTE RESULT
     ===================================================== */
 
@@ -1550,7 +1830,19 @@ io.on(
                         null,
 
                     phaseEndsAt:
-                        null
+                        null,
+
+                    nightTurnTimer:
+                        null,
+
+                    nightTurnEndsAt:
+                        null,
+
+                    nightTurn:
+                        null,
+
+                    nightTurnIndex:
+                        0
                 };
 
                 socket.join(roomCode);
@@ -1840,11 +2132,11 @@ assignRoles(
                     "night"
                 );
 
-                startPhaseTimer(roomCode);
+                room.nightTurn = null;
+                room.nightTurnIndex = 0;
+                room.nightTurnEndsAt = null;
 
-                sendGameInformation(
-                    roomCode
-                );
+                startNightTurn(roomCode, 0);
             }
         );
 
@@ -1861,7 +2153,8 @@ assignRoles(
 
                 if (
                     !room ||
-                    room.phase !== "night"
+                    room.phase !== "night" ||
+                    room.nightTurn !== "mafia"
                 ) {
                     return;
                 }
@@ -1943,7 +2236,8 @@ assignRoles(
 
                 if (
                     !room ||
-                    room.phase !== "night"
+                    room.phase !== "night" ||
+                    room.nightTurn !== "mafia"
                 ) {
                     return;
                 }
@@ -2044,7 +2338,8 @@ assignRoles(
 
                 if (
                     !room ||
-                    room.phase !== "night"
+                    room.phase !== "night" ||
+                    room.nightTurn !== "cupid"
                 ) {
                     return;
                 }
@@ -2182,7 +2477,8 @@ assignRoles(
 
                 if (
                     !room ||
-                    room.phase !== "night"
+                    room.phase !== "night" ||
+                    room.nightTurn !== "doctor"
                 ) {
                     return;
                 }
@@ -2262,7 +2558,8 @@ assignRoles(
 
                 if (
                     !room ||
-                    room.phase !== "night"
+                    room.phase !== "night" ||
+                    room.nightTurn !== "detective"
                 ) {
                     return;
                 }
