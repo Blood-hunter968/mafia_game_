@@ -8,6 +8,9 @@ let isHost = false;
 let hasVoted = false;
 let phaseTimerInterval = null;
 let currentPhaseEndsAt = null;
+let currentNightTurn = "";
+let nightTurnTimerInterval = null;
+let currentNightTurnEndsAt = null;
 
 const $ = id => document.getElementById(id);
 
@@ -869,6 +872,197 @@ function setupStartGame() {
     );
 }
 
+
+/* =========================================================
+   DEVICE-SPECIFIC ASSETS
+   Mobile/tablet uses square mobile images; laptop/desktop uses wide images.
+========================================================= */
+
+function isMobileOrTablet() {
+    return window.matchMedia && window.matchMedia("(max-width: 900px)").matches;
+}
+
+function getRoleImage(role) {
+    const mobile = isMobileOrTablet();
+    const roleImages = {
+        mafia: mobile ? "/mafia-role-mobile.png" : "/mafia-role-laptop.png",
+        doctor: mobile ? "/doctor-role-mobile.png" : "/doctor-role-laptop.png",
+        detective: mobile ? "/detective-role-mobile.png" : "/detective-role-laptop.png",
+        cupid: mobile ? "/cupid-role-mobile.png" : "/cupid-role-laptop.png",
+        godfather: "/godfather.png",
+        grandmafia: "/grandmafia.png",
+        grandma: "/grandma.png",
+        jester: "/jester.png",
+        civilian: "/civilian.png",
+        babymafia: mobile ? "/mafia-role-mobile.png" : "/mafia-role-laptop.png"
+    };
+    return roleImages[String(role || "").toLowerCase().replace(/\s+/g, "")] || "";
+}
+
+function getDeathImage() {
+    return isMobileOrTablet() ? "death-mobile.png" : "death-laptop.png";
+}
+
+/* =========================================================
+   NIGHT ROLE TURN OVERLAY
+   Laptop role images + 30-second turn timer.
+========================================================= */
+
+function ensureNightTurnOverlay() {
+    let overlay = $("nightTurnOverlay");
+    if (overlay) return overlay;
+
+    overlay = document.createElement("div");
+    overlay.id = "nightTurnOverlay";
+    overlay.innerHTML = `
+        <div class="night-turn-card">
+            <div class="night-turn-title" id="nightTurnTitle">MAFIA TURN</div>
+            <div class="night-turn-photo-wrap">
+                <img id="nightTurnPhoto" src="" alt="Night role turn">
+                <div id="nightTurnTimer" class="night-turn-timer">00:30</div>
+            </div>
+            <div class="night-turn-subtitle" id="nightTurnSubtitle">MAFIA TEAM IS MAKING A DECISION</div>
+        </div>
+    `;
+
+    document.body.appendChild(overlay);
+    return overlay;
+}
+
+function isMyActiveNightTurn(turn) {
+    if (currentPhase !== "night") return false;
+
+    if (turn === "mafia") {
+        return isMafiaTeamClient(myRole);
+    }
+    if (turn === "doctor") {
+        return myRole === "Doctor";
+    }
+    if (turn === "detective") {
+        return myRole === "Detective";
+    }
+    if (turn === "cupid") {
+        return myRole === "Clupid" || myRole === "Cupid";
+    }
+    return false;
+}
+
+function updateNightTurnOverlay(turn, endsAt) {
+    currentNightTurn = turn || "";
+    currentNightTurnEndsAt = endsAt || null;
+
+    if (nightTurnTimerInterval) {
+        clearInterval(nightTurnTimerInterval);
+        nightTurnTimerInterval = null;
+    }
+
+    const overlay = ensureNightTurnOverlay();
+    const card = overlay?.querySelector(".night-turn-card");
+    const photo = $("nightTurnPhoto");
+    const title = $("nightTurnTitle");
+    const subtitle = $("nightTurnSubtitle");
+    const timer = $("nightTurnTimer");
+
+    // The player whose role is currently active gets the private action UI.
+    // Everyone else gets the full-screen public turn announcement.
+    if (isMyActiveNightTurn(turn)) {
+        overlay.style.display = "none";
+        if (card) card.className = "night-turn-card";
+        return;
+    }
+
+    const roleData = {
+        mafia: {
+            title: "MAFIA TURN",
+            subtitle: "MAFIA IS MAKING A DECISION",
+            image: "/mafia-turn-public.png"
+        },
+        doctor: {
+            title: "DOCTOR TURN",
+            subtitle: "DOCTOR IS MAKING A DECISION",
+            image: "/doctor-turn-public.png"
+        },
+        detective: {
+            title: "DETECTIVE TURN",
+            subtitle: "DETECTIVE IS MAKING A DECISION",
+            image: "/detective-turn-public.png"
+        },
+        cupid: {
+            title: "CUPID TURN",
+            subtitle: "CUPID IS MAKING A DECISION",
+            image: "/cupid-turn-public.png"
+        }
+    };
+
+    const info = roleData[turn];
+
+    if (!info || currentPhase !== "night" || !endsAt) {
+        overlay.style.display = "none";
+        if (card) card.className = "night-turn-card";
+        return;
+    }
+
+    if (card) {
+        card.className = "night-turn-card night-turn-public-role";
+        card.dataset.turn = turn;
+    }
+
+    // Clear the previous image first. This prevents Doctor/Detective/Cupid
+    // from briefly showing the previous Mafia image while the new image loads.
+    if (photo) {
+        photo.style.display = "none";
+        photo.removeAttribute("src");
+        photo.onerror = () => {
+            photo.style.display = "none";
+        };
+        photo.onload = () => {
+            photo.style.display = "block";
+        };
+        photo.src = info.image;
+        photo.alt = info.title;
+    }
+
+    if (title) title.textContent = info.title;
+    if (subtitle) subtitle.textContent = info.subtitle;
+
+    overlay.style.display = "flex";
+
+    const tick = () => {
+        const remaining = Math.max(
+            0,
+            Number(currentNightTurnEndsAt) - Date.now()
+        );
+        const totalSeconds = Math.ceil(remaining / 1000);
+        const seconds = Math.min(30, totalSeconds);
+
+        if (timer) {
+            timer.textContent = `00:${String(seconds).padStart(2, "0")}`;
+            timer.classList.toggle("night-turn-timer-warning", seconds <= 10);
+        }
+
+        if (remaining <= 0 && nightTurnTimerInterval) {
+            clearInterval(nightTurnTimerInterval);
+            nightTurnTimerInterval = null;
+        }
+    };
+
+    tick();
+    nightTurnTimerInterval = setInterval(tick, 100);
+}
+
+function hideNightTurnOverlay() {
+    currentNightTurn = "";
+    currentNightTurnEndsAt = null;
+
+    if (nightTurnTimerInterval) {
+        clearInterval(nightTurnTimerInterval);
+        nightTurnTimerInterval = null;
+    }
+
+    const overlay = $("nightTurnOverlay");
+    if (overlay) overlay.style.display = "none";
+}
+
 /* =========================================================
    ROLE LOGOS
 ========================================================= */
@@ -881,19 +1075,17 @@ function updateRoleDisplay(role) {
     if (!roleText || !roleLogo) return;
 
     const roleLogos = {
-
         "Civilian": "civilian.png",
-        "Mafia": "mafia.png",
+        "Mafia": isMobileOrTablet() ? "mafia-role-mobile.png" : "mafia-role-laptop.png",
         "Godfather": "godfather.png",
         "Grandmafia": "grandmafia.png",
         "Grandma": "grandma.png",
-        "Detective": "detective.png",
-        "Doctor": "doctor.png",
+        "Detective": getRoleImage("detective"),
+        "Doctor": getRoleImage("doctor"),
         "Jester": "jester.png",
-        "Clupid": "clupid.png",
-        "Cupid": "clupid.png",
-        "Baby Mafia": "mafia.png"
-
+        "Clupid": getRoleImage("cupid"),
+        "Cupid": getRoleImage("cupid"),
+        "Baby Mafia": getRoleImage("babymafia")
     };
 
     const logo = roleLogos[role];
@@ -902,9 +1094,13 @@ function updateRoleDisplay(role) {
 
     if (logo) {
 
+        // Use an absolute public path so the role image works from any route.
         roleLogo.src = logo;
         roleLogo.alt = role;
         roleLogo.style.display = "block";
+        roleLogo.onerror = () => {
+            roleLogo.style.display = "none";
+        };
 
     } else {
 
@@ -1021,6 +1217,7 @@ socket.on(
 
         updatePhaseTitle(data);
         updatePhaseTimer(data.phaseEndsAt, data.phase);
+        updateNightTurnOverlay(data.nightTurn, data.nightTurnEndsAt);
 
         updateRoleDisplay(myRole);
 
@@ -1089,13 +1286,23 @@ function renderGamePlayers() {
         const li =
             document.createElement("li");
 
-        li.textContent =
-            player.name +
-            (
-                player.alive
-                    ? ""
-                    : " ☠️"
-            );
+        const name = document.createElement("span");
+        name.textContent = player.name;
+
+        if (player.role) {
+            const role = document.createElement("span");
+            role.className = "visible-player-role";
+            role.textContent = ` — ${player.role}`;
+            name.appendChild(role);
+        }
+
+        li.appendChild(name);
+
+        if (!player.alive) {
+            const dead = document.createElement("span");
+            dead.textContent = " ☠️";
+            li.appendChild(dead);
+        }
 
         if (!player.alive) {
 
@@ -1587,9 +1794,27 @@ function updateActionMessage() {
     if (
         currentPhase === "night"
     ) {
+        const roleTurnMap = {
+            mafia: "Mafia",
+            doctor: "Doctor",
+            detective: "Detective",
+            cupid: "Cupid"
+        };
 
-        message.textContent =
-            "🌙 Choose your night action.";
+        const activeRole = roleTurnMap[currentNightTurn];
+
+        if (!activeRole) {
+            message.textContent = "🌙 Preparing the next night turn...";
+        } else if (
+            (currentNightTurn === "mafia" && isMafiaTeamClient(myRole)) ||
+            (currentNightTurn === "doctor" && myRole === "Doctor") ||
+            (currentNightTurn === "detective" && myRole === "Detective") ||
+            (currentNightTurn === "cupid" && (myRole === "Clupid" || myRole === "Cupid"))
+        ) {
+            message.textContent = `🎯 ${activeRole} turn — make your decision.`;
+        } else {
+            message.textContent = `⏳ ${activeRole} is making a decision...`;
+        }
 
     } else if (
         currentPhase === "day"
@@ -1678,8 +1903,49 @@ socket.on(
     "detectiveResult",
     data => {
 
-        if ($("actionMessage")) {
+        // The Detective result is private and must remain visible
+        // even when the next public night-turn overlay (Cupid, etc.) starts.
+        let popup = $("detectiveResultPopup");
 
+        if (!popup) {
+            popup = document.createElement("div");
+            popup.id = "detectiveResultPopup";
+            popup.innerHTML = `
+                <div class="detective-result-card">
+                    <div class="detective-result-title">🔎 INVESTIGATION RESULT</div>
+                    <div class="detective-result-player" id="detectiveResultPlayer"></div>
+                    <div class="detective-result-answer" id="detectiveResultAnswer"></div>
+                </div>
+            `;
+            document.body.appendChild(popup);
+        }
+
+        const playerBox = $("detectiveResultPlayer");
+        const answerBox = $("detectiveResultAnswer");
+
+        if (playerBox) {
+            playerBox.textContent = data?.playerName || "Unknown player";
+        }
+
+        if (answerBox) {
+            answerBox.textContent = data?.result || "UNKNOWN";
+            answerBox.className =
+                "detective-result-answer " +
+                (data?.result === "MAFIA"
+                    ? "detective-result-mafia"
+                    : "detective-result-not-mafia");
+        }
+
+        popup.style.display = "flex";
+
+        // Keep the result visible while the next night turn runs,
+        // then hide it automatically.
+        clearTimeout(window.detectiveResultPopupTimer);
+        window.detectiveResultPopupTimer = setTimeout(() => {
+            if (popup) popup.style.display = "none";
+        }, 5000);
+
+        if ($("actionMessage")) {
             $("actionMessage").textContent =
                 `🔎 ${data.playerName}: ${data.result}`;
         }
@@ -1710,6 +1976,71 @@ socket.on(
 );
 
 /* =========================================================
+   DEATH ROLE REVEAL
+   Laptop/desktop and mobile/tablet use separate supplied images.
+========================================================= */
+
+function ensureDeathRevealOverlay() {
+    let overlay = $("deathRevealOverlay");
+    if (overlay) return overlay;
+
+    overlay = document.createElement("div");
+    overlay.id = "deathRevealOverlay";
+    overlay.innerHTML = `
+        <div class="death-reveal-card">
+            <div class="death-reveal-title">YOU ARE DEATH</div>
+            <div class="death-reveal-photo-wrap">
+                <img id="deathRevealPhoto" src="" alt="Death reveal">
+            </div>
+            <div class="death-reveal-names" id="deathRevealNames"></div>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+
+    return overlay;
+}
+
+function showDeathRevealOverlay(names) {
+    if (!Array.isArray(names) || !names.length) return;
+    const overlay = ensureDeathRevealOverlay();
+    const photo = $("deathRevealPhoto");
+    const nameBox = $("deathRevealNames");
+    if (photo) {
+        photo.src = getDeathImage();
+        photo.alt = "You Are Death";
+    }
+    if (nameBox) {
+        nameBox.textContent = names.join(", ");
+    }
+    overlay.style.display = "flex";
+}
+
+function hideDeathRevealOverlay() {
+    const overlay = $("deathRevealOverlay");
+    if (overlay) overlay.style.display = "none";
+}
+
+/* =========================================================
+   PRIVATE DEATH REVEAL
+   Only the socket of an eliminated player receives this event.
+========================================================= */
+
+socket.on(
+    "deathReveal",
+    data => {
+
+        const names =
+            Array.isArray(data?.names)
+                ? data.names
+                : [];
+
+        if (names.length) {
+            showDeathRevealOverlay(names);
+        }
+    }
+);
+
+/* =========================================================
    MORNING RESULT
 ========================================================= */
 
@@ -1719,6 +2050,13 @@ socket.on(
 
         const names =
             data.eliminatedPlayers || [];
+
+        /*
+           Death screens are private.
+           The server sends "deathReveal" only to players who died.
+           This public morning event must never open the death screen
+           for everyone in the room.
+        */
 
         if ($("actionMessage")) {
 
@@ -2056,6 +2394,11 @@ socket.on(
         if (!data) return;
 
         currentPhase = "gameover";
+        hideNightTurnOverlay();
+
+        // A dead player's private death screen must never remain
+        // visible when the game reaches the winner screen.
+        hideDeathRevealOverlay();
 
         showGameOverMenu(
             data.winner,
@@ -2165,6 +2508,8 @@ function setupBackHomeGameOver() {
             hasVoted = false;
             isHost = false;
             updatePhaseTimer(null, "");
+            hideNightTurnOverlay();
+        hideDeathRevealOverlay();
 
             setScreen("homeScreen");
         }
@@ -2207,6 +2552,8 @@ socket.on(
 
         hasVoted = false;
         updatePhaseTimer(null, "");
+        hideNightTurnOverlay();
+        hideDeathRevealOverlay();
 
         /* Clear selected targets/actions */
 
@@ -2345,6 +2692,7 @@ document.addEventListener(
         */
 
         ensureAnnouncementBox();
+        ensureNightTurnOverlay();
 
         /*
            Hide it until an announcement happens.
