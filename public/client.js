@@ -1,5 +1,80 @@
 const socket = io();
 
+/* =========================================================
+   GAME SOUNDS
+   Put these files inside: public/sounds/
+========================================================= */
+const gameSounds = {
+    button: new Audio("/sounds/button-click.mp3"),
+    death: new Audio("/sounds/player-dead.mp3"),
+    newRound: new Audio("/sounds/new-round.mp3"),
+    last10: new Audio("/sounds/last-10-heartbeat.mp3"),
+    turnOver: new Audio("/sounds/turn-over.mp3")
+};
+
+Object.values(gameSounds).forEach(sound => {
+    sound.preload = "auto";
+});
+
+function playGameSound(sound) {
+    if (!sound) return;
+
+    try {
+        sound.currentTime = 0;
+        const promise = sound.play();
+        if (promise) promise.catch(() => {});
+    } catch (error) {
+        console.warn("Sound error:", error);
+    }
+}
+
+/*
+   Browsers block sound until the user interacts with the page.
+   A button click unlocks the audio system without making the
+   player hear all five sounds at once.
+*/
+let audioUnlocked = false;
+
+function unlockGameAudio() {
+    if (audioUnlocked) return;
+
+    const sound = gameSounds.button;
+    if (!sound) return;
+
+    try {
+        const oldVolume = sound.volume;
+        sound.volume = 0;
+        const promise = sound.play();
+
+        if (promise) {
+            promise.then(() => {
+                sound.pause();
+                sound.currentTime = 0;
+                sound.volume = oldVolume;
+                audioUnlocked = true;
+            }).catch(() => {
+                sound.volume = oldVolume;
+            });
+        } else {
+            sound.pause();
+            sound.currentTime = 0;
+            sound.volume = oldVolume;
+            audioUnlocked = true;
+        }
+    } catch (error) {
+        console.warn("Audio unlock error:", error);
+    }
+}
+
+/* Sound #1 — every enabled button press */
+document.addEventListener("click", event => {
+    const button = event.target.closest("button");
+    if (!button || button.disabled) return;
+
+    unlockGameAudio();
+    playGameSound(gameSounds.button);
+}, true);
+
 let roomCode = "";
 let myRole = "";
 let players = [];
@@ -11,6 +86,9 @@ let currentPhaseEndsAt = null;
 let currentNightTurn = "";
 let nightTurnTimerInterval = null;
 let currentNightTurnEndsAt = null;
+let currentNightNumber = 0;
+let detectiveResultMessage = "";
+let deathScreenLocked = false;
 
 const $ = id => document.getElementById(id);
 
@@ -141,8 +219,20 @@ socket.on("announcement", data => {
 
     if (!data) return;
 
+    const message = String(data.message || "");
+
+    /* Sound #3 — a new night/round starts */
+    if (/Night\s+\d+\s+has begun/i.test(message) || /Night\s+1\s+begins/i.test(message)) {
+        playGameSound(gameSounds.newRound);
+    }
+
+    /* Sound #5 — Mafia/Doctor/Detective/Cupid turn ends */
+    if (/(MAFIA|DOCTOR|DETECTIVE|CUPID)\s+turn is over/i.test(message)) {
+        playGameSound(gameSounds.turnOver);
+    }
+
     announcement(
-        data.message || "",
+        message,
         data.type || "info"
     );
 });
@@ -885,16 +975,16 @@ function isMobileOrTablet() {
 function getRoleImage(role) {
     const mobile = isMobileOrTablet();
     const roleImages = {
-        mafia: mobile ? "/mafia-role-mobile.png" : "/mafia-role-laptop.png",
-        doctor: mobile ? "/doctor-role-mobile.png" : "/doctor-role-laptop.png",
-        detective: mobile ? "/detective-role-mobile.png" : "/detective-role-laptop.png",
-        cupid: mobile ? "/cupid-role-mobile.png" : "/cupid-role-laptop.png",
+        mafia: mobile ? "/mafia-role.png" : "/mafia-role.png",
+        doctor: mobile ? "/doctor-role.png" : "/doctor-role.png",
+        detective: mobile ? "/detective-role.png" : "/detective-role.png",
+        cupid: mobile ? "/cupid-role.png" : "/cupid-role.png",
         godfather: "/godfather.png",
         grandmafia: "/grandmafia.png",
         grandma: "/grandma.png",
         jester: "/jester.png",
         civilian: "/civilian.png",
-        babymafia: mobile ? "/mafia-role-mobile.png" : "/mafia-role-laptop.png"
+        babymafia: mobile ? "/mafia-role.png" : "/mafia-role.png"
     };
     return roleImages[String(role || "").toLowerCase().replace(/\s+/g, "")] || "";
 }
@@ -947,6 +1037,9 @@ function isMyActiveNightTurn(turn) {
     return false;
 }
 
+let lastNightWarningSecond = -1;
+let lastNightTurnKey = "";
+
 function updateNightTurnOverlay(turn, endsAt) {
     currentNightTurn = turn || "";
     currentNightTurnEndsAt = endsAt || null;
@@ -956,6 +1049,13 @@ function updateNightTurnOverlay(turn, endsAt) {
         nightTurnTimerInterval = null;
     }
 
+    const turnKey = `${currentNightTurn}|${currentNightTurnEndsAt || ""}`;
+
+    if (turnKey !== lastNightTurnKey) {
+        lastNightTurnKey = turnKey;
+        lastNightWarningSecond = -1;
+    }
+
     const overlay = ensureNightTurnOverlay();
     const card = overlay?.querySelector(".night-turn-card");
     const photo = $("nightTurnPhoto");
@@ -963,34 +1063,26 @@ function updateNightTurnOverlay(turn, endsAt) {
     const subtitle = $("nightTurnSubtitle");
     const timer = $("nightTurnTimer");
 
-    // The player whose role is currently active gets the private action UI.
-    // Everyone else gets the full-screen public turn announcement.
-    if (isMyActiveNightTurn(turn)) {
-        overlay.style.display = "none";
-        if (card) card.className = "night-turn-card";
-        return;
-    }
-
     const roleData = {
         mafia: {
             title: "MAFIA TURN",
             subtitle: "MAFIA IS MAKING A DECISION",
-            image: "/mafia-turn-public.png"
+            image: isMobileOrTablet() ? "/mafia-turn-mobile.png" : "/mafia-turn-laptop.png"
         },
         doctor: {
             title: "DOCTOR TURN",
             subtitle: "DOCTOR IS MAKING A DECISION",
-            image: "/doctor-turn-public.png"
+            image: isMobileOrTablet() ? "/doctor-turn-mobile.png" : "/doctor-turn-laptop.png"
         },
         detective: {
             title: "DETECTIVE TURN",
             subtitle: "DETECTIVE IS MAKING A DECISION",
-            image: "/detective-turn-public.png"
+            image: isMobileOrTablet() ? "/detective-turn-mobile.png" : "/detective-turn-laptop.png"
         },
         cupid: {
             title: "CUPID TURN",
             subtitle: "CUPID IS MAKING A DECISION",
-            image: "/cupid-turn-public.png"
+            image: isMobileOrTablet() ? "/cupid-turn-mobile.png" : "/cupid-turn-laptop.png"
         }
     };
 
@@ -998,34 +1090,36 @@ function updateNightTurnOverlay(turn, endsAt) {
 
     if (!info || currentPhase !== "night" || !endsAt) {
         overlay.style.display = "none";
-        if (card) card.className = "night-turn-card";
         return;
     }
 
-    if (card) {
-        card.className = "night-turn-card night-turn-public-role";
-        card.dataset.turn = turn;
-    }
+    /* The active role gets the private action UI.
+       Other players see the public turn overlay. */
+    if (isMyActiveNightTurn(turn)) {
+        overlay.style.display = "none";
+    } else {
+        if (card) {
+            card.className = "night-turn-card night-turn-public-role";
+            card.dataset.turn = turn;
+        }
 
-    // Clear the previous image first. This prevents Doctor/Detective/Cupid
-    // from briefly showing the previous Mafia image while the new image loads.
-    if (photo) {
-        photo.style.display = "none";
-        photo.removeAttribute("src");
-        photo.onerror = () => {
+        if (photo) {
             photo.style.display = "none";
-        };
-        photo.onload = () => {
-            photo.style.display = "block";
-        };
-        photo.src = info.image;
-        photo.alt = info.title;
+            photo.removeAttribute("src");
+            photo.onerror = () => {
+                photo.style.display = "none";
+            };
+            photo.onload = () => {
+                photo.style.display = "block";
+            };
+            photo.src = info.image;
+            photo.alt = info.title;
+        }
+
+        if (title) title.textContent = info.title;
+        if (subtitle) subtitle.textContent = info.subtitle;
+        overlay.style.display = "flex";
     }
-
-    if (title) title.textContent = info.title;
-    if (subtitle) subtitle.textContent = info.subtitle;
-
-    overlay.style.display = "flex";
 
     const tick = () => {
         const remaining = Math.max(
@@ -1037,7 +1131,20 @@ function updateNightTurnOverlay(turn, endsAt) {
 
         if (timer) {
             timer.textContent = `00:${String(seconds).padStart(2, "0")}`;
-            timer.classList.toggle("night-turn-timer-warning", seconds <= 10);
+
+            if (seconds <= 10 && seconds > 0) {
+                timer.classList.add("night-turn-timer-warning");
+                timer.classList.add("night-turn-heartbeat");
+
+                /* Sound #4 — one heartbeat/beep for every last-10-second tick */
+                if (lastNightWarningSecond !== seconds) {
+                    lastNightWarningSecond = seconds;
+                    playGameSound(gameSounds.last10);
+                }
+            } else {
+                timer.classList.remove("night-turn-timer-warning");
+                timer.classList.remove("night-turn-heartbeat");
+            }
         }
 
         if (remaining <= 0 && nightTurnTimerInterval) {
@@ -1076,7 +1183,7 @@ function updateRoleDisplay(role) {
 
     const roleLogos = {
         "Civilian": "civilian.png",
-        "Mafia": isMobileOrTablet() ? "mafia-role-mobile.png" : "mafia-role-laptop.png",
+        "Mafia": "mafia-role.png",
         "Godfather": "godfather.png",
         "Grandmafia": "grandmafia.png",
         "Grandma": "grandma.png",
@@ -1202,6 +1309,16 @@ socket.on(
             data.phase || "";
 
         /*
+           DEAD PLAYER MODE:
+           As soon as the server tells this client that they are dead,
+           lock the supplied death image over the entire game screen.
+           This also covers deaths caused by night actions or vote chains.
+        */
+        if (currentPhase !== "gameover" && currentPhase !== "lobby") {
+            keepDeadPlayerOnDeathScreen(data);
+        }
+
+        /*
            Reset vote only when entering a new day.
         */
 
@@ -1218,6 +1335,27 @@ socket.on(
         updatePhaseTitle(data);
         updatePhaseTimer(data.phaseEndsAt, data.phase);
         updateNightTurnOverlay(data.nightTurn, data.nightTurnEndsAt);
+
+        /*
+           The server sends fresh gameInformation after a Detective
+           action. Do not let that refresh overwrite the Detective's
+           result. Clear the result only when a NEW night starts.
+        */
+        if (currentPhase === "night") {
+            const newNightNumber = Number(data.nightNumber) || 0;
+
+            if (
+                newNightNumber !== currentNightNumber
+            ) {
+                currentNightNumber = newNightNumber;
+                detectiveResultMessage = "";
+                hideDetectiveResultPopup();
+            }
+        } else {
+            currentNightNumber = 0;
+            detectiveResultMessage = "";
+            hideDetectiveResultPopup();
+        }
 
         updateRoleDisplay(myRole);
 
@@ -1794,6 +1932,11 @@ function updateActionMessage() {
     if (
         currentPhase === "night"
     ) {
+        if (detectiveResultMessage) {
+            message.textContent = detectiveResultMessage;
+            return;
+        }
+
         const roleTurnMap = {
             mafia: "Mafia",
             doctor: "Doctor",
@@ -1896,6 +2039,126 @@ socket.on(
 );
 
 /* =========================================================
+   DETECTIVE RESULT POPUP
+   PRIVATE — ONLY THE DETECTIVE RECEIVES THE RESULT
+========================================================= */
+
+let detectiveResultPopupTimer = null;
+
+function ensureDetectiveResultPopup() {
+    let overlay = $("detectiveResultPopup");
+    if (overlay) return overlay;
+
+    overlay = document.createElement("div");
+    overlay.id = "detectiveResultPopup";
+    overlay.setAttribute("aria-live", "assertive");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.innerHTML = `
+        <div class="detective-result-card">
+            <div class="detective-result-scan"></div>
+
+            <div class="detective-result-badge">
+                🔎
+            </div>
+
+            <div class="detective-result-kicker">
+                CASE FILE • NIGHT INVESTIGATION
+            </div>
+
+            <div class="detective-result-title">
+                INVESTIGATION COMPLETE
+            </div>
+
+            <div class="detective-result-divider"></div>
+
+            <div class="detective-result-label">
+                SUBJECT
+            </div>
+
+            <div class="detective-result-player" id="detectiveResultPlayer">
+                Unknown
+            </div>
+
+            <div class="detective-result-label">
+                MAFIA STATUS
+            </div>
+
+            <div class="detective-result-answer" id="detectiveResultAnswer">
+                UNKNOWN
+            </div>
+
+            <div class="detective-result-footer">
+                <span class="detective-result-dot"></span>
+                PRIVATE DETECTIVE REPORT
+            </div>
+
+            <div class="detective-result-progress">
+                <div class="detective-result-progress-bar"></div>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(overlay);
+    return overlay;
+}
+
+function showDetectiveResultPopup(playerName, result) {
+    const overlay = ensureDetectiveResultPopup();
+    const player = $("detectiveResultPlayer");
+    const answer = $("detectiveResultAnswer");
+
+    clearTimeout(detectiveResultPopupTimer);
+
+    const isMafia = String(result || "").toUpperCase() === "MAFIA";
+
+    if (player) {
+        player.textContent = String(playerName || "Unknown");
+    }
+
+    if (answer) {
+        answer.textContent = isMafia
+            ? "🔴 MAFIA — YES"
+            : "🟢 MAFIA — NO";
+
+        answer.classList.toggle("detective-result-mafia", isMafia);
+        answer.classList.toggle("detective-result-not-mafia", !isMafia);
+    }
+
+    overlay.style.display = "flex";
+
+    // Restart the entrance/progress animation cleanly every investigation.
+    const card = overlay.querySelector(".detective-result-card");
+    const progress = overlay.querySelector(".detective-result-progress-bar");
+
+    if (card) {
+        card.classList.remove("detective-result-visible");
+        void card.offsetWidth;
+        card.classList.add("detective-result-visible");
+    }
+
+    if (progress) {
+        progress.classList.remove("detective-result-progress-running");
+        void progress.offsetWidth;
+        progress.classList.add("detective-result-progress-running");
+    }
+
+    // The server advances the night turn after the same 3-second window.
+    detectiveResultPopupTimer = setTimeout(() => {
+        hideDetectiveResultPopup();
+    }, 3000);
+}
+
+function hideDetectiveResultPopup() {
+    clearTimeout(detectiveResultPopupTimer);
+    detectiveResultPopupTimer = null;
+
+    const overlay = $("detectiveResultPopup");
+    if (overlay) {
+        overlay.style.display = "none";
+    }
+}
+
+/* =========================================================
    DETECTIVE
 ========================================================= */
 
@@ -1903,52 +2166,22 @@ socket.on(
     "detectiveResult",
     data => {
 
-        // The Detective result is private and must remain visible
-        // even when the next public night-turn overlay (Cupid, etc.) starts.
-        let popup = $("detectiveResultPopup");
-
-        if (!popup) {
-            popup = document.createElement("div");
-            popup.id = "detectiveResultPopup";
-            popup.innerHTML = `
-                <div class="detective-result-card">
-                    <div class="detective-result-title">🔎 INVESTIGATION RESULT</div>
-                    <div class="detective-result-player" id="detectiveResultPlayer"></div>
-                    <div class="detective-result-answer" id="detectiveResultAnswer"></div>
-                </div>
-            `;
-            document.body.appendChild(popup);
-        }
-
-        const playerBox = $("detectiveResultPlayer");
-        const answerBox = $("detectiveResultAnswer");
-
-        if (playerBox) {
-            playerBox.textContent = data?.playerName || "Unknown player";
-        }
-
-        if (answerBox) {
-            answerBox.textContent = data?.result || "UNKNOWN";
-            answerBox.className =
-                "detective-result-answer " +
-                (data?.result === "MAFIA"
-                    ? "detective-result-mafia"
-                    : "detective-result-not-mafia");
-        }
-
-        popup.style.display = "flex";
-
-        // Keep the result visible while the next night turn runs,
-        // then hide it automatically.
-        clearTimeout(window.detectiveResultPopupTimer);
-        window.detectiveResultPopupTimer = setTimeout(() => {
-            if (popup) popup.style.display = "none";
-        }, 5000);
+        detectiveResultMessage =
+            `🔎 ${data.playerName}: ${data.result}`;
 
         if ($("actionMessage")) {
             $("actionMessage").textContent =
-                `🔎 ${data.playerName}: ${data.result}`;
+                "🔎 Investigation complete. Review your private report.";
         }
+
+        // Prevent another click while the 3-second private report is visible.
+        hide("targetPlayer");
+        hide("confirmAction");
+
+        showDetectiveResultPopup(
+            data?.playerName,
+            data?.result
+        );
     }
 );
 
@@ -1997,11 +2230,38 @@ function ensureDeathRevealOverlay() {
     `;
     document.body.appendChild(overlay);
 
+    /*
+       The death screen is intentionally NOT closable.
+       Once this player is dead, it stays over the game until GAME OVER
+       (or the host restarts the game).
+    */
     return overlay;
 }
 
-function showDeathRevealOverlay(names) {
+function showDeathRevealOverlay(names, eliminatedPlayerIds = []) {
     if (!Array.isArray(names) || !names.length) return;
+
+    /*
+       IMPORTANT: the death reveal is PRIVATE.
+       Everyone may receive the public death result (and death sound),
+       but only the player whose socket ID was eliminated sees this screen.
+    */
+    if (
+        !Array.isArray(eliminatedPlayerIds) ||
+        !eliminatedPlayerIds.includes(socket.id)
+    ) {
+        /*
+           If this player was already killed earlier, NEVER hide their
+           death screen just because another player was eliminated later.
+        */
+        if (deathScreenLocked) return;
+
+        hideDeathRevealOverlay();
+        return;
+    }
+
+    deathScreenLocked = true;
+
     const overlay = ensureDeathRevealOverlay();
     const photo = $("deathRevealPhoto");
     const nameBox = $("deathRevealNames");
@@ -2015,30 +2275,45 @@ function showDeathRevealOverlay(names) {
     overlay.style.display = "flex";
 }
 
-function hideDeathRevealOverlay() {
+function hideDeathRevealOverlay(force = false) {
+    /* Locked death screens can only be closed by GAME OVER/restart. */
+    if (deathScreenLocked && !force) return;
+
     const overlay = $("deathRevealOverlay");
     if (overlay) overlay.style.display = "none";
 }
 
-/* =========================================================
-   PRIVATE DEATH REVEAL
-   Only the socket of an eliminated player receives this event.
-========================================================= */
-
-socket.on(
-    "deathReveal",
-    data => {
-
-        const names =
-            Array.isArray(data?.names)
-                ? data.names
-                : [];
-
-        if (names.length) {
-            showDeathRevealOverlay(names);
-        }
+function keepDeadPlayerOnDeathScreen(data) {
+    if (!data || data.phase === "gameover" || data.phase === "lobby") {
+        return false;
     }
-);
+
+    const me = Array.isArray(data.players)
+        ? data.players.find(player => player.id === socket.id)
+        : null;
+
+    if (!me || me.alive !== false) {
+        return false;
+    }
+
+    deathScreenLocked = true;
+
+    const overlay = ensureDeathRevealOverlay();
+    const photo = $("deathRevealPhoto");
+    const nameBox = $("deathRevealNames");
+
+    if (photo) {
+        photo.src = getDeathImage();
+        photo.alt = "You Are Death";
+    }
+
+    if (nameBox) {
+        nameBox.textContent = me.name || "You";
+    }
+
+    overlay.style.display = "flex";
+    return true;
+}
 
 /* =========================================================
    MORNING RESULT
@@ -2049,14 +2324,29 @@ socket.on(
     data => {
 
         const names =
-            data.eliminatedPlayers || [];
+            Array.isArray(data?.eliminatedPlayers)
+                ? data.eliminatedPlayers
+                : [];
 
-        /*
-           Death screens are private.
-           The server sends "deathReveal" only to players who died.
-           This public morning event must never open the death screen
-           for everyone in the room.
-        */
+        const eliminatedPlayerIds =
+            Array.isArray(data?.eliminatedPlayerIds)
+                ? data.eliminatedPlayerIds
+                : [];
+
+        /* Sound #2 — everyone hears that someone died */
+        if (names.length) {
+            playGameSound(gameSounds.death);
+        }
+
+        /* Death screen — ONLY the eliminated player sees it */
+        if (names.length) {
+            showDeathRevealOverlay(
+                names,
+                eliminatedPlayerIds
+            );
+        } else {
+            hideDeathRevealOverlay();
+        }
 
         if ($("actionMessage")) {
 
@@ -2117,6 +2407,26 @@ socket.on(
         const eliminated = Array.isArray(data?.eliminatedPlayers)
             ? data.eliminatedPlayers
             : [];
+
+        const eliminatedPlayerIds =
+            Array.isArray(data?.eliminatedPlayerIds)
+                ? data.eliminatedPlayerIds
+                : [];
+
+        /* Sound #2 — everyone hears that someone died */
+        if (eliminated.length) {
+            playGameSound(gameSounds.death);
+        }
+
+        /* Death screen — ONLY the eliminated player sees it */
+        if (eliminated.length) {
+            showDeathRevealOverlay(
+                eliminated,
+                eliminatedPlayerIds
+            );
+        } else {
+            hideDeathRevealOverlay();
+        }
 
         const isTie = data?.tie === true;
 
@@ -2395,10 +2705,9 @@ socket.on(
 
         currentPhase = "gameover";
         hideNightTurnOverlay();
-
-        // A dead player's private death screen must never remain
-        // visible when the game reaches the winner screen.
-        hideDeathRevealOverlay();
+        deathScreenLocked = false;
+        hideDeathRevealOverlay(true);
+        hideDetectiveResultPopup();
 
         showGameOverMenu(
             data.winner,
@@ -2509,7 +2818,8 @@ function setupBackHomeGameOver() {
             isHost = false;
             updatePhaseTimer(null, "");
             hideNightTurnOverlay();
-        hideDeathRevealOverlay();
+            deathScreenLocked = false;
+            hideDeathRevealOverlay(true);
 
             setScreen("homeScreen");
         }
@@ -2553,7 +2863,8 @@ socket.on(
         hasVoted = false;
         updatePhaseTimer(null, "");
         hideNightTurnOverlay();
-        hideDeathRevealOverlay();
+        deathScreenLocked = false;
+        hideDeathRevealOverlay(true);
 
         /* Clear selected targets/actions */
 
@@ -2654,6 +2965,38 @@ socket.on(
 );
 
 /* =========================================================
+   LAST-10-SECONDS HEARTBEAT STYLE
+========================================================= */
+function addNightHeartbeatStyle() {
+    if ($("mafiaWarsSoundStyles")) return;
+
+    const style = document.createElement("style");
+    style.id = "mafiaWarsSoundStyles";
+    style.textContent = `
+        .night-turn-timer-warning {
+            color: #ff1f1f !important;
+            border-color: #ff1f1f !important;
+            text-shadow: 0 0 8px rgba(255,0,0,.8), 0 0 18px rgba(255,0,0,.5);
+        }
+
+        .night-turn-heartbeat {
+            animation: mafiaHeartbeat .8s infinite;
+        }
+
+        @keyframes mafiaHeartbeat {
+            0% { transform: scale(1); }
+            15% { transform: scale(1.15); }
+            30% { transform: scale(1); }
+            45% { transform: scale(1.10); }
+            60% { transform: scale(1); }
+            100% { transform: scale(1); }
+        }
+    `;
+
+    document.head.appendChild(style);
+}
+
+/* =========================================================
    INITIALIZE
 ========================================================= */
 
@@ -2693,6 +3036,7 @@ document.addEventListener(
 
         ensureAnnouncementBox();
         ensureNightTurnOverlay();
+        addNightHeartbeatStyle();
 
         /*
            Hide it until an announcement happens.
