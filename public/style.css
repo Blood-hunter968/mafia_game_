@@ -889,6 +889,16 @@ button {
    CENTER COLUMN
 ========================================================= */
 
+
+/* =========================================================
+   VISIBLE PLAYER ROLES — RED
+   ========================================================= */
+#gamePlayerList .visible-player-role {
+    color: #ff3030 !important;
+    font-weight: 800;
+    text-shadow: 0 0 8px rgba(220, 0, 0, 0.28);
+}
+
 .center-game-column {
     display: flex;
     flex-direction: column;
@@ -2208,6 +2218,250 @@ button {
 
     text-shadow:
         0 0 18px rgba(255, 255, 255, 0.25);
+}
+
+/* =========================================================
+   DETECTIVE RESULT — PREMIUM INVESTIGATION REPORT
+   Added without removing the existing Detective styles.
+========================================================= */
+
+#detectiveResultPopup {
+    backdrop-filter: blur(8px);
+    background:
+        radial-gradient(
+            circle at center,
+            rgba(90, 0, 0, 0.18),
+            rgba(0, 0, 0, 0.72) 58%,
+            rgba(0, 0, 0, 0.88)
+        );
+}
+
+.detective-result-card {
+    padding: 34px 28px 24px;
+    border-color: rgba(190, 35, 35, 0.85);
+    border-radius: 10px;
+    isolation: isolate;
+}
+
+.detective-result-card.detective-result-visible {
+    animation: detectiveResultEntrance 0.45s cubic-bezier(.2,.85,.25,1) both;
+}
+
+.detective-result-scan {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background:
+        linear-gradient(
+            90deg,
+            transparent,
+            rgba(255, 40, 40, 0.055),
+            transparent
+        );
+    animation: detectiveResultScan 1.8s linear infinite;
+}
+
+.detective-result-badge {
+    position: relative;
+    z-index: 3;
+    width: 62px;
+    height: 62px;
+    margin: 0 auto 13px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 50%;
+    background:
+        radial-gradient(
+            circle,
+            rgba(150, 20, 20, 0.9),
+            rgba(18, 18, 18, 0.98) 68%
+        );
+    box-shadow:
+        0 0 25px rgba(210, 20, 20, 0.32),
+        inset 0 0 18px rgba(255, 255, 255, 0.06);
+    font-size: 29px;
+    animation: detectiveBadgePulse 1.2s ease-in-out infinite;
+}
+
+.detective-result-kicker {
+    position: relative;
+    z-index: 3;
+    margin-bottom: 8px;
+    color: #a8a8a8;
+    font-family: "Arial Black", Arial, sans-serif;
+    font-size: 10px;
+    font-weight: 900;
+    letter-spacing: 2.5px;
+}
+
+.detective-result-divider {
+    position: relative;
+    z-index: 3;
+    width: 110px;
+    height: 1px;
+    margin: 0 auto 20px;
+    background: linear-gradient(90deg, transparent, #c82020, transparent);
+    box-shadow: 0 0 12px rgba(255, 0, 0, 0.45);
+}
+
+.detective-result-label {
+    position: relative;
+    z-index: 3;
+    margin-top: 10px;
+    color: #777;
+    font-family: "Arial Black", Arial, sans-serif;
+    font-size: 10px;
+    font-weight: 900;
+    letter-spacing: 2px;
+}
+
+.detective-result-player {
+    margin-top: 5px;
+    margin-bottom: 16px;
+    padding: 9px 14px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.035);
+    text-shadow: 0 2px 10px #000;
+}
+
+.detective-result-answer {
+    margin-top: 5px;
+    line-height: 1.05;
+    animation: detectiveAnswerReveal 0.55s 0.12s both;
+}
+
+.detective-result-footer {
+    position: relative;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin-top: 20px;
+    color: #777;
+    font-family: "Arial Black", Arial, sans-serif;
+    font-size: 9px;
+    font-weight: 900;
+    letter-spacing: 1.5px;
+}
+
+.detective-result-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #b51c1c;
+    box-shadow: 0 0 10px rgba(255, 30, 30, 0.75);
+    animation: detectiveDotBlink 0.8s ease-in-out infinite alternate;
+}
+
+.detective-result-progress {
+    position: relative;
+    z-index: 3;
+    width: 100%;
+    height: 3px;
+    margin-top: 18px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.detective-result-progress-bar {
+    width: 0%;
+    height: 100%;
+    background: linear-gradient(90deg, #7e0c0c, #ff3030, #7e0c0c);
+    box-shadow: 0 0 12px rgba(255, 0, 0, 0.7);
+}
+
+.detective-result-progress-running {
+    animation: detectiveResultProgress 3s linear forwards;
+}
+
+@keyframes detectiveResultEntrance {
+    0% {
+        opacity: 0;
+        transform: translateY(20px) scale(0.94);
+        filter: blur(4px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+        filter: blur(0);
+    }
+}
+
+@keyframes detectiveResultScan {
+    0% {
+        transform: translateX(-120%);
+    }
+    100% {
+        transform: translateX(120%);
+    }
+}
+
+@keyframes detectiveBadgePulse {
+    0%, 100% {
+        transform: scale(1);
+        box-shadow:
+            0 0 20px rgba(210, 20, 20, 0.28),
+            inset 0 0 18px rgba(255, 255, 255, 0.06);
+    }
+    50% {
+        transform: scale(1.06);
+        box-shadow:
+            0 0 34px rgba(210, 20, 20, 0.48),
+            inset 0 0 18px rgba(255, 255, 255, 0.08);
+    }
+}
+
+@keyframes detectiveAnswerReveal {
+    0% {
+        opacity: 0;
+        transform: scale(0.82);
+    }
+    100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+@keyframes detectiveDotBlink {
+    from { opacity: 0.35; }
+    to { opacity: 1; }
+}
+
+@keyframes detectiveResultProgress {
+    from { width: 0%; }
+    to { width: 100%; }
+}
+
+@media (max-width: 600px) {
+    #detectiveResultPopup {
+        padding: 14px;
+    }
+
+    .detective-result-card {
+        width: min(94vw, 440px);
+        padding: 27px 18px 20px;
+    }
+
+    .detective-result-badge {
+        width: 54px;
+        height: 54px;
+        font-size: 25px;
+    }
+
+    .detective-result-kicker {
+        font-size: 8px;
+        letter-spacing: 1.8px;
+    }
+
+    .detective-result-answer {
+        font-size: clamp(29px, 10vw, 46px);
+    }
 }
 
 /* =========================================================
