@@ -14,7 +14,7 @@ const rooms = {};
    2-MINUTE PHASE TIMER
 ========================================================= */
 
-const PHASE_TIME_LIMIT = 60 * 1000;
+const PHASE_TIME_LIMIT = 2 * 60 * 1000;
 const NIGHT_TURN_TIME_LIMIT = 30 * 1000;
 
 function clearPhaseTimer(room) {
@@ -42,10 +42,10 @@ function startPhaseTimer(roomCode) {
         currentRoom.phaseTimer = null;
 
         if (currentRoom.phase === "night") {
-            announce(roomCode, "⏰ 3 minutes are over. Night is ending even if someone did not choose an action.", "info");
+            announce(roomCode, "⏰ 2 minutes are over. Night is ending even if someone did not choose an action.", "info");
             endNight(roomCode);
         } else if (currentRoom.phase === "day") {
-            announce(roomCode, "⏰ 3 minutes are over. Voting is ending even if someone did not vote.", "info");
+            announce(roomCode, "⏰ 2 minutes are over. Voting is ending even if someone did not vote.", "info");
             endVoting(roomCode);
         }
     }, PHASE_TIME_LIMIT);
@@ -235,7 +235,19 @@ function checkNightTurnActions(roomCode) {
     const room = rooms[roomCode];
     if (!room || room.phase !== "night") return;
 
+    /*
+       The active night turn finishes immediately once the
+       required action(s) for that turn have been submitted.
+       If an action is not submitted, the existing 30-second
+       timeout in startNightTurn() still ends the turn.
+    */
     if (!currentTurnActionsDone(room)) return;
+
+    announce(
+        roomCode,
+        `⏰ ${nightTurnName(room.nightTurn)} turn is over.`,
+        "info"
+    );
 
     startNightTurn(
         roomCode,
@@ -742,41 +754,6 @@ function eliminatePlayerWithClupid(room, player) {
     }
 
     return eliminated;
-}
-
-/* =========================================================
-   PRIVATE DEATH SCREEN
-   Only the players who were actually eliminated receive
-   the death reveal. Other players keep their normal screen.
-========================================================= */
-
-function sendDeathReveal(roomCode, eliminatedPlayers) {
-
-    if (!rooms[roomCode] || !Array.isArray(eliminatedPlayers)) {
-        return;
-    }
-
-    const names = eliminatedPlayers
-        .filter(player => player && player.id)
-        .map(player => player.name);
-
-    if (!names.length) {
-        return;
-    }
-
-    eliminatedPlayers.forEach(player => {
-
-        if (!player || !player.id) {
-            return;
-        }
-
-        io.to(player.id).emit(
-            "deathReveal",
-            {
-                names
-            }
-        );
-    });
 }
 
 /* =========================================================
@@ -1379,15 +1356,6 @@ function endNight(roomCode) {
     }
 
     /* =====================================================
-       PRIVATE DEATH SCREEN
-       Send only to players who died in this night.
-    ===================================================== */
-
-    if (eliminatedPlayers.length) {
-        sendDeathReveal(roomCode, eliminatedPlayers);
-    }
-
-    /* =====================================================
        CHECK WINNER
     ===================================================== */
 
@@ -1438,6 +1406,9 @@ function endNight(roomCode) {
 
             eliminatedPlayers:
                 names,
+
+            eliminatedPlayerIds:
+                eliminatedPlayers.map(p => p.id),
 
             babyMafiaCreated
         }
@@ -1555,6 +1526,7 @@ function endVoting(roomCode) {
             {
                 eliminatedPlayer: null,
                 eliminatedPlayers: [],
+                eliminatedPlayerIds: [],
                 grandmafiaDeath: false,
                 godfatherDeath: false,
                 tie: false
@@ -1685,15 +1657,6 @@ function endVoting(roomCode) {
     room.votes = {};
 
     /* =====================================================
-       PRIVATE DEATH SCREEN
-       Send only to players who died from this vote.
-    ===================================================== */
-
-    if (eliminatedPlayers.length) {
-        sendDeathReveal(roomCode, eliminatedPlayers);
-    }
-
-    /* =====================================================
        NORMAL VOTE RESULT
     ===================================================== */
 
@@ -1705,6 +1668,9 @@ function endVoting(roomCode) {
 
             eliminatedPlayers:
                 names,
+
+            eliminatedPlayerIds:
+                eliminatedPlayers.map(p => p.id),
 
             grandmafiaDeath,
             godfatherDeath,
@@ -2631,9 +2597,31 @@ assignRoles(
                     }
                 );
 
-                checkNightActions(
-                    data.roomCode
-                );
+                /*
+                   Detective result delay:
+                   The Detective gets 3 seconds to read the result.
+                   The night turn continues automatically afterwards.
+                   No other player receives the private result.
+                */
+                clearNightTurnTimer(room);
+
+                room.nightTurnTimer = setTimeout(() => {
+                    const currentRoom = rooms[data.roomCode];
+
+                    if (
+                        !currentRoom ||
+                        currentRoom.phase !== "night" ||
+                        currentRoom.nightTurn !== "detective"
+                    ) {
+                        return;
+                    }
+
+                    currentRoom.nightTurnTimer = null;
+
+                    checkNightActions(
+                        data.roomCode
+                    );
+                }, 3000);
             }
         );
 
