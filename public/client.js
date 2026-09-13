@@ -1040,6 +1040,34 @@ function isMyActiveNightTurn(turn) {
 let lastNightWarningSecond = -1;
 let lastNightTurnKey = "";
 
+/* =========================================================
+   LAST-10 SOUND CONTROL
+   last-10-heartbeat.mp3 should be about 1 second long.
+   It plays once at 10, 9, 8 ... 1 seconds (maximum 10 times).
+========================================================= */
+let last10SoundStopped = false;
+
+function stopLast10Sound() {
+    last10SoundStopped = true;
+    const sound = gameSounds.last10;
+    if (!sound) return;
+    try {
+        sound.pause();
+        sound.currentTime = 0;
+    } catch (error) {
+        console.warn("Last-10 sound stop error:", error);
+    }
+}
+
+function startLast10Sound() {
+    last10SoundStopped = false;
+    lastNightWarningSecond = -1;
+    if (gameSounds.last10) {
+        gameSounds.last10.loop = false;
+        gameSounds.last10.preload = "auto";
+    }
+}
+
 function updateNightTurnOverlay(turn, endsAt) {
     currentNightTurn = turn || "";
     currentNightTurnEndsAt = endsAt || null;
@@ -1053,7 +1081,7 @@ function updateNightTurnOverlay(turn, endsAt) {
 
     if (turnKey !== lastNightTurnKey) {
         lastNightTurnKey = turnKey;
-        lastNightWarningSecond = -1;
+        startLast10Sound();
     }
 
     const overlay = ensureNightTurnOverlay();
@@ -1089,6 +1117,7 @@ function updateNightTurnOverlay(turn, endsAt) {
     const info = roleData[turn];
 
     if (!info || currentPhase !== "night" || !endsAt) {
+        stopLast10Sound();
         overlay.style.display = "none";
         return;
     }
@@ -1137,7 +1166,7 @@ function updateNightTurnOverlay(turn, endsAt) {
                 timer.classList.add("night-turn-heartbeat");
 
                 /* Sound #4 — one heartbeat/beep for every last-10-second tick */
-                if (lastNightWarningSecond !== seconds) {
+                if (!last10SoundStopped && lastNightWarningSecond !== seconds) {
                     lastNightWarningSecond = seconds;
                     playGameSound(gameSounds.last10);
                 }
@@ -1147,9 +1176,12 @@ function updateNightTurnOverlay(turn, endsAt) {
             }
         }
 
-        if (remaining <= 0 && nightTurnTimerInterval) {
-            clearInterval(nightTurnTimerInterval);
-            nightTurnTimerInterval = null;
+        if (remaining <= 0) {
+            stopLast10Sound();
+            if (nightTurnTimerInterval) {
+                clearInterval(nightTurnTimerInterval);
+                nightTurnTimerInterval = null;
+            }
         }
     };
 
@@ -1158,6 +1190,7 @@ function updateNightTurnOverlay(turn, endsAt) {
 }
 
 function hideNightTurnOverlay() {
+    stopLast10Sound();
     currentNightTurn = "";
     currentNightTurnEndsAt = null;
 
@@ -1858,6 +1891,7 @@ function setupGrandmafia() {
                     return;
                 }
 
+                stopLast10Sound();
                 socket.emit(
                     "grandmafiaChoose",
                     {
@@ -1906,6 +1940,7 @@ function setupClupid() {
                     return;
                 }
 
+                stopLast10Sound();
                 socket.emit(
                     "clupidChoose",
                     {
@@ -1984,6 +2019,7 @@ socket.on(
     "actionConfirmed",
     name => {
 
+        stopLast10Sound();
         if ($("actionMessage")) {
 
             $("actionMessage").textContent =
@@ -2000,6 +2036,7 @@ socket.on(
     "grandmafiaSpecialDone",
     () => {
 
+        stopLast10Sound();
         if ($("actionMessage")) {
 
             $("actionMessage").textContent =
@@ -2029,6 +2066,7 @@ socket.on(
     "clupidConfirmed",
     message => {
 
+        stopLast10Sound();
         if ($("actionMessage")) {
 
             $("actionMessage").textContent =
@@ -2166,6 +2204,7 @@ socket.on(
     "detectiveResult",
     data => {
 
+        stopLast10Sound();
         detectiveResultMessage =
             `🔎 ${data.playerName}: ${data.result}`;
 
