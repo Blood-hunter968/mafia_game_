@@ -3235,3 +3235,47 @@ button {
         font-size: 36px;
     }
 }
+
+/* =========================================================
+   MAFIA WARS — MOBILE GAME ORDER
+   ROLE -> ACTION -> PUBLIC CHAT -> MAFIA CHAT -> PLAYER LIST
+   Added as an override so existing desktop/tablet styling stays intact.
+========================================================= */
+@media (max-width: 900px) {
+    .game-layout {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 9px !important;
+    }
+
+    .game-layout > .right-game-column,
+    .game-layout > .center-game-column {
+        display: contents !important;
+    }
+
+    .game-layout .your-role-panel { order: 1 !important; }
+    .game-layout .action-panel { order: 2 !important; }
+    .game-layout .public-chat-box { order: 3 !important; }
+    .game-layout .mafia-chat-box { order: 4 !important; }
+    .game-layout > .players-panel { order: 5 !important; }
+
+    .players-panel,
+    .center-game-column,
+    .right-game-column,
+    .public-chat-box,
+    .mafia-chat-box,
+    .your-role-panel {
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: 100% !important;
+    }
+}
+
+@media (max-width: 600px) {
+    #gameScreen { padding: 8px !important; }
+    #gameScreen .game-container {
+        width: 100% !important;
+        padding: 10px !important;
+    }
+    .game-layout { gap: 8px !important; }
+}
