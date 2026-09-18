@@ -1022,17 +1022,23 @@ function ensureNightTurnOverlay() {
 function isMyActiveNightTurn(turn) {
     if (currentPhase !== "night") return false;
 
+    // Turn photos are shown to EVERYONE EXCEPT the team/role whose turn it is.
+    // Mafia members do not see the Mafia turn photo; non-Mafia players do.
     if (turn === "mafia") {
-        return isMafiaTeamClient(myRole);
+        return !isMafiaTeamClient(myRole);
     }
+    // Doctor does not see the Doctor turn photo.
     if (turn === "doctor") {
-        return myRole === "Doctor";
+        return String(myRole || "").trim().toLowerCase() !== "doctor";
     }
+    // Detective does not see the Detective turn photo.
     if (turn === "detective") {
-        return myRole === "Detective";
+        return String(myRole || "").trim().toLowerCase() !== "detective";
     }
+    // Cupid does not see the Cupid turn photo.
     if (turn === "cupid") {
-        return myRole === "Clupid" || myRole === "Cupid";
+        const role = String(myRole || "").trim().toLowerCase();
+        return role !== "cupid" && role !== "clupid";
     }
     return false;
 }
@@ -1116,17 +1122,17 @@ function updateNightTurnOverlay(turn, endsAt) {
 
     const info = roleData[turn];
 
-    if (!info || currentPhase !== "night" || !endsAt) {
+    // Turn screen visibility: everyone EXCEPT the active role/team sees it.
+    // Mafia members do not see Mafia turn; Doctor does not see Doctor turn;
+    // Detective does not see Detective turn; Cupid does not see Cupid turn.
+    if (!info || currentPhase !== "night" || !endsAt || !isMyActiveNightTurn(turn)) {
         stopLast10Sound();
         overlay.style.display = "none";
         return;
     }
 
-    /* The active role gets the private action UI.
-       Other players see the public turn overlay. */
-    if (isMyActiveNightTurn(turn)) {
-        overlay.style.display = "none";
-    } else {
+    // Only players outside the active role/team receive the role-turn image and timer.
+    {
         if (card) {
             card.className = "night-turn-card night-turn-public-role";
             card.dataset.turn = turn;
@@ -1317,6 +1323,183 @@ function updatePhaseTimer(endsAt, phase) {
     phaseTimerInterval = setInterval(tick, 250);
 }
 
+
+/* =========================================================
+   START GAME ROLE LOGO REVEAL
+   5-second countdown -> role logo only -> continue game.
+========================================================= */
+
+let roleRevealSequenceActive = false;
+let roleRevealTimerInterval = null;
+let roleRevealLastPhase = "";
+let roleRevealCountdownToken = 0;
+let roleRevealShownForGame = false;
+
+function ensureRoleRevealOverlay() {
+    let overlay = $("roleRevealOverlay");
+    if (overlay) return overlay;
+
+    overlay = document.createElement("div");
+    overlay.id = "roleRevealOverlay";
+    overlay.innerHTML = `
+        <div class="role-reveal-countdown" id="roleRevealCountdown">
+            <div class="role-reveal-countdown-label">STARTING GAME</div>
+            <div class="role-reveal-countdown-number" id="roleRevealCountdownNumber">5</div>
+            <div class="role-reveal-countdown-ready" id="roleRevealCountdownReady">0 PLAYERS ARE READY</div>
+            <div class="role-reveal-countdown-line"></div>
+        </div>
+
+        <div class="role-logo-stage" id="roleLogoStage" style="display:none;">
+            <div class="role-logo-title">YOUR ROLE</div>
+            <div class="role-logo-frame">
+                <img id="roleRevealImage" src="" alt="Your role" style="display:none;">
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(overlay);
+    return overlay;
+}
+
+function stopRoleRevealCountdown() {
+    if (roleRevealTimerInterval) {
+        clearInterval(roleRevealTimerInterval);
+        roleRevealTimerInterval = null;
+    }
+}
+
+function setRolePanelVisible(visible) {
+    const panel = document.querySelector(".your-role-panel");
+    if (panel) panel.style.visibility = visible ? "visible" : "hidden";
+}
+
+function updateRoleRevealImage() {
+    const image = $("roleRevealImage");
+    if (!image) return;
+
+    const imagePath = getRoleImage(myRole);
+    image.onerror = () => {
+        image.style.display = "none";
+        console.warn("Role image failed to load:", image.src, "role:", myRole);
+    };
+    image.onload = () => {
+        image.style.display = imagePath ? "block" : "none";
+    };
+    image.src = imagePath || "";
+    image.alt = myRole || "Your role";
+    image.style.display = imagePath ? "block" : "none";
+}
+
+function showRoleLogoOnly() {
+    const countdown = $("roleRevealCountdown");
+    const stage = $("roleLogoStage");
+    if (countdown) countdown.style.display = "none";
+    if (stage) stage.style.display = "flex";
+
+    updateRoleRevealImage();
+    updateRoleDisplay(myRole);
+    setRolePanelVisible(true);
+
+    setTimeout(() => {
+        const overlay = $("roleRevealOverlay");
+        if (!roleRevealSequenceActive || !overlay) return;
+        overlay.classList.add("role-reveal-finished");
+        setTimeout(() => {
+            if (overlay) {
+                overlay.style.display = "none";
+                overlay.classList.remove("role-reveal-finished");
+            }
+            roleRevealSequenceActive = false;
+        }, 450);
+    }, 5000);
+}
+
+function startRoleRevealSequence() {
+    if (roleRevealSequenceActive) return;
+
+    roleRevealSequenceActive = true;
+    roleRevealShownForGame = true;
+    stopRoleRevealCountdown();
+
+    const token = ++roleRevealCountdownToken;
+    const overlay = ensureRoleRevealOverlay();
+    const countdown = $("roleRevealCountdown");
+    const stage = $("roleLogoStage");
+    const number = $("roleRevealCountdownNumber");
+    const ready = $("roleRevealCountdownReady");
+
+    setRolePanelVisible(false);
+    if (countdown) countdown.style.display = "flex";
+    if (stage) stage.style.display = "none";
+
+    const count = Array.isArray(players) ? players.length : 0;
+    if (ready) {
+        ready.textContent = count === 1 ? "1 PLAYER IS READY" : `${count} PLAYERS ARE READY`;
+    }
+
+    if (overlay) {
+        overlay.classList.remove("role-reveal-finished");
+        overlay.style.display = "flex";
+    }
+
+    let remaining = 5;
+
+    const runCountdown = () => {
+        if (token !== roleRevealCountdownToken) return;
+
+        if (number) {
+            number.textContent = String(remaining);
+            number.classList.remove("role-countdown-pop");
+            void number.offsetWidth;
+            number.classList.add("role-countdown-pop");
+        }
+
+        if (remaining <= 0) {
+            stopRoleRevealCountdown();
+            showRoleLogoOnly();
+            return;
+        }
+
+        remaining -= 1;
+    };
+
+    runCountdown();
+    roleRevealTimerInterval = setInterval(runCountdown, 1000);
+}
+
+function resetRoleRevealSequence() {
+    ++roleRevealCountdownToken;
+    stopRoleRevealCountdown();
+    roleRevealSequenceActive = false;
+    roleRevealLastPhase = "";
+    roleRevealShownForGame = false;
+
+    const overlay = $("roleRevealOverlay");
+    if (overlay) {
+        overlay.style.display = "none";
+        overlay.classList.remove("role-reveal-finished");
+    }
+    setRolePanelVisible(true);
+}
+
+function handleRoleRevealPhase(phase) {
+    if (phase === "lobby" || phase === "gameover" || !phase) {
+        resetRoleRevealSequence();
+        roleRevealLastPhase = phase;
+        return;
+    }
+
+    const hasAssignedRole = String(myRole || "").trim().length > 0;
+
+    if (!roleRevealSequenceActive && !roleRevealShownForGame && hasAssignedRole) {
+        startRoleRevealSequence();
+    } else if (roleRevealSequenceActive && hasAssignedRole) {
+        updateRoleRevealImage();
+    }
+
+    roleRevealLastPhase = phase;
+}
+
 /* =========================================================
    GAME INFORMATION
 ========================================================= */
@@ -1365,6 +1548,10 @@ socket.on(
 
         setScreen("gameScreen");
 
+        // Start the 5-second STARTING GAME screen as soon as the private role is available.
+        // The player count comes directly from the current game player list.
+        handleRoleRevealPhase(currentPhase);
+
         updatePhaseTitle(data);
         updatePhaseTimer(data.phaseEndsAt, data.phase);
         updateNightTurnOverlay(data.nightTurn, data.nightTurnEndsAt);
@@ -1401,6 +1588,13 @@ socket.on(
         renderMafiaChat();
 
         updateActionMessage();
+
+        /*
+           START GAME ROLE CARD:
+           Run the requested 5-second countdown and flip-card flow
+           after the existing game information has been processed.
+        */
+        watchGameStartForRoleReveal(data);
     }
 );
 
@@ -2743,6 +2937,7 @@ socket.on(
         if (!data) return;
 
         currentPhase = "gameover";
+        resetRoleRevealSequence();
         hideNightTurnOverlay();
         deathScreenLocked = false;
         hideDeathRevealOverlay(true);
@@ -2853,6 +3048,7 @@ function setupBackHomeGameOver() {
             myRole = "";
             players = [];
             currentPhase = "";
+            resetRoleRevealSequence();
             hasVoted = false;
             isHost = false;
             updatePhaseTimer(null, "");
@@ -2898,6 +3094,7 @@ socket.on(
         myRole = "";
 
         currentPhase = "lobby";
+        resetRoleRevealSequence();
 
         hasVoted = false;
         updatePhaseTimer(null, "");
