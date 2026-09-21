@@ -11,6 +11,31 @@ app.use(express.static("public"));
 const rooms = {};
 
 /* =========================================================
+   PUBLIC MATCHMAKING
+========================================================= */
+
+function getPublicMatches() {
+    return Object.entries(rooms)
+        .filter(([roomCode, room]) =>
+            room &&
+            room.visibility === "public" &&
+            room.phase === "lobby" &&
+            !room.gameStarted &&
+            room.players.length > 0
+        )
+        .map(([roomCode, room]) => ({
+            roomCode,
+            playerCount: room.players.length,
+            hostName: room.players[0]?.name || "Host"
+        }))
+        .sort((a, b) => b.playerCount - a.playerCount);
+}
+
+function emitPublicMatches() {
+    io.emit("publicMatches", getPublicMatches());
+}
+
+/* =========================================================
    2-MINUTE PHASE TIMER
 ========================================================= */
 
@@ -1718,12 +1743,23 @@ io.on(
 
         socket.on(
             "createRoom",
-            playerName => {
+            data => {
 
-                playerName =
+                const playerName =
                     String(
-                        playerName || ""
+                        typeof data === "string"
+                            ? data
+                            : data?.playerName || ""
                     ).trim();
+
+                const visibility =
+                    String(
+                        typeof data === "string"
+                            ? "private"
+                            : data?.visibility || "private"
+                    ).toLowerCase() === "public"
+                        ? "public"
+                        : "private";
 
                 if (!playerName) {
 
@@ -1740,6 +1776,8 @@ io.on(
 
                     host:
                         socket.id,
+
+                    visibility,
 
                     players: [
                         {
@@ -1822,9 +1860,13 @@ io.on(
 
                 announce(
                     roomCode,
-                    "🏠 Room created. Waiting for players...",
+                    visibility === "public"
+                        ? "🌍 Public match created. Waiting for players..."
+                        : "🏠 Private room created. Waiting for players...",
                     "info"
                 );
+
+                emitPublicMatches();
             }
         );
 
@@ -1913,8 +1955,68 @@ io.on(
                     `👤 ${playerName} joined the room.`,
                     "info"
                 );
+
+                emitPublicMatches();
             }
         );
+
+        /* =================================================
+           PUBLIC MATCH LIST
+        ================================================= */
+
+        socket.on("getPublicMatches", () => {
+            socket.emit("publicMatches", getPublicMatches());
+        });
+
+        /* =================================================
+           LEAVE ROOM
+        ================================================= */
+
+        socket.on("leaveRoom", data => {
+            const code = String(data?.roomCode || "").trim().toUpperCase();
+            const room = rooms[code];
+            if (!room) return;
+
+            const index = room.players.findIndex(
+                player => player.id === socket.id
+            );
+
+            if (index === -1) return;
+
+            if (room.gameStarted && room.phase !== "lobby") {
+                return socket.emit(
+                    "gameError",
+                    "You cannot leave while the game is in progress."
+                );
+            }
+
+            const leavingPlayer = room.players[index];
+            room.players.splice(index, 1);
+            socket.leave(code);
+
+            if (!room.players.length) {
+                delete rooms[code];
+                emitPublicMatches();
+                return;
+            }
+
+            if (room.host === socket.id) {
+                room.host = room.players[0].id;
+                announce(
+                    code,
+                    `👑 ${room.players[0].name} is now the host.`,
+                    "info"
+                );
+            }
+
+            emitLobby(code);
+            announce(
+                code,
+                `🚪 ${leavingPlayer.name} left the room.`,
+                "info"
+            );
+            emitPublicMatches();
+        });
 
         /* =================================================
            START GAME
@@ -2092,6 +2194,9 @@ assignRoles(
     room.players,
     settings
 );
+
+                emitPublicMatches();
+
                 announce(
                     roomCode,
                     "🎭 The game has started! Night 1 begins.",
@@ -2975,6 +3080,7 @@ assignRoles(
                             roomCode
                         ];
 
+                        emitPublicMatches();
                         continue;
                     }
 
@@ -3047,6 +3153,7 @@ assignRoles(
                     ========================= */
 
                     emitLobby(roomCode);
+                    emitPublicMatches();
 
                     /* =========================
                        GAME UPDATE
