@@ -3444,3 +3444,521 @@ button {
     .role-logo-stage { height: 82vh; }
     .role-logo-frame { width: min(360px, 82vw); height: min(360px, 55vh); }
 }
+
+
+/* =========================================================
+   PUBLIC ROOM / MATCHMAKING UI
+========================================================= */
+
+.screen-emblem {
+    width: 74px;
+    height: 74px;
+    margin: 0 auto 14px;
+    display: grid;
+    place-items: center;
+    border: 1px solid rgba(170, 25, 25, 0.55);
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(120, 15, 15, .35), rgba(8, 8, 8, .95));
+    font-size: 34px;
+    box-shadow: 0 12px 28px rgba(0,0,0,.7), inset 0 0 25px rgba(170,20,20,.12);
+}
+
+.mode-choice-container {
+    width: min(720px, 95vw) !important;
+}
+
+.mode-choice-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+    margin: 24px 0 16px;
+}
+
+.mode-choice {
+    min-height: 205px;
+    padding: 24px 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+    border: 1px solid #4a2020;
+    border-radius: 5px;
+    color: #eee;
+    background: linear-gradient(145deg, rgba(31,31,31,.98), rgba(7,7,7,.98));
+    box-shadow: 0 15px 35px rgba(0,0,0,.6), inset 0 1px rgba(255,255,255,.06);
+    transition: transform .2s, border-color .2s, background .2s;
+}
+
+.mode-choice:hover {
+    transform: translateY(-4px);
+    border-color: #a72a2a;
+    background: linear-gradient(145deg, rgba(58,18,18,.98), rgba(8,8,8,.98));
+}
+
+.mode-choice-icon { font-size: 44px; }
+
+.mode-choice strong {
+    font-family: "Arial Black", Arial, sans-serif;
+    font-size: 20px;
+    letter-spacing: 2px;
+}
+
+.mode-choice small {
+    max-width: 230px;
+    color: #999;
+    line-height: 1.5;
+    font-size: 13px;
+}
+
+.secondary-screen-button {
+    width: 100%;
+    min-height: 48px;
+    padding: 12px 18px;
+    border: 1px solid #444;
+    border-radius: 3px;
+    background: #111;
+    color: #ddd;
+    font-weight: 800;
+    letter-spacing: 1px;
+}
+
+.secondary-screen-button:hover {
+    background: #222;
+    border-color: #666;
+}
+
+.public-matches-shell {
+    width: min(1050px, 95vw);
+    margin: 0 auto;
+    padding: 30px;
+    background: linear-gradient(180deg, rgba(13,13,13,.96), rgba(3,3,3,.98));
+    border: 1px solid rgba(170,25,25,.38);
+    border-radius: 6px;
+    box-shadow: 0 25px 80px rgba(0,0,0,.9);
+}
+
+#publicMatchesScreen {
+    min-height: 100vh;
+    padding: 30px 18px;
+}
+
+.public-matches-header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 20px;
+    margin-bottom: 24px;
+}
+
+.public-matches-kicker {
+    color: #a72a2a;
+    font-family: "Arial Black", Arial, sans-serif;
+    font-size: 12px;
+    letter-spacing: 4px;
+}
+
+.public-matches-header h1 {
+    margin: 5px 0 7px;
+    font-family: Impact, Haettenschweiler, "Arial Black", sans-serif;
+    font-size: clamp(38px, 6vw, 62px);
+    letter-spacing: 2px;
+    color: #eee;
+    text-shadow: 0 3px 0 #333, 0 12px 25px #000;
+}
+
+.public-matches-header p { color: #999; }
+
+.refresh-match-button {
+    min-height: 46px;
+    padding: 11px 18px;
+    border: 1px solid #542020;
+    border-radius: 3px;
+    background: #101010;
+    color: #ddd;
+    font-weight: 900;
+    letter-spacing: 1px;
+}
+
+.refresh-match-button:hover {
+    border-color: #a72a2a;
+    background: #1a1a1a;
+}
+
+.public-matches-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+    gap: 22px;
+    margin-bottom: 24px;
+}
+
+.public-match-folder {
+    position: relative;
+    padding-top: 16px;
+    filter: drop-shadow(0 18px 22px rgba(0,0,0,.55));
+}
+
+.public-match-folder-tab {
+    width: 43%;
+    min-width: 112px;
+    padding: 8px 13px;
+    margin-left: 18px;
+    border: 1px solid #482020;
+    border-bottom: 0;
+    border-radius: 7px 7px 0 0;
+    background: linear-gradient(180deg, #2b1515, #171010);
+    color: #bcbcbc;
+    font-family: "Arial Black", Arial, sans-serif;
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    text-align: center;
+}
+
+.public-match-folder-body {
+    position: relative;
+    min-height: 230px;
+    padding: 22px 20px 20px;
+    border: 1px solid #482020;
+    border-radius: 3px 7px 7px 7px;
+    background: linear-gradient(145deg, rgba(43,43,43,.98), rgba(12,12,12,.99));
+    overflow: hidden;
+}
+
+.public-match-folder-body::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(135deg, rgba(255,255,255,.045), transparent 32%);
+}
+
+.public-match-folder-body > * { position: relative; z-index: 1; }
+
+.public-match-folder-body h2 {
+    margin-bottom: 14px;
+    color: #eee;
+    font-family: Impact, Haettenschweiler, "Arial Black", sans-serif;
+    font-size: 28px;
+    letter-spacing: 1px;
+}
+
+.public-match-waiting {
+    display: inline-flex;
+    align-items: center;
+    margin-bottom: 10px;
+    padding: 9px 12px;
+    border: 1px solid rgba(55,200,110,.28);
+    border-radius: 20px;
+    background: rgba(20,70,40,.18);
+    color: #c9f2d7;
+    font-weight: 800;
+}
+
+.public-match-host {
+    margin-bottom: 18px;
+    color: #9c9c9c;
+    font-size: 14px;
+}
+
+.join-public-match {
+    width: 100%;
+    min-height: 48px;
+    border: 1px solid #9b2525;
+    border-radius: 3px;
+    background: linear-gradient(180deg, #8c1818, #390606);
+    color: #fff;
+    font-family: "Arial Black", Arial, sans-serif;
+    font-size: 13px;
+    letter-spacing: 1.5px;
+    transition: transform .2s, background .2s, box-shadow .2s;
+}
+
+.join-public-match:hover {
+    transform: translateY(-2px);
+    background: linear-gradient(180deg, #b52323, #4c0707);
+    box-shadow: 0 12px 25px rgba(0,0,0,.55);
+}
+
+.no-public-matches {
+    padding: 50px 20px;
+    margin-bottom: 24px;
+    text-align: center;
+    border: 1px dashed #4a2525;
+    border-radius: 5px;
+    background: rgba(10,10,10,.72);
+}
+
+.empty-folder-icon {
+    font-size: 54px;
+    margin-bottom: 10px;
+}
+
+.no-public-matches h2 { margin-bottom: 8px; color: #ddd; }
+.no-public-matches p { color: #888; }
+
+.leave-room-button {
+    display: block;
+    width: min(260px, 100%);
+    min-height: 44px;
+    margin: 12px auto 22px;
+    padding: 10px 18px;
+    border: 1px solid #542020;
+    border-radius: 3px;
+    background: #111;
+    color: #aaa;
+    font-weight: 900;
+    letter-spacing: 1px;
+}
+
+.leave-room-button:hover {
+    color: #eee;
+    border-color: #a72a2a;
+    background: #241010;
+}
+
+@media (max-width: 650px) {
+    .mode-choice-grid { grid-template-columns: 1fr; }
+    .mode-choice { min-height: 170px; }
+    .public-matches-shell { padding: 20px 14px; }
+    .public-matches-header {
+        align-items: stretch;
+        flex-direction: column;
+    }
+    .refresh-match-button { width: 100%; }
+}
+
+/* =========================================================
+   CENTERED ROOM TYPE + QUICK START SCREENS
+========================================================= */
+
+#createModeScreen,
+#quickStartScreen {
+    min-height: 100vh;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    box-sizing: border-box;
+}
+
+#createModeScreen .mode-choice-container,
+#quickStartScreen .home-container {
+    width: min(760px, 94vw) !important;
+    margin: 0 auto;
+    padding: 42px 38px 38px;
+    text-align: center;
+    box-sizing: border-box;
+    background: linear-gradient(180deg, rgba(18,18,18,.97), rgba(3,3,3,.99));
+    border: 1px solid rgba(170,25,25,.48);
+    border-radius: 10px;
+    box-shadow: 0 30px 90px rgba(0,0,0,.9), inset 0 1px rgba(255,255,255,.045);
+}
+
+#createModeScreen .screen-emblem,
+#quickStartScreen .screen-emblem {
+    width: 82px;
+    height: 82px;
+    margin: 0 auto 18px;
+    font-size: 38px;
+}
+
+#createModeScreen h1,
+#quickStartScreen h1 {
+    margin: 0 0 10px;
+    font-family: Impact, Haettenschweiler, "Arial Black", sans-serif;
+    font-size: clamp(42px, 6vw, 64px);
+    letter-spacing: 2px;
+    color: #eee;
+    text-shadow: 0 3px 0 #333, 0 12px 25px #000;
+}
+
+#createModeScreen p,
+#quickStartScreen p {
+    margin: 0 auto 26px;
+    max-width: 580px;
+    color: #999;
+    font-size: 15px;
+    line-height: 1.6;
+}
+
+#createModeScreen .mode-choice-grid {
+    width: min(650px, 100%);
+    margin: 26px auto 18px;
+}
+
+#createModeScreen .mode-choice {
+    min-height: 220px;
+    border-radius: 10px;
+    cursor: pointer;
+}
+
+#createModeScreen .mode-choice-icon {
+    font-size: 50px;
+    filter: drop-shadow(0 8px 12px rgba(0,0,0,.65));
+}
+
+#quickStartScreen .home-container {
+    width: min(560px, 94vw) !important;
+}
+
+#quickStartScreen #quickStartPlayerName {
+    display: block;
+    width: min(420px, 100%);
+    margin: 0 auto 16px;
+    box-sizing: border-box;
+}
+
+#quickStartScreen #searchPublicMatches,
+#quickStartScreen #backFromQuickStart {
+    display: block;
+    width: min(420px, 100%);
+    margin-left: auto;
+    margin-right: auto;
+}
+
+#quickStartScreen #searchPublicMatches {
+    min-height: 52px;
+    margin-bottom: 10px;
+    border: 1px solid #a51b1b;
+    border-radius: 5px;
+    background: linear-gradient(180deg, #8c1818, #390606);
+    color: #fff;
+    font-family: "Arial Black", Arial, sans-serif;
+    font-weight: 900;
+    letter-spacing: 1.5px;
+    box-shadow: 0 12px 30px rgba(0,0,0,.6);
+    transition: transform .2s, box-shadow .2s, background .2s;
+}
+
+#quickStartScreen #searchPublicMatches:hover {
+    transform: translateY(-2px);
+    background: linear-gradient(180deg, #b52323, #4c0707);
+    box-shadow: 0 16px 35px rgba(0,0,0,.75), 0 0 20px rgba(180,20,20,.2);
+}
+
+#quickStartScreen #backFromQuickStart {
+    min-height: 46px;
+}
+
+@media (max-width: 650px) {
+    #createModeScreen,
+    #quickStartScreen {
+        padding: 15px;
+    }
+
+    #createModeScreen .mode-choice-container,
+    #quickStartScreen .home-container {
+        width: 100% !important;
+        padding: 32px 20px 28px;
+    }
+
+    #createModeScreen .mode-choice-grid {
+        grid-template-columns: 1fr;
+    }
+
+    #createModeScreen .mode-choice {
+        min-height: 175px;
+    }
+}
+
+/* =========================================================
+   QUICK START INPUT + BACK BUTTON FIX
+========================================================= */
+
+#quickStartScreen #quickStartPlayerName {
+    background: #090909 !important;
+    color: #ffffff !important;
+    border: 1px solid rgba(160, 30, 30, 0.55) !important;
+    border-radius: 4px !important;
+    caret-color: #ffffff;
+    font-size: 16px;
+    outline: none;
+}
+
+#quickStartScreen #quickStartPlayerName::placeholder {
+    color: #888888 !important;
+}
+
+#quickStartScreen #quickStartPlayerName:focus {
+    border-color: #c32727 !important;
+    box-shadow: 0 0 15px rgba(170, 20, 20, 0.22);
+}
+
+#quickStartScreen #backFromQuickStart {
+    background: linear-gradient(180deg, #1b1b1b, #090909) !important;
+    color: #eeeeee !important;
+    border: 1px solid #555 !important;
+    font-family: inherit;
+    font-weight: 800;
+    letter-spacing: 1px;
+    opacity: 1 !important;
+}
+
+#quickStartScreen #backFromQuickStart:hover {
+    background: linear-gradient(180deg, #2a2a2a, #101010) !important;
+    color: #ffffff !important;
+    border-color: #888 !important;
+}
+
+/* =========================================================
+   QUICK START FINAL TEXT / BUTTON VISIBILITY FIX
+   Keep the name field and BACK button dark and readable.
+========================================================= */
+#quickStartScreen #quickStartPlayerName,
+#quickStartScreen #quickStartPlayerName:focus,
+#quickStartScreen #quickStartPlayerName:hover {
+    background-color: #090909 !important;
+    background-image: none !important;
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+    text-shadow: none !important;
+    opacity: 1 !important;
+}
+
+#quickStartScreen #quickStartPlayerName::placeholder {
+    color: #8f8f8f !important;
+    -webkit-text-fill-color: #8f8f8f !important;
+    opacity: 1 !important;
+}
+
+#quickStartScreen #backFromQuickStart,
+#quickStartScreen #backFromQuickStart:hover,
+#quickStartScreen #backFromQuickStart:focus,
+#quickStartScreen #backFromQuickStart:active {
+    display: block !important;
+    background: #111111 !important;
+    background-image: none !important;
+    color: #eeeeee !important;
+    -webkit-text-fill-color: #eeeeee !important;
+    border: 1px solid #555555 !important;
+    box-shadow: 0 8px 20px rgba(0,0,0,.45) !important;
+    opacity: 1 !important;
+    text-shadow: none !important;
+    appearance: none !important;
+}
+
+#quickStartScreen #backFromQuickStart:hover {
+    background: #202020 !important;
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+    border-color: #888888 !important;
+}
+
+/* The three Home matchmaking buttons always use the UI click sound. */
+#homeScreen #createRoom,
+#homeScreen #joinRoom,
+#homeScreen #quickStart {
+    -webkit-tap-highlight-color: transparent;
+}
+/* Bigger Quick Start name input */
+#quickStartPlayerName {
+  width: 100%;
+  max-width: 500px;
+  height: 65px;
+  padding: 0 20px;
+  font-size: 22px;
+  text-align: center;
+  border-radius: 12px;
+  box-sizing: border-box;
+}
