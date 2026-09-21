@@ -28,6 +28,39 @@ function playGameSound(sound) {
     }
 }
 
+/* Short UI click sound for the Home buttons.
+   This is generated in the browser, so no extra sound file is needed. */
+let uiAudioContext = null;
+
+function playHomeButtonSound() {
+    try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return;
+
+        if (!uiAudioContext) uiAudioContext = new AudioCtx();
+        if (uiAudioContext.state === "suspended") uiAudioContext.resume();
+
+        const now = uiAudioContext.currentTime;
+        const oscillator = uiAudioContext.createOscillator();
+        const gain = uiAudioContext.createGain();
+
+        oscillator.type = "square";
+        oscillator.frequency.setValueAtTime(520, now);
+        oscillator.frequency.exponentialRampToValueAtTime(760, now + 0.055);
+
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.exponentialRampToValueAtTime(0.075, now + 0.008);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.085);
+
+        oscillator.connect(gain);
+        gain.connect(uiAudioContext.destination);
+        oscillator.start(now);
+        oscillator.stop(now + 0.09);
+    } catch (error) {
+        console.warn("UI sound error:", error);
+    }
+}
+
 /*
    Browsers block sound until the user interacts with the page.
    A button click unlocks the audio system without making the
@@ -72,6 +105,14 @@ document.addEventListener("click", event => {
     if (!button || button.disabled) return;
 
     unlockGameAudio();
+
+    // Home navigation buttons get a guaranteed click sound even if
+    // the optional /sounds/button-click.mp3 file is not present.
+    if (["createRoom", "joinRoom", "quickStart"].includes(button.id)) {
+        playHomeButtonSound();
+        return;
+    }
+
     playGameSound(gameSounds.button);
 }, true);
 
@@ -115,7 +156,10 @@ function setScreen(screen) {
     [
         "homeScreen",
         "createRoomScreen",
+        "createModeScreen",
         "joinRoomScreen",
+        "quickStartScreen",
+        "publicMatchesScreen",
         "lobby",
         "gameScreen"
     ].forEach(id => hide(id));
@@ -244,142 +288,137 @@ socket.on("announcement", data => {
 function createRoomScreens() {
 
     if (!$("createRoomScreen")) {
-
-        const screen =
-            document.createElement("section");
-
+        const screen = document.createElement("section");
         screen.id = "createRoomScreen";
-
         screen.style.display = "none";
-
         screen.innerHTML = `
             <div class="home-container">
-
-                <div class="logo-icon">🏠</div>
-
+                <div class="screen-emblem">🏠</div>
                 <h1>Create Room</h1>
+                <p>Enter your name first. You will choose the room type next.</p>
+                <input id="createPlayerName" type="text" maxlength="30"
+                    placeholder="Enter your name" autocomplete="off">
+                <button id="confirmCreateRoom">CONTINUE</button>
+                <button id="backFromCreate">← BACK</button>
+            </div>`;
+        document.body.appendChild(screen);
+    }
 
-                <p>Enter your name to create a room</p>
-
-                <input
-                    id="createPlayerName"
-                    type="text"
-                    maxlength="30"
-                    placeholder="Enter your name"
-                    autocomplete="off"
-                >
-
-                <button id="confirmCreateRoom">
-                    🏠 CREATE ROOM
-                </button>
-
-                <button id="backFromCreate">
-                    ← BACK
-                </button>
-
-            </div>
-        `;
-
+    if (!$("createModeScreen")) {
+        const screen = document.createElement("section");
+        screen.id = "createModeScreen";
+        screen.style.display = "none";
+        screen.innerHTML = `
+            <div class="home-container mode-choice-container">
+                <div class="screen-emblem">🎭</div>
+                <h1>Room Type</h1>
+                <p>Choose how other players can find your room.</p>
+                <div class="mode-choice-grid">
+                    <button id="choosePrivateRoom" class="mode-choice">
+                        <span class="mode-choice-icon">🔒</span>
+                        <strong>PRIVATE</strong>
+                        <small>Players join with your room code.</small>
+                    </button>
+                    <button id="choosePublicRoom" class="mode-choice">
+                        <span class="mode-choice-icon">🌍</span>
+                        <strong>PUBLIC</strong>
+                        <small>Your lobby appears in Quick Start.</small>
+                    </button>
+                </div>
+                <button id="backFromCreateMode" class="secondary-screen-button">← BACK</button>
+            </div>`;
         document.body.appendChild(screen);
     }
 
     if (!$("joinRoomScreen")) {
-
-        const screen =
-            document.createElement("section");
-
+        const screen = document.createElement("section");
         screen.id = "joinRoomScreen";
-
         screen.style.display = "none";
-
         screen.innerHTML = `
             <div class="home-container">
-
-                <div class="logo-icon">🚪</div>
-
+                <div class="screen-emblem">🚪</div>
                 <h1>Join Room</h1>
-
-                <p>Enter your name and room code</p>
-
-                <input
-                    id="joinPlayerName"
-                    type="text"
-                    maxlength="30"
-                    placeholder="Enter your name"
-                    autocomplete="off"
-                >
-
-                <input
-                    id="joinRoomCode"
-                    type="text"
-                    maxlength="10"
-                    placeholder="Enter room code"
-                    autocomplete="off"
-                >
-
-                <button id="confirmJoinRoom">
-                    🚪 JOIN ROOM
-                </button>
-
-                <button id="backFromJoin">
-                    ← BACK
-                </button>
-
-            </div>
-        `;
-
+                <p>Enter your name and room code.</p>
+                <input id="joinPlayerName" type="text" maxlength="30"
+                    placeholder="Enter your name" autocomplete="off">
+                <input id="joinRoomCode" type="text" maxlength="10"
+                    placeholder="Enter room code" autocomplete="off">
+                <button id="confirmJoinRoom">🚪 JOIN ROOM</button>
+                <button id="backFromJoin">← BACK</button>
+            </div>`;
         document.body.appendChild(screen);
     }
 
-    $("confirmCreateRoom")?.addEventListener(
-        "click",
-        createRoom
-    );
+    if (!$("quickStartScreen")) {
+        const screen = document.createElement("section");
+        screen.id = "quickStartScreen";
+        screen.style.display = "none";
+        screen.innerHTML = `
+            <div class="home-container">
+                <div class="screen-emblem">⚡</div>
+                <h1>Quick Start</h1>
+                <p>Enter your name, then search the public matches.</p>
+                <input id="quickStartPlayerName" type="text" maxlength="30"
+                    placeholder="Enter your name" autocomplete="off">
+                <button id="searchPublicMatches">🔎 SEARCH MATCH</button>
+                <button id="backFromQuickStart">← BACK</button>
+            </div>`;
+        document.body.appendChild(screen);
+    }
 
-    $("createPlayerName")?.addEventListener(
-        "keydown",
-        e => {
+    if (!$("publicMatchesScreen")) {
+        const screen = document.createElement("section");
+        screen.id = "publicMatchesScreen";
+        screen.style.display = "none";
+        screen.innerHTML = `
+            <div class="public-matches-shell">
+                <div class="public-matches-header">
+                    <div>
+                        <div class="public-matches-kicker">MAFIA WARS</div>
+                        <h1>🌍 PUBLIC MATCHES</h1>
+                        <p>Choose the public lobby you want to join.</p>
+                    </div>
+                    <button id="refreshPublicMatches" class="refresh-match-button" type="button">↻ REFRESH</button>
+                </div>
+                <div id="publicMatchesList" class="public-matches-list"></div>
+                <div id="noPublicMatches" class="no-public-matches">
+                    <div class="empty-folder-icon">📂</div>
+                    <h2>No public matches yet</h2>
+                    <p>Public lobbies will appear here when players create them.</p>
+                </div>
+                <button id="backFromPublicMatches" class="secondary-screen-button">← BACK</button>
+            </div>`;
+        document.body.appendChild(screen);
+    }
 
-            if (e.key === "Enter") {
-                createRoom();
-            }
-        }
-    );
+    $("confirmCreateRoom")?.addEventListener("click", createRoom);
+    $("createPlayerName")?.addEventListener("keydown", e => {
+        if (e.key === "Enter") createRoom();
+    });
+    $("choosePrivateRoom")?.addEventListener("click", () => createRoomWithVisibility("private"));
+    $("choosePublicRoom")?.addEventListener("click", () => createRoomWithVisibility("public"));
+    $("backFromCreateMode")?.addEventListener("click", () => {
+        setScreen("createRoomScreen");
+        setTimeout(() => $("createPlayerName")?.focus(), 50);
+    });
 
-    $("confirmJoinRoom")?.addEventListener(
-        "click",
-        joinRoom
-    );
+    $("confirmJoinRoom")?.addEventListener("click", joinRoom);
+    $("joinPlayerName")?.addEventListener("keydown", e => {
+        if (e.key === "Enter") $("joinRoomCode")?.focus();
+    });
+    $("joinRoomCode")?.addEventListener("keydown", e => {
+        if (e.key === "Enter") joinRoom();
+    });
+    $("backFromCreate")?.addEventListener("click", () => setScreen("homeScreen"));
+    $("backFromJoin")?.addEventListener("click", () => setScreen("homeScreen"));
 
-    $("joinPlayerName")?.addEventListener(
-        "keydown",
-        e => {
-
-            if (e.key === "Enter") {
-                $("joinRoomCode")?.focus();
-            }
-        }
-    );
-
-    $("joinRoomCode")?.addEventListener(
-        "keydown",
-        e => {
-
-            if (e.key === "Enter") {
-                joinRoom();
-            }
-        }
-    );
-
-    $("backFromCreate")?.addEventListener(
-        "click",
-        () => setScreen("homeScreen")
-    );
-
-    $("backFromJoin")?.addEventListener(
-        "click",
-        () => setScreen("homeScreen")
-    );
+    $("searchPublicMatches")?.addEventListener("click", searchPublicMatches);
+    $("quickStartPlayerName")?.addEventListener("keydown", e => {
+        if (e.key === "Enter") searchPublicMatches();
+    });
+    $("backFromQuickStart")?.addEventListener("click", () => setScreen("homeScreen"));
+    $("refreshPublicMatches")?.addEventListener("click", () => socket.emit("getPublicMatches"));
+    $("backFromPublicMatches")?.addEventListener("click", () => setScreen("quickStartScreen"));
 }
 
 /* =========================================================
@@ -388,28 +427,128 @@ function createRoomScreens() {
 
 function createRoom() {
 
-    const input =
-        $("createPlayerName");
-
+    const input = $("createPlayerName");
     if (!input) return;
 
-    const name =
-        input.value.trim();
+    const name = input.value.trim();
 
     if (!name) {
-
         alert("Enter your name!");
-
         input.focus();
-
         return;
     }
 
-    socket.emit(
-        "createRoom",
-        name
-    );
+    window.pendingRoomPlayerName = name;
+    setScreen("createModeScreen");
 }
+
+function createRoomWithVisibility(visibility) {
+
+    const name = String(window.pendingRoomPlayerName || "").trim();
+
+    if (!name) {
+        setScreen("createRoomScreen");
+        alert("Enter your name!");
+        $("createPlayerName")?.focus();
+        return;
+    }
+
+    socket.emit("createRoom", {
+        playerName: name,
+        visibility: visibility === "public" ? "public" : "private"
+    });
+}
+
+function searchPublicMatches() {
+
+    const input = $("quickStartPlayerName");
+    if (!input) return;
+
+    const name = input.value.trim();
+
+    if (!name) {
+        alert("Enter your name!");
+        input.focus();
+        return;
+    }
+
+    window.quickStartPlayerName = name;
+    setScreen("publicMatchesScreen");
+    socket.emit("getPublicMatches");
+}
+
+function renderPublicMatches(matches) {
+
+    const list = $("publicMatchesList");
+    const empty = $("noPublicMatches");
+    if (!list) return;
+
+    list.innerHTML = "";
+
+    if (!Array.isArray(matches) || matches.length === 0) {
+        if (empty) empty.style.display = "";
+        return;
+    }
+
+    if (empty) empty.style.display = "none";
+
+    matches.forEach(match => {
+
+        const folder = document.createElement("article");
+        folder.className = "public-match-folder";
+
+        const tab = document.createElement("div");
+        tab.className = "public-match-folder-tab";
+        tab.textContent = "PUBLIC LOBBY";
+
+        const body = document.createElement("div");
+        body.className = "public-match-folder-body";
+
+        const title = document.createElement("h2");
+        title.textContent = `Match #${match.roomCode}`;
+
+        const count = document.createElement("div");
+        count.className = "public-match-waiting";
+
+        const playerCount = Number(match.playerCount) || 0;
+        count.textContent =
+            `🟢 ${playerCount} ${playerCount === 1 ? "player" : "players"} waiting`;
+
+        const host = document.createElement("div");
+        host.className = "public-match-host";
+        host.textContent = `👑 Host: ${match.hostName || "Host"}`;
+
+        const joinButton = document.createElement("button");
+        joinButton.type = "button";
+        joinButton.className = "join-public-match";
+        joinButton.textContent = "JOIN MATCH";
+
+        joinButton.addEventListener("click", () => {
+
+            const name = String(window.quickStartPlayerName || "").trim();
+
+            if (!name) {
+                setScreen("quickStartScreen");
+                alert("Enter your name first!");
+                $("quickStartPlayerName")?.focus();
+                return;
+            }
+
+            socket.emit("joinRoom", {
+                playerName: name,
+                roomCode: match.roomCode
+            });
+        });
+
+        body.append(title, count, host, joinButton);
+        folder.append(tab, body);
+        list.appendChild(folder);
+    });
+}
+
+socket.on("publicMatches", matches => {
+    renderPublicMatches(matches);
+});
 
 /* =========================================================
    JOIN ROOM
@@ -653,6 +792,44 @@ function setupHomeButtons() {
             }, 100);
         }
     );
+
+    $("quickStart")?.addEventListener(
+        "click",
+        () => {
+            if ($("quickStartPlayerName"))
+                $("quickStartPlayerName").value = "";
+
+            setScreen("quickStartScreen");
+
+            setTimeout(() => {
+                $("quickStartPlayerName")?.focus();
+            }, 100);
+        }
+    );
+}
+
+function leaveCurrentRoom() {
+
+    if (!roomCode) {
+        setScreen("homeScreen");
+        return;
+    }
+
+    socket.emit("leaveRoom", { roomCode });
+
+    roomCode = "";
+    myRole = "";
+    players = [];
+    currentPhase = "";
+    hasVoted = false;
+    isHost = false;
+    window.currentHostId = "";
+
+    setScreen("homeScreen");
+}
+
+function setupLeaveRoomButton() {
+    $("leaveRoomButton")?.addEventListener("click", leaveCurrentRoom);
 }
 
 /* =========================================================
@@ -662,6 +839,7 @@ function setupHomeButtons() {
 socket.on("roomCreated", code => {
 
     roomCode = code;
+    window.pendingRoomPlayerName = "";
 
     isHost = true;
 
@@ -691,6 +869,8 @@ socket.on("roomCreated", code => {
 socket.on("joinedRoom", code => {
 
     roomCode = code;
+    window.pendingRoomPlayerName = "";
+    window.quickStartPlayerName = "";
 
     isHost = false;
 
@@ -3266,6 +3446,8 @@ document.addEventListener(
         
         setupBackHomeGameOver();
 
+        setupLeaveRoomButton();
+        
         /*
            Make announcement box immediately.
         */
