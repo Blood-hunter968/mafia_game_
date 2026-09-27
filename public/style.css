@@ -3870,9 +3870,12 @@ button {
     background: #090909 !important;
     color: #ffffff !important;
     border: 1px solid rgba(160, 30, 30, 0.55) !important;
-    border-radius: 4px !important;
+    border-radius: 6px !important;
     caret-color: #ffffff;
-    font-size: 16px;
+    font-size: 22px;
+    padding: 14px 18px !important;
+    min-height: 56px;
+    box-sizing: border-box;
     outline: none;
 }
 
