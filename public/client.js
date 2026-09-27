@@ -853,6 +853,9 @@ socket.on("roomCreated", code => {
     }
 
     setScreen("lobby");
+    ensureVoicePanel();
+    $("voiceChatPanel")?.style && ($("voiceChatPanel").style.display = "block");
+    setTimeout(() => enableVoice(), 250);
 
     updateHostUI();
 
@@ -883,6 +886,9 @@ socket.on("joinedRoom", code => {
     }
 
     setScreen("lobby");
+    ensureVoicePanel();
+    $("voiceChatPanel")?.style && ($("voiceChatPanel").style.display = "block");
+    setTimeout(() => enableVoice(), 250);
 
     updateHostUI();
 
@@ -3473,408 +3479,435 @@ document.addEventListener(
 )
 
 /* =========================================================
-   WEBRTC VOICE CHAT
-   Added without replacing any existing Mafia Wars code.
+   WEBRTC VOICE CHAT - CLIENT
+   Real peer-to-peer browser audio with Socket.IO signaling.
 ========================================================= */
 
-const VOICE_ICE_SERVERS = [
-    { urls: "stun:stun.l.google.com:19302" }
-];
-
 let voiceEnabled = false;
-let voiceGroup = "none";
 let voiceMuted = false;
 let voiceLocalStream = null;
-let voicePeers = new Map();
-let voicePanelCollapsed = false;
-let voiceAudioContext = null;
-let voiceAnalyserTimers = new Map();
-let voiceParticipantInfo = new Map();
+let voiceGroup = "none";
+let voicePeers = [];
+const voiceConnections = new Map();
+const voiceVolumes = new Map();
+const voiceIceQueues = new Map();
+const voiceOfferLocks = new Map();
+const voiceReconnectTimers = new Map();
+let voiceAudioUnlocked = false;
+
+const VOICE_ICE_SERVERS = [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" }
+];
 
 function ensureVoicePanel() {
-    if (document.getElementById("voiceChatPanel")) return;
+    if ($("voiceChatPanel")) return;
 
     const panel = document.createElement("div");
     panel.id = "voiceChatPanel";
     panel.innerHTML = `
-        <div class="voice-panel-header">
-            <div class="voice-title-wrap">
-                <span class="voice-live-dot"></span>
-                <div>
-                    <div class="voice-title">LIVE VOICE</div>
-                    <div class="voice-subtitle" id="voiceGroupLabel">Voice chat</div>
-                </div>
+        <div class="voice-header">
+            <div>
+                <div class="voice-title">🎙️ VOICE CHAT</div>
+                <div id="voiceStatus" class="voice-status">Voice is off</div>
             </div>
-            <button class="voice-collapse-btn" id="voiceCollapseBtn" type="button" aria-label="Collapse voice chat">−</button>
+            <button id="voiceCollapseButton" class="voice-icon-button" type="button">−</button>
         </div>
-        <div class="voice-panel-body" id="voicePanelBody">
-            <div class="voice-status" id="voiceStatus">Connecting...</div>
-            <div class="voice-participants" id="voiceParticipants"></div>
+        <div id="voiceBody" class="voice-body">
+            <button id="voiceEnableButton" class="voice-enable-button" type="button">🎙️ ENABLE VOICE</button>
+            <div id="voiceError" class="voice-error"></div>
+            <div id="voiceParticipants" class="voice-participants"></div>
             <div class="voice-controls">
-                <button class="voice-control-btn" id="voiceMuteBtn" type="button">🎤 Mute</button>
-                <button class="voice-control-btn" id="voiceReconnectBtn" type="button">↻ Reconnect</button>
+                <button id="voiceMuteButton" class="voice-control-button" type="button" disabled>🎤 UNMUTE</button>
+                <button id="voiceReconnectButton" class="voice-control-button" type="button">🔄 RECONNECT</button>
             </div>
         </div>
     `;
+
+    panel.style.display = "none";
     document.body.appendChild(panel);
 
-    document.getElementById("voiceMuteBtn").addEventListener("click", toggleVoiceMute);
-    document.getElementById("voiceReconnectBtn").addEventListener("click", reconnectVoice);
-    document.getElementById("voiceCollapseBtn").addEventListener("click", toggleVoicePanel);
-}
-
-function voiceGroupLabel(group) {
-    return {
-        lobby: "Lobby • Everyone",
-        gameover: "Game Over • Everyone",
-        alive: "Day • Living Players",
-        dead: "Dead • Dead Players",
-        mafia: "Night • Mafia Team",
-        doctor: "Night • Doctor",
-        detective: "Night • Detective",
-        cupid: "Night • Cupid",
-        silent: "Silent",
-        none: "Unavailable"
-    }[group] || "Voice chat";
-}
-
-function updateVoicePanel() {
-    ensureVoicePanel();
-    const panel = document.getElementById("voiceChatPanel");
-    const body = document.getElementById("voicePanelBody");
-    const label = document.getElementById("voiceGroupLabel");
-    const status = document.getElementById("voiceStatus");
-    const muteBtn = document.getElementById("voiceMuteBtn");
-
-    label.textContent = voiceGroupLabel(voiceGroup);
-    panel.classList.toggle("voice-disabled", !voiceEnabled);
-    panel.classList.toggle("voice-collapsed", voicePanelCollapsed);
-    body.hidden = voicePanelCollapsed;
-    document.getElementById("voiceCollapseBtn").textContent = voicePanelCollapsed ? "+" : "−";
-    muteBtn.textContent = voiceMuted ? "🔇 Unmute" : "🎤 Mute";
-
-    if (!voiceEnabled) {
-        status.textContent = voiceGroup === "silent" ? "Waiting for your turn..." : "Voice unavailable";
-    } else if (!voiceLocalStream) {
-        status.textContent = "Microphone permission required";
-    } else {
-        status.textContent = voicePeers.size ? `${voicePeers.size} player${voicePeers.size === 1 ? "" : "s"} connected` : "Waiting for players...";
-    }
-}
-
-function renderVoiceParticipants() {
-    ensureVoicePanel();
-    const container = document.getElementById("voiceParticipants");
-    container.innerHTML = "";
-
-    const entries = Array.from(voiceParticipantInfo.values());
-    if (!entries.length) {
-        const empty = document.createElement("div");
-        empty.className = "voice-empty";
-        empty.textContent = voiceEnabled ? "No other players in this voice group" : "";
-        container.appendChild(empty);
-        return;
-    }
-
-    entries.forEach(info => {
-        const row = document.createElement("div");
-        row.className = "voice-participant";
-        row.dataset.playerId = info.id;
-        row.innerHTML = `
-            <div class="voice-avatar">${escapeVoiceHtml((info.name || "?").charAt(0).toUpperCase())}</div>
-            <div class="voice-player-main">
-                <div class="voice-player-name">${escapeVoiceHtml(info.name || "Player")}</div>
-                <div class="voice-player-state" data-voice-state="${info.id}">Connected</div>
-            </div>
-            <div class="voice-speaking" data-voice-speaking="${info.id}">●</div>
-            <input class="voice-volume" data-voice-volume="${info.id}" type="range" min="0" max="1" step="0.01" value="1" aria-label="Volume for ${escapeVoiceHtml(info.name || "player")}">
-        `;
-        container.appendChild(row);
-
-        const slider = row.querySelector(`[data-voice-volume="${CSS.escape(info.id)}"]`);
-        if (slider) {
-            slider.addEventListener("input", () => {
-                const peer = voicePeers.get(info.id);
-                if (peer?.audio) peer.audio.volume = Number(slider.value);
-            });
-        }
+    $("voiceEnableButton")?.addEventListener("click", enableVoice);
+    $("voiceMuteButton")?.addEventListener("click", toggleVoiceMute);
+    $("voiceReconnectButton")?.addEventListener("click", reconnectVoice);
+    $("voiceCollapseButton")?.addEventListener("click", () => {
+        const body = $("voiceBody");
+        const button = $("voiceCollapseButton");
+        if (!body || !button) return;
+        const collapsed = body.style.display === "none";
+        body.style.display = collapsed ? "block" : "none";
+        button.textContent = collapsed ? "−" : "+";
     });
 }
 
-function escapeVoiceHtml(value) {
-    return String(value)
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;")
-        .replaceAll('"', "&quot;")
-        .replaceAll("'", "&#039;");
+function setVoiceError(message) {
+    ensureVoicePanel();
+    const el = $("voiceError");
+    if (el) el.textContent = message || "";
 }
 
-function toggleVoicePanel() {
-    voicePanelCollapsed = !voicePanelCollapsed;
-    updateVoicePanel();
+function setVoiceStatus(text, active = false) {
+    ensureVoicePanel();
+    const el = $("voiceStatus");
+    if (el) {
+        el.textContent = text;
+        el.classList.toggle("voice-live", active);
+    }
+}
+
+function isVoiceRoomScreen() {
+    return Boolean(roomCode) && currentPhase !== "";
+}
+
+async function enableVoice() {
+    ensureVoicePanel();
+    setVoiceError("");
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setVoiceError("Your browser does not support microphone voice chat.");
+        return;
+    }
+
+    if (!window.isSecureContext && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
+        setVoiceError("Voice requires HTTPS (or localhost). Open the game using https://.");
+        return;
+    }
+
+    try {
+        if (!voiceLocalStream) {
+            voiceLocalStream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true
+                },
+                video: false
+            });
+        }
+
+        voiceAudioUnlocked = true;
+        voiceEnabled = true;
+        voiceMuted = false;
+        updateVoiceControls();
+        setVoiceStatus("LIVE • waiting for players...", true);
+        socket.emit("voiceRequestState");
+    } catch (error) {
+        console.error("Voice microphone error:", error);
+        setVoiceError(
+            error?.name === "NotAllowedError"
+                ? "Microphone permission was blocked. Allow microphone access and try again."
+                : "Could not access your microphone."
+        );
+        setVoiceStatus("Voice is off", false);
+    }
+}
+
+function updateVoiceControls() {
+    ensureVoicePanel();
+    const enable = $("voiceEnableButton");
+    const mute = $("voiceMuteButton");
+    if (enable) {
+        enable.disabled = voiceEnabled;
+        enable.textContent = voiceEnabled ? "🎙️ VOICE ENABLED" : "🎙️ ENABLE VOICE";
+    }
+    if (mute) {
+        mute.disabled = !voiceEnabled;
+        mute.textContent = voiceMuted ? "🎤 UNMUTE" : "🔇 MUTE";
+    }
 }
 
 function toggleVoiceMute() {
+    if (!voiceLocalStream) return;
     voiceMuted = !voiceMuted;
-    if (voiceLocalStream) {
-        voiceLocalStream.getAudioTracks().forEach(track => {
-            track.enabled = !voiceMuted;
-        });
-    }
-    updateVoicePanel();
-}
-
-async function ensureVoiceMicrophone() {
-    if (voiceLocalStream) return voiceLocalStream;
-    if (!voiceEnabled) return null;
-
-    try {
-        voiceLocalStream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-                echoCancellation: true,
-                noiseSuppression: true,
-                autoGainControl: true
-            },
-            video: false
-        });
-
-        voiceLocalStream.getAudioTracks().forEach(track => {
-            track.enabled = !voiceMuted;
-        });
-
-        updateVoicePanel();
-        return voiceLocalStream;
-    } catch (error) {
-        console.warn("Voice microphone permission/error:", error);
-        voiceLocalStream = null;
-        updateVoicePanel();
-        return null;
-    }
+    voiceLocalStream.getAudioTracks().forEach(track => {
+        track.enabled = !voiceMuted;
+    });
+    updateVoiceControls();
 }
 
 function closeVoicePeer(peerId) {
-    const peer = voicePeers.get(peerId);
-    if (!peer) return;
-
-    if (peer.analyserTimer) clearInterval(peer.analyserTimer);
-    if (peer.audio) {
-        peer.audio.pause();
-        peer.audio.srcObject = null;
-        peer.audio.remove();
+    const pc = voiceConnections.get(peerId);
+    if (pc) {
+        try { pc.onicecandidate = null; pc.ontrack = null; pc.onconnectionstatechange = null; pc.close(); } catch (_) {}
+        voiceConnections.delete(peerId);
     }
-    try { peer.connection.close(); } catch (_) {}
-    voicePeers.delete(peerId);
-    voiceAnalyserTimers.delete(peerId);
+    voiceIceQueues.delete(peerId);
+    voiceOfferLocks.delete(peerId);
+    const timer = voiceReconnectTimers.get(peerId);
+    if (timer) clearTimeout(timer);
+    voiceReconnectTimers.delete(peerId);
+    const audio = document.getElementById(`voice-audio-${CSS.escape(peerId)}`);
+    if (audio) { try { audio.pause(); } catch (_) {} audio.srcObject = null; audio.remove(); }
 }
 
 function closeAllVoicePeers() {
-    Array.from(voicePeers.keys()).forEach(closeVoicePeer);
-    voiceParticipantInfo.clear();
-    renderVoiceParticipants();
+    for (const peerId of Array.from(voiceConnections.keys())) closeVoicePeer(peerId);
 }
 
-function createVoicePeer(peerInfo, initiator) {
-    if (!voiceEnabled) return null;
-    if (voicePeers.has(peerInfo.id)) return voicePeers.get(peerInfo.id);
-
-    const connection = new RTCPeerConnection({ iceServers: VOICE_ICE_SERVERS });
-    const peer = {
-        id: peerInfo.id,
-        name: peerInfo.name,
-        connection,
-        audio: null,
-        analyser: null,
-        analyserTimer: null
-    };
-    voicePeers.set(peerInfo.id, peer);
-    voiceParticipantInfo.set(peerInfo.id, { id: peerInfo.id, name: peerInfo.name });
-
-    if (voiceLocalStream) {
-        voiceLocalStream.getTracks().forEach(track => connection.addTrack(track, voiceLocalStream));
-    }
-
-    connection.onicecandidate = event => {
-        if (!event.candidate || !roomCode) return;
-        socket.emit("voiceSignal", {
-            roomCode,
-            targetId: peerInfo.id,
-            signal: { type: "ice", candidate: event.candidate }
-        });
-    };
-
-    connection.ontrack = event => {
-        let audio = peer.audio;
-        if (!audio) {
-            audio = document.createElement("audio");
-            audio.autoplay = true;
-            audio.playsInline = true;
-            audio.volume = 1;
-            audio.className = "voice-hidden-audio";
-            document.body.appendChild(audio);
-            peer.audio = audio;
-        }
-        audio.srcObject = event.streams[0];
-        audio.play().catch(() => {});
-        setupVoiceSpeakingMeter(peer);
-        const state = document.querySelector(`[data-voice-state="${CSS.escape(peerInfo.id)}"]`);
-        if (state) state.textContent = "Live";
-    };
-
-    connection.onconnectionstatechange = () => {
-        const state = connection.connectionState;
-        const label = document.querySelector(`[data-voice-state="${CSS.escape(peerInfo.id)}"]`);
-        if (label) label.textContent = state === "connected" ? "Live" : state;
-        if (["failed", "closed"].includes(state)) closeVoicePeer(peerInfo.id);
-        updateVoicePanel();
-    };
-
-    if (initiator) {
-        connection.createOffer()
-            .then(offer => connection.setLocalDescription(offer))
-            .then(() => {
-                socket.emit("voiceSignal", {
-                    roomCode,
-                    targetId: peerInfo.id,
-                    signal: { type: "offer", description: connection.localDescription }
-                });
-            })
-            .catch(error => console.warn("Voice offer failed:", error));
-    }
-
-    renderVoiceParticipants();
-    updateVoicePanel();
-    return peer;
-}
-
-function setupVoiceSpeakingMeter(peer) {
-    if (!peer.audio || peer.analyserTimer || !window.AudioContext && !window.webkitAudioContext) return;
-    try {
-        voiceAudioContext ||= new (window.AudioContext || window.webkitAudioContext)();
-        const source = voiceAudioContext.createMediaElementSource(peer.audio);
-        const analyser = voiceAudioContext.createAnalyser();
-        analyser.fftSize = 256;
-        source.connect(analyser);
-        analyser.connect(voiceAudioContext.destination);
-        peer.analyser = analyser;
-        const data = new Uint8Array(analyser.frequencyBinCount);
-        peer.analyserTimer = setInterval(() => {
-            analyser.getByteFrequencyData(data);
-            let total = 0;
-            for (const value of data) total += value;
-            const speaking = total / data.length > 18;
-            const dot = document.querySelector(`[data-voice-speaking="${CSS.escape(peer.id)}"]`);
-            if (dot) dot.classList.toggle("speaking", speaking);
-            const row = document.querySelector(`.voice-participant[data-player-id="${CSS.escape(peer.id)}"]`);
-            if (row) row.classList.toggle("is-speaking", speaking);
-        }, 120);
-        voiceAnalyserTimers.set(peer.id, peer.analyserTimer);
-    } catch (error) {
-        console.warn("Voice speaking meter unavailable:", error);
-    }
-}
-
-async function handleVoiceSignal(message) {
-    if (!voiceEnabled || !message?.from || !message?.signal) return;
-
-    const info = voiceParticipantInfo.get(message.from);
-    if (!info) return;
-    const peer = createVoicePeer(info, false);
-    if (!peer) return;
-
-    try {
-        if (message.signal.type === "offer") {
-            await peer.connection.setRemoteDescription(message.signal.description);
-            const answer = await peer.connection.createAnswer();
-            await peer.connection.setLocalDescription(answer);
-            socket.emit("voiceSignal", {
-                roomCode,
-                targetId: message.from,
-                signal: { type: "answer", description: peer.connection.localDescription }
-            });
-        } else if (message.signal.type === "answer") {
-            await peer.connection.setRemoteDescription(message.signal.description);
-        } else if (message.signal.type === "ice" && message.signal.candidate) {
-            try { await peer.connection.addIceCandidate(message.signal.candidate); } catch (_) {}
-        }
-    } catch (error) {
-        console.warn("Voice signal handling failed:", error);
-    }
-}
-
-async function applyVoiceState(data) {
-    voiceEnabled = Boolean(data?.enabled);
-    voiceGroup = data?.group || "none";
-
-    const peers = Array.isArray(data?.peers) ? data.peers : [];
-    const allowedIds = new Set(peers.map(p => p.id));
-
-    Array.from(voicePeers.keys()).forEach(id => {
-        if (!allowedIds.has(id)) closeVoicePeer(id);
-    });
-
-    voiceParticipantInfo.clear();
-    peers.forEach(p => voiceParticipantInfo.set(p.id, { id: p.id, name: p.name }));
-
-    if (!voiceEnabled) {
-        closeAllVoicePeers();
-        if (voiceLocalStream) {
-            voiceLocalStream.getTracks().forEach(track => track.stop());
-            voiceLocalStream = null;
-        }
-        renderVoiceParticipants();
-        updateVoicePanel();
-        return;
-    }
-
-    await ensureVoiceMicrophone();
-
-    peers.forEach(peerInfo => {
-        if (!voicePeers.has(peerInfo.id)) {
-            const shouldInitiate = String(socket.id) < String(peerInfo.id);
-            createVoicePeer(peerInfo, shouldInitiate);
-        }
-    });
-
-    renderVoiceParticipants();
-    updateVoicePanel();
-}
-
-async function reconnectVoice() {
+function disableVoice() {
     closeAllVoicePeers();
     if (voiceLocalStream) {
         voiceLocalStream.getTracks().forEach(track => track.stop());
         voiceLocalStream = null;
     }
-    if (roomCode) socket.emit("voiceRequestState", { roomCode });
-    updateVoicePanel();
+    voiceEnabled = false;
+    voiceMuted = false;
+    voiceGroup = "none";
+    voicePeers = [];
+    renderVoiceParticipants();
+    updateVoiceControls();
+    setVoiceStatus("Voice is off", false);
 }
 
-socket.on("voiceState", applyVoiceState);
-socket.on("voiceSignal", handleVoiceSignal);
+function createVoicePeer(peer) {
+    if (!voiceEnabled || !voiceLocalStream || !peer?.id) return null;
+    if (voiceConnections.has(peer.id)) return voiceConnections.get(peer.id);
+    const pc = new RTCPeerConnection({ iceServers: VOICE_ICE_SERVERS });
+    voiceConnections.set(peer.id, pc);
+    voiceIceQueues.set(peer.id, voiceIceQueues.get(peer.id) || []);
+    voiceLocalStream.getTracks().forEach(track => pc.addTrack(track, voiceLocalStream));
+    pc.onicecandidate = event => {
+        if (event.candidate && roomCode) socket.emit("voiceIceCandidate", { roomCode, targetId: peer.id, candidate: event.candidate });
+    };
+    pc.ontrack = event => {
+        let audio = document.getElementById(`voice-audio-${CSS.escape(peer.id)}`);
+        if (!audio) {
+            audio = document.createElement("audio");
+            audio.id = `voice-audio-${CSS.escape(peer.id)}`;
+            audio.autoplay = true; audio.playsInline = true; audio.setAttribute("playsinline", ""); audio.style.display = "none";
+            document.body.appendChild(audio);
+        }
+        audio.srcObject = event.streams[0] || new MediaStream([event.track]);
+        audio.volume = voiceVolumes.has(peer.id) ? voiceVolumes.get(peer.id) : 1;
+        const play = () => audio.play().then(() => { voiceAudioUnlocked = true; }).catch(() => {});
+        play();
+        if (!voiceAudioUnlocked) {
+            const unlock = () => play();
+            document.addEventListener("click", unlock, { once: true });
+            document.addEventListener("keydown", unlock, { once: true });
+            document.addEventListener("touchstart", unlock, { once: true });
+        }
+    };
+    pc.onconnectionstatechange = () => {
+        const state = pc.connectionState;
+        if (state === "connected") { setVoiceStatus(`LIVE • ${voiceGroup.toUpperCase()}`, true); return; }
+        if (["failed", "disconnected"].includes(state)) {
+            const stillWanted = voicePeers.some(p => p.id === peer.id);
+            if (!stillWanted || !voiceEnabled) return;
+            if (state === "failed") { try { pc.restartIce(); } catch (_) {} }
+            if (!voiceReconnectTimers.has(peer.id)) {
+                const timer = setTimeout(() => {
+                    voiceReconnectTimers.delete(peer.id);
+                    if (!voiceEnabled || !voicePeers.some(p => p.id === peer.id)) return;
+                    closeVoicePeer(peer.id);
+                    updateVoicePeers(voicePeers).catch(err => console.error("Voice reconnect error:", err));
+                }, 1200);
+                voiceReconnectTimers.set(peer.id, timer);
+            }
+        }
+    };
+    return pc;
+}
+
+async function makeVoiceOffer(peer) {
+    const pc = createVoicePeer(peer);
+    if (!pc || voiceOfferLocks.get(peer.id)) return;
+    voiceOfferLocks.set(peer.id, true);
+    try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        socket.emit("voiceOffer", { roomCode, targetId: peer.id, offer: pc.localDescription });
+    } catch (error) {
+        console.error("Voice offer error:", error);
+        closeVoicePeer(peer.id);
+    } finally { voiceOfferLocks.delete(peer.id); }
+}
+
+async function updateVoicePeers(peers) {
+    if (!voiceEnabled || !voiceLocalStream) return;
+
+    const wanted = new Map((Array.isArray(peers) ? peers : []).map(p => [p.id, p]));
+
+    for (const existingId of Array.from(voiceConnections.keys())) {
+        if (!wanted.has(existingId)) closeVoicePeer(existingId);
+    }
+
+    for (const peer of wanted.values()) {
+        if (voiceConnections.has(peer.id)) continue;
+
+        // Only the lexicographically smaller socket ID creates the offer.
+        // This guarantees exactly one WebRTC connection per pair.
+        if (String(socket.id) < String(peer.id)) {
+            await makeVoiceOffer(peer);
+        } else {
+            createVoicePeer(peer);
+        }
+    }
+
+    renderVoiceParticipants();
+}
+
+function renderVoiceParticipants() {
+    ensureVoicePanel();
+    const container = $("voiceParticipants");
+    if (!container) return;
+
+    if (!voicePeers.length) {
+        container.innerHTML = '<div class="voice-empty">No one is in your current voice channel.</div>';
+        return;
+    }
+
+    container.innerHTML = "";
+
+    voicePeers.forEach(peer => {
+        const row = document.createElement("div");
+        row.className = "voice-participant";
+        row.dataset.peerId = peer.id;
+
+        const name = document.createElement("div");
+        name.className = "voice-player-name";
+        name.textContent = peer.name || "Player";
+
+        const controls = document.createElement("div");
+        controls.className = "voice-player-controls";
+
+        const icon = document.createElement("span");
+        icon.className = "voice-speaking-icon";
+        icon.textContent = "🎙️";
+
+        const slider = document.createElement("input");
+        slider.type = "range";
+        slider.min = "0";
+        slider.max = "1";
+        slider.step = "0.01";
+        slider.value = String(voiceVolumes.has(peer.id) ? voiceVolumes.get(peer.id) : 1);
+        slider.title = `Volume for ${peer.name || "player"}`;
+        slider.addEventListener("input", () => {
+            const value = Number(slider.value);
+            voiceVolumes.set(peer.id, value);
+            const audio = document.getElementById(`voice-audio-${CSS.escape(peer.id)}`);
+            if (audio) audio.volume = value;
+        });
+
+        controls.append(icon, slider);
+        row.append(name, controls);
+        container.appendChild(row);
+    });
+}
+
+async function flushVoiceIceCandidates(peerId, pc) {
+    const queued = voiceIceQueues.get(peerId) || [];
+    voiceIceQueues.set(peerId, []);
+    for (const candidate of queued) {
+        try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch (error) { console.error("Queued voice ICE error:", error); }
+    }
+}
+
+socket.on("voiceState", async data => {
+    if (!data) return;
+
+    voiceGroup = data.group || "none";
+    voicePeers = Array.isArray(data.peers) ? data.peers : [];
+
+    ensureVoicePanel();
+    const voicePanel = $("voiceChatPanel");
+    if (voicePanel) voicePanel.style.display = "block";
+
+    if (!voiceEnabled) {
+        setVoiceStatus(
+            voiceGroup === "silent" || voiceGroup === "none"
+                ? "No active voice channel"
+                : "Voice is off • click Enable Voice",
+            false
+        );
+        renderVoiceParticipants();
+        return;
+    }
+
+    if (voiceGroup === "silent" || voiceGroup === "none") {
+        closeAllVoicePeers();
+        setVoiceStatus("No active voice channel", false);
+        renderVoiceParticipants();
+        return;
+    }
+
+    setVoiceStatus(`LIVE • ${voiceGroup.toUpperCase()}`, true);
+    await updateVoicePeers(voicePeers);
+});
+
+socket.on("voiceOffer", async data => {
+    if (!voiceEnabled || !voiceLocalStream || !data?.fromId || !data?.offer) return;
+    const peer = voicePeers.find(p => p.id === data.fromId) || { id: data.fromId, name: data.fromName || "Player" };
+    const pc = createVoicePeer(peer);
+    if (!pc) return;
+
+    try {
+        await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+        await flushVoiceIceCandidates(data.fromId, pc);
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.emit("voiceAnswer", {
+            roomCode,
+            targetId: data.fromId,
+            answer: pc.localDescription
+        });
+    } catch (error) {
+        console.error("Voice answer error:", error);
+    }
+});
+
+socket.on("voiceAnswer", async data => {
+    if (!voiceEnabled || !data?.fromId || !data?.answer) return;
+    const pc = voiceConnections.get(data.fromId);
+    if (!pc) return;
+    try {
+        await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+        await flushVoiceIceCandidates(data.fromId, pc);
+    } catch (error) {
+        console.error("Voice remote answer error:", error);
+    }
+});
+
+socket.on("voiceIceCandidate", async data => {
+    if (!voiceEnabled || !data?.fromId || !data?.candidate) return;
+    const peerId = data.fromId;
+    const pc = voiceConnections.get(peerId);
+    if (!pc) return;
+    if (!pc.remoteDescription) {
+        const queue = voiceIceQueues.get(peerId) || [];
+        queue.push(data.candidate);
+        voiceIceQueues.set(peerId, queue);
+        return;
+    }
+    try { await pc.addIceCandidate(new RTCIceCandidate(data.candidate)); } catch (error) { console.error("Voice ICE error:", error); }
+});
 
 socket.on("connect", () => {
+    if (roomCode) socket.emit("voiceRequestState");
+});
+
+socket.on("disconnect", () => {
+    closeAllVoicePeers();
+});
+
+// Hook into room/game UI without replacing any existing handlers.
+const originalVoiceInit = document.addEventListener;
+document.addEventListener("DOMContentLoaded", () => {
     ensureVoicePanel();
-    if (roomCode) socket.emit("voiceRequestState", { roomCode });
+    updateVoiceControls();
 });
 
 socket.on("gameOver", () => {
-    setTimeout(() => {
-        if (roomCode) socket.emit("voiceRequestState", { roomCode });
-    }, 50);
+    currentPhase = "gameover";
+    socket.emit("voiceRequestState");
 });
 
 socket.on("gameRestarted", () => {
     closeAllVoicePeers();
-    if (roomCode) socket.emit("voiceRequestState", { roomCode });
+    socket.emit("voiceRequestState");
 });
 
 window.addEventListener("beforeunload", () => {
-    closeAllVoicePeers();
+    try { closeAllVoicePeers(); } catch (_) {}
     if (voiceLocalStream) voiceLocalStream.getTracks().forEach(track => track.stop());
-});
-
-document.addEventListener("DOMContentLoaded", () => {
-    ensureVoicePanel();
-    updateVoicePanel();
 });
