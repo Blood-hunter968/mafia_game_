@@ -870,6 +870,8 @@ function sendGameInformation(roomCode) {
             }
         );
     });
+
+    broadcastVoiceState(roomCode);
 }
 
 /* =========================================================
@@ -1725,6 +1727,61 @@ function endVoting(roomCode) {
 }
 
 /* =========================================================
+   WEBRTC VOICE CHAT
+   Server handles permissions + signaling only. Audio stays peer-to-peer.
+========================================================= */
+
+function findPlayerBySocket(room, socketId) {
+    return room?.players?.find(p => p.id === socketId) || null;
+}
+
+function getVoiceGroup(room, player) {
+    if (!room || !player) return "none";
+
+    if (room.phase === "lobby") return "lobby";
+    if (room.phase === "gameover") return "gameover";
+    if (!player.alive) return "dead";
+    if (room.phase === "day") return "alive";
+
+    if (room.phase === "night") {
+        if (room.nightTurn === "mafia" && isMafiaTeam(player.role)) return "mafia";
+        if (room.nightTurn === "doctor" && player.role === "Doctor") return "doctor";
+        if (room.nightTurn === "detective" && player.role === "Detective") return "detective";
+        if (room.nightTurn === "cupid" && player.role === "Clupid") return "cupid";
+        return "silent";
+    }
+
+    return "none";
+}
+
+function getVoicePeers(room, player) {
+    const group = getVoiceGroup(room, player);
+    if (group === "none" || group === "silent") return [];
+
+    return room.players
+        .filter(other => other.id !== player.id && getVoiceGroup(room, other) === group)
+        .map(other => ({
+            id: other.id,
+            name: other.name,
+            alive: other.alive
+        }));
+}
+
+function broadcastVoiceState(roomCode) {
+    const room = rooms[roomCode];
+    if (!room) return;
+
+    room.players.forEach(player => {
+        const group = getVoiceGroup(room, player);
+        io.to(player.id).emit("voiceState", {
+            enabled: group !== "none" && group !== "silent",
+            group,
+            peers: getVoicePeers(room, player)
+        });
+    });
+}
+
+/* =========================================================
    SOCKET CONNECTION
 ========================================================= */
 
@@ -1736,6 +1793,43 @@ io.on(
             "Player connected:",
             socket.id
         );
+
+
+        /* =================================================
+           WEBRTC VOICE SIGNALING
+        ================================================= */
+
+        socket.on("voiceRequestState", data => {
+            const code = String(data?.roomCode || "").trim().toUpperCase();
+            if (rooms[code]) broadcastVoiceState(code);
+        });
+
+        socket.on("voiceSignal", data => {
+            const roomCode = String(data?.roomCode || "").trim().toUpperCase();
+            const targetId = String(data?.targetId || "");
+            const room = rooms[roomCode];
+            if (!room || !targetId || !data?.signal) return;
+
+            const sender = findPlayerBySocket(room, socket.id);
+            const target = findPlayerBySocket(room, targetId);
+            if (!sender || !target) return;
+
+            const senderGroup = getVoiceGroup(room, sender);
+            const targetGroup = getVoiceGroup(room, target);
+
+            if (
+                senderGroup === "none" ||
+                senderGroup === "silent" ||
+                senderGroup !== targetGroup
+            ) {
+                return;
+            }
+
+            io.to(targetId).emit("voiceSignal", {
+                from: socket.id,
+                signal: data.signal
+            });
+        });
 
         /* =================================================
            CREATE ROOM
@@ -1857,6 +1951,7 @@ io.on(
                 );
 
                 emitLobby(roomCode);
+                broadcastVoiceState(roomCode);
 
                 announce(
                     roomCode,
@@ -1949,6 +2044,7 @@ io.on(
                 );
 
                 emitLobby(roomCode);
+                broadcastVoiceState(roomCode);
 
                 announce(
                     roomCode,
@@ -2010,6 +2106,7 @@ io.on(
             }
 
             emitLobby(code);
+            broadcastVoiceState(code);
             announce(
                 code,
                 `🚪 ${leavingPlayer.name} left the room.`,
@@ -3019,6 +3116,8 @@ assignRoles(
                     }
                 );
 
+                broadcastVoiceState(roomCode);
+
                 announce(
                     roomCode,
                     "🔄 Game restarted! Everyone is back in the lobby.",
@@ -3153,6 +3252,7 @@ assignRoles(
                     ========================= */
 
                     emitLobby(roomCode);
+                    broadcastVoiceState(roomCode);
                     emitPublicMatches();
 
                     /* =========================
