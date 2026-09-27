@@ -817,6 +817,12 @@ function leaveCurrentRoom() {
 
     socket.emit("leaveRoom", { roomCode });
 
+    // Stop the mic and tear down any peer connections so voice chat doesn't
+    // keep running (and the mic doesn't stay hot) after leaving the room.
+    disableVoice();
+    const voicePanel = $("voiceChatPanel");
+    if (voicePanel) voicePanel.style.display = "none";
+
     roomCode = "";
     myRole = "";
     players = [];
@@ -3452,6 +3458,10 @@ document.addEventListener(
         
         setupBackHomeGameOver();
 
+        // NOTE: this was defined but never called, which is why the
+        // Leave Room button previously did nothing when clicked.
+        setupLeaveRoomButton();
+
         /*
            Make announcement box immediately.
         */
@@ -3490,9 +3500,17 @@ let voiceGroup = "none";
 let voicePeers = [];
 const voiceConnections = new Map();
 const voiceVolumes = new Map();
+// Tracks each peer's REAL WebRTC connection state (not just "who should be
+// in this channel"), so the UI can show whether audio is actually flowing
+// instead of just showing the name and looking connected regardless.
+const voiceConnectionStates = new Map();
 const voiceIceQueues = new Map();
 const voiceOfferLocks = new Map();
 const voiceReconnectTimers = new Map();
+// Offers (and ICE candidates) that arrive before our own mic/voice is ready
+// get stashed here instead of being silently dropped, then replayed once
+// enableVoice() finishes. This is what fixes peers never hearing each other.
+const voicePendingOffers = new Map();
 let voiceAudioUnlocked = false;
 
 const VOICE_ICE_SERVERS = [
@@ -3590,6 +3608,9 @@ async function enableVoice() {
         voiceMuted = false;
         updateVoiceControls();
         setVoiceStatus("LIVE • waiting for players...", true);
+        // Replay any offers a faster peer sent us before our mic was ready,
+        // instead of leaving them dropped forever.
+        processPendingVoiceOffers();
         socket.emit("voiceRequestState");
     } catch (error) {
         console.error("Voice microphone error:", error);
@@ -3625,6 +3646,22 @@ function toggleVoiceMute() {
     updateVoiceControls();
 }
 
+// Manually tears down and rebuilds every peer connection in the current
+// voice group. This was referenced by the RECONNECT button but never
+// actually defined anywhere, which crashed the page with a ReferenceError
+// the moment the voice panel was first created.
+function reconnectVoice() {
+    if (!voiceEnabled || !voiceLocalStream) {
+        setVoiceError("Enable voice first, then try reconnecting.");
+        return;
+    }
+    setVoiceError("");
+    closeAllVoicePeers();
+    voicePendingOffers.clear();
+    setVoiceStatus("Reconnecting...", false);
+    socket.emit("voiceRequestState");
+}
+
 function closeVoicePeer(peerId) {
     const pc = voiceConnections.get(peerId);
     if (pc) {
@@ -3633,6 +3670,8 @@ function closeVoicePeer(peerId) {
     }
     voiceIceQueues.delete(peerId);
     voiceOfferLocks.delete(peerId);
+    voicePendingOffers.delete(peerId);
+    voiceConnectionStates.delete(peerId);
     const timer = voiceReconnectTimers.get(peerId);
     if (timer) clearTimeout(timer);
     voiceReconnectTimers.delete(peerId);
@@ -3654,6 +3693,7 @@ function disableVoice() {
     voiceMuted = false;
     voiceGroup = "none";
     voicePeers = [];
+    voicePendingOffers.clear();
     renderVoiceParticipants();
     updateVoiceControls();
     setVoiceStatus("Voice is off", false);
@@ -3670,6 +3710,7 @@ function createVoicePeer(peer) {
         if (event.candidate && roomCode) socket.emit("voiceIceCandidate", { roomCode, targetId: peer.id, candidate: event.candidate });
     };
     pc.ontrack = event => {
+        console.log(`[voice] received remote audio track from ${peer.name || peer.id}`);
         let audio = document.getElementById(`voice-audio-${CSS.escape(peer.id)}`);
         if (!audio) {
             audio = document.createElement("audio");
@@ -3679,7 +3720,9 @@ function createVoicePeer(peer) {
         }
         audio.srcObject = event.streams[0] || new MediaStream([event.track]);
         audio.volume = voiceVolumes.has(peer.id) ? voiceVolumes.get(peer.id) : 1;
-        const play = () => audio.play().then(() => { voiceAudioUnlocked = true; }).catch(() => {});
+        const play = () => audio.play().then(() => { voiceAudioUnlocked = true; }).catch(error => {
+            console.warn(`[voice] audio.play() blocked for ${peer.name || peer.id}:`, error?.name || error);
+        });
         play();
         if (!voiceAudioUnlocked) {
             const unlock = () => play();
@@ -3690,6 +3733,9 @@ function createVoicePeer(peer) {
     };
     pc.onconnectionstatechange = () => {
         const state = pc.connectionState;
+        console.log(`[voice] connection to ${peer.name || peer.id}: ${state}`);
+        voiceConnectionStates.set(peer.id, state);
+        renderVoiceParticipants();
         if (state === "connected") { setVoiceStatus(`LIVE • ${voiceGroup.toUpperCase()}`, true); return; }
         if (["failed", "disconnected"].includes(state)) {
             const stillWanted = voicePeers.some(p => p.id === peer.id);
@@ -3768,6 +3814,23 @@ function renderVoiceParticipants() {
         name.className = "voice-player-name";
         name.textContent = peer.name || "Player";
 
+        // Real WebRTC state for this peer, not just "they're in my channel".
+        // This is what tells you whether audio can actually flow.
+        const stateLabel = document.createElement("div");
+        stateLabel.className = "voice-player-state";
+        const rawState = voiceConnectionStates.get(peer.id) || "connecting";
+        const stateText = {
+            connected: "🟢 Connected",
+            connecting: "🟡 Connecting…",
+            new: "🟡 Connecting…",
+            disconnected: "🟠 Reconnecting…",
+            failed: "🔴 Failed",
+            closed: "⚪ Closed"
+        }[rawState] || `🟡 ${rawState}`;
+        stateLabel.textContent = stateText;
+        stateLabel.style.fontSize = "0.8em";
+        stateLabel.style.opacity = "0.8";
+
         const controls = document.createElement("div");
         controls.className = "voice-player-controls";
 
@@ -3790,7 +3853,7 @@ function renderVoiceParticipants() {
         });
 
         controls.append(icon, slider);
-        row.append(name, controls);
+        row.append(name, stateLabel, controls);
         container.appendChild(row);
     });
 }
@@ -3832,11 +3895,11 @@ socket.on("voiceState", async data => {
     }
 
     setVoiceStatus(`LIVE • ${voiceGroup.toUpperCase()}`, true);
+    processPendingVoiceOffers();
     await updateVoicePeers(voicePeers);
 });
 
-socket.on("voiceOffer", async data => {
-    if (!voiceEnabled || !voiceLocalStream || !data?.fromId || !data?.offer) return;
+async function handleVoiceOffer(data) {
     const peer = voicePeers.find(p => p.id === data.fromId) || { id: data.fromId, name: data.fromName || "Player" };
     const pc = createVoicePeer(peer);
     if (!pc) return;
@@ -3854,6 +3917,29 @@ socket.on("voiceOffer", async data => {
     } catch (error) {
         console.error("Voice answer error:", error);
     }
+}
+
+function processPendingVoiceOffers() {
+    if (!voiceEnabled || !voiceLocalStream) return;
+    for (const [peerId, data] of Array.from(voicePendingOffers.entries())) {
+        voicePendingOffers.delete(peerId);
+        handleVoiceOffer(data).catch(error => console.error("Voice pending offer error:", error));
+    }
+}
+
+socket.on("voiceOffer", data => {
+    if (!data?.fromId || !data?.offer) return;
+
+    // If our mic isn't ready yet (getUserMedia still pending, or voice not
+    // enabled locally), don't drop the offer - a faster peer's offer used to
+    // vanish here, leaving both sides silently stuck with no audio. Queue it
+    // and replay it as soon as enableVoice() finishes.
+    if (!voiceEnabled || !voiceLocalStream) {
+        voicePendingOffers.set(data.fromId, data);
+        return;
+    }
+
+    handleVoiceOffer(data).catch(error => console.error("Voice offer error:", error));
 });
 
 socket.on("voiceAnswer", async data => {
@@ -3869,11 +3955,14 @@ socket.on("voiceAnswer", async data => {
 });
 
 socket.on("voiceIceCandidate", async data => {
-    if (!voiceEnabled || !data?.fromId || !data?.candidate) return;
+    if (!data?.fromId || !data?.candidate) return;
     const peerId = data.fromId;
     const pc = voiceConnections.get(peerId);
-    if (!pc) return;
-    if (!pc.remoteDescription) {
+    // Queue whenever there's no connection yet OR it has no remote
+    // description yet - a candidate that arrives before we've processed the
+    // matching offer (e.g. while our mic is still initializing) used to be
+    // silently discarded here instead of queued.
+    if (!pc || !pc.remoteDescription) {
         const queue = voiceIceQueues.get(peerId) || [];
         queue.push(data.candidate);
         voiceIceQueues.set(peerId, queue);
