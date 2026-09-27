@@ -3446,8 +3446,6 @@ document.addEventListener(
         
         setupBackHomeGameOver();
 
-        setupLeaveRoomButton();
-        
         /*
            Make announcement box immediately.
         */
@@ -3473,3 +3471,410 @@ document.addEventListener(
     }
 
 )
+
+/* =========================================================
+   WEBRTC VOICE CHAT
+   Added without replacing any existing Mafia Wars code.
+========================================================= */
+
+const VOICE_ICE_SERVERS = [
+    { urls: "stun:stun.l.google.com:19302" }
+];
+
+let voiceEnabled = false;
+let voiceGroup = "none";
+let voiceMuted = false;
+let voiceLocalStream = null;
+let voicePeers = new Map();
+let voicePanelCollapsed = false;
+let voiceAudioContext = null;
+let voiceAnalyserTimers = new Map();
+let voiceParticipantInfo = new Map();
+
+function ensureVoicePanel() {
+    if (document.getElementById("voiceChatPanel")) return;
+
+    const panel = document.createElement("div");
+    panel.id = "voiceChatPanel";
+    panel.innerHTML = `
+        <div class="voice-panel-header">
+            <div class="voice-title-wrap">
+                <span class="voice-live-dot"></span>
+                <div>
+                    <div class="voice-title">LIVE VOICE</div>
+                    <div class="voice-subtitle" id="voiceGroupLabel">Voice chat</div>
+                </div>
+            </div>
+            <button class="voice-collapse-btn" id="voiceCollapseBtn" type="button" aria-label="Collapse voice chat">−</button>
+        </div>
+        <div class="voice-panel-body" id="voicePanelBody">
+            <div class="voice-status" id="voiceStatus">Connecting...</div>
+            <div class="voice-participants" id="voiceParticipants"></div>
+            <div class="voice-controls">
+                <button class="voice-control-btn" id="voiceMuteBtn" type="button">🎤 Mute</button>
+                <button class="voice-control-btn" id="voiceReconnectBtn" type="button">↻ Reconnect</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(panel);
+
+    document.getElementById("voiceMuteBtn").addEventListener("click", toggleVoiceMute);
+    document.getElementById("voiceReconnectBtn").addEventListener("click", reconnectVoice);
+    document.getElementById("voiceCollapseBtn").addEventListener("click", toggleVoicePanel);
+}
+
+function voiceGroupLabel(group) {
+    return {
+        lobby: "Lobby • Everyone",
+        gameover: "Game Over • Everyone",
+        alive: "Day • Living Players",
+        dead: "Dead • Dead Players",
+        mafia: "Night • Mafia Team",
+        doctor: "Night • Doctor",
+        detective: "Night • Detective",
+        cupid: "Night • Cupid",
+        silent: "Silent",
+        none: "Unavailable"
+    }[group] || "Voice chat";
+}
+
+function updateVoicePanel() {
+    ensureVoicePanel();
+    const panel = document.getElementById("voiceChatPanel");
+    const body = document.getElementById("voicePanelBody");
+    const label = document.getElementById("voiceGroupLabel");
+    const status = document.getElementById("voiceStatus");
+    const muteBtn = document.getElementById("voiceMuteBtn");
+
+    label.textContent = voiceGroupLabel(voiceGroup);
+    panel.classList.toggle("voice-disabled", !voiceEnabled);
+    panel.classList.toggle("voice-collapsed", voicePanelCollapsed);
+    body.hidden = voicePanelCollapsed;
+    document.getElementById("voiceCollapseBtn").textContent = voicePanelCollapsed ? "+" : "−";
+    muteBtn.textContent = voiceMuted ? "🔇 Unmute" : "🎤 Mute";
+
+    if (!voiceEnabled) {
+        status.textContent = voiceGroup === "silent" ? "Waiting for your turn..." : "Voice unavailable";
+    } else if (!voiceLocalStream) {
+        status.textContent = "Microphone permission required";
+    } else {
+        status.textContent = voicePeers.size ? `${voicePeers.size} player${voicePeers.size === 1 ? "" : "s"} connected` : "Waiting for players...";
+    }
+}
+
+function renderVoiceParticipants() {
+    ensureVoicePanel();
+    const container = document.getElementById("voiceParticipants");
+    container.innerHTML = "";
+
+    const entries = Array.from(voiceParticipantInfo.values());
+    if (!entries.length) {
+        const empty = document.createElement("div");
+        empty.className = "voice-empty";
+        empty.textContent = voiceEnabled ? "No other players in this voice group" : "";
+        container.appendChild(empty);
+        return;
+    }
+
+    entries.forEach(info => {
+        const row = document.createElement("div");
+        row.className = "voice-participant";
+        row.dataset.playerId = info.id;
+        row.innerHTML = `
+            <div class="voice-avatar">${escapeVoiceHtml((info.name || "?").charAt(0).toUpperCase())}</div>
+            <div class="voice-player-main">
+                <div class="voice-player-name">${escapeVoiceHtml(info.name || "Player")}</div>
+                <div class="voice-player-state" data-voice-state="${info.id}">Connected</div>
+            </div>
+            <div class="voice-speaking" data-voice-speaking="${info.id}">●</div>
+            <input class="voice-volume" data-voice-volume="${info.id}" type="range" min="0" max="1" step="0.01" value="1" aria-label="Volume for ${escapeVoiceHtml(info.name || "player")}">
+        `;
+        container.appendChild(row);
+
+        const slider = row.querySelector(`[data-voice-volume="${CSS.escape(info.id)}"]`);
+        if (slider) {
+            slider.addEventListener("input", () => {
+                const peer = voicePeers.get(info.id);
+                if (peer?.audio) peer.audio.volume = Number(slider.value);
+            });
+        }
+    });
+}
+
+function escapeVoiceHtml(value) {
+    return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+}
+
+function toggleVoicePanel() {
+    voicePanelCollapsed = !voicePanelCollapsed;
+    updateVoicePanel();
+}
+
+function toggleVoiceMute() {
+    voiceMuted = !voiceMuted;
+    if (voiceLocalStream) {
+        voiceLocalStream.getAudioTracks().forEach(track => {
+            track.enabled = !voiceMuted;
+        });
+    }
+    updateVoicePanel();
+}
+
+async function ensureVoiceMicrophone() {
+    if (voiceLocalStream) return voiceLocalStream;
+    if (!voiceEnabled) return null;
+
+    try {
+        voiceLocalStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true
+            },
+            video: false
+        });
+
+        voiceLocalStream.getAudioTracks().forEach(track => {
+            track.enabled = !voiceMuted;
+        });
+
+        updateVoicePanel();
+        return voiceLocalStream;
+    } catch (error) {
+        console.warn("Voice microphone permission/error:", error);
+        voiceLocalStream = null;
+        updateVoicePanel();
+        return null;
+    }
+}
+
+function closeVoicePeer(peerId) {
+    const peer = voicePeers.get(peerId);
+    if (!peer) return;
+
+    if (peer.analyserTimer) clearInterval(peer.analyserTimer);
+    if (peer.audio) {
+        peer.audio.pause();
+        peer.audio.srcObject = null;
+        peer.audio.remove();
+    }
+    try { peer.connection.close(); } catch (_) {}
+    voicePeers.delete(peerId);
+    voiceAnalyserTimers.delete(peerId);
+}
+
+function closeAllVoicePeers() {
+    Array.from(voicePeers.keys()).forEach(closeVoicePeer);
+    voiceParticipantInfo.clear();
+    renderVoiceParticipants();
+}
+
+function createVoicePeer(peerInfo, initiator) {
+    if (!voiceEnabled) return null;
+    if (voicePeers.has(peerInfo.id)) return voicePeers.get(peerInfo.id);
+
+    const connection = new RTCPeerConnection({ iceServers: VOICE_ICE_SERVERS });
+    const peer = {
+        id: peerInfo.id,
+        name: peerInfo.name,
+        connection,
+        audio: null,
+        analyser: null,
+        analyserTimer: null
+    };
+    voicePeers.set(peerInfo.id, peer);
+    voiceParticipantInfo.set(peerInfo.id, { id: peerInfo.id, name: peerInfo.name });
+
+    if (voiceLocalStream) {
+        voiceLocalStream.getTracks().forEach(track => connection.addTrack(track, voiceLocalStream));
+    }
+
+    connection.onicecandidate = event => {
+        if (!event.candidate || !roomCode) return;
+        socket.emit("voiceSignal", {
+            roomCode,
+            targetId: peerInfo.id,
+            signal: { type: "ice", candidate: event.candidate }
+        });
+    };
+
+    connection.ontrack = event => {
+        let audio = peer.audio;
+        if (!audio) {
+            audio = document.createElement("audio");
+            audio.autoplay = true;
+            audio.playsInline = true;
+            audio.volume = 1;
+            audio.className = "voice-hidden-audio";
+            document.body.appendChild(audio);
+            peer.audio = audio;
+        }
+        audio.srcObject = event.streams[0];
+        audio.play().catch(() => {});
+        setupVoiceSpeakingMeter(peer);
+        const state = document.querySelector(`[data-voice-state="${CSS.escape(peerInfo.id)}"]`);
+        if (state) state.textContent = "Live";
+    };
+
+    connection.onconnectionstatechange = () => {
+        const state = connection.connectionState;
+        const label = document.querySelector(`[data-voice-state="${CSS.escape(peerInfo.id)}"]`);
+        if (label) label.textContent = state === "connected" ? "Live" : state;
+        if (["failed", "closed"].includes(state)) closeVoicePeer(peerInfo.id);
+        updateVoicePanel();
+    };
+
+    if (initiator) {
+        connection.createOffer()
+            .then(offer => connection.setLocalDescription(offer))
+            .then(() => {
+                socket.emit("voiceSignal", {
+                    roomCode,
+                    targetId: peerInfo.id,
+                    signal: { type: "offer", description: connection.localDescription }
+                });
+            })
+            .catch(error => console.warn("Voice offer failed:", error));
+    }
+
+    renderVoiceParticipants();
+    updateVoicePanel();
+    return peer;
+}
+
+function setupVoiceSpeakingMeter(peer) {
+    if (!peer.audio || peer.analyserTimer || !window.AudioContext && !window.webkitAudioContext) return;
+    try {
+        voiceAudioContext ||= new (window.AudioContext || window.webkitAudioContext)();
+        const source = voiceAudioContext.createMediaElementSource(peer.audio);
+        const analyser = voiceAudioContext.createAnalyser();
+        analyser.fftSize = 256;
+        source.connect(analyser);
+        analyser.connect(voiceAudioContext.destination);
+        peer.analyser = analyser;
+        const data = new Uint8Array(analyser.frequencyBinCount);
+        peer.analyserTimer = setInterval(() => {
+            analyser.getByteFrequencyData(data);
+            let total = 0;
+            for (const value of data) total += value;
+            const speaking = total / data.length > 18;
+            const dot = document.querySelector(`[data-voice-speaking="${CSS.escape(peer.id)}"]`);
+            if (dot) dot.classList.toggle("speaking", speaking);
+            const row = document.querySelector(`.voice-participant[data-player-id="${CSS.escape(peer.id)}"]`);
+            if (row) row.classList.toggle("is-speaking", speaking);
+        }, 120);
+        voiceAnalyserTimers.set(peer.id, peer.analyserTimer);
+    } catch (error) {
+        console.warn("Voice speaking meter unavailable:", error);
+    }
+}
+
+async function handleVoiceSignal(message) {
+    if (!voiceEnabled || !message?.from || !message?.signal) return;
+
+    const info = voiceParticipantInfo.get(message.from);
+    if (!info) return;
+    const peer = createVoicePeer(info, false);
+    if (!peer) return;
+
+    try {
+        if (message.signal.type === "offer") {
+            await peer.connection.setRemoteDescription(message.signal.description);
+            const answer = await peer.connection.createAnswer();
+            await peer.connection.setLocalDescription(answer);
+            socket.emit("voiceSignal", {
+                roomCode,
+                targetId: message.from,
+                signal: { type: "answer", description: peer.connection.localDescription }
+            });
+        } else if (message.signal.type === "answer") {
+            await peer.connection.setRemoteDescription(message.signal.description);
+        } else if (message.signal.type === "ice" && message.signal.candidate) {
+            try { await peer.connection.addIceCandidate(message.signal.candidate); } catch (_) {}
+        }
+    } catch (error) {
+        console.warn("Voice signal handling failed:", error);
+    }
+}
+
+async function applyVoiceState(data) {
+    voiceEnabled = Boolean(data?.enabled);
+    voiceGroup = data?.group || "none";
+
+    const peers = Array.isArray(data?.peers) ? data.peers : [];
+    const allowedIds = new Set(peers.map(p => p.id));
+
+    Array.from(voicePeers.keys()).forEach(id => {
+        if (!allowedIds.has(id)) closeVoicePeer(id);
+    });
+
+    voiceParticipantInfo.clear();
+    peers.forEach(p => voiceParticipantInfo.set(p.id, { id: p.id, name: p.name }));
+
+    if (!voiceEnabled) {
+        closeAllVoicePeers();
+        if (voiceLocalStream) {
+            voiceLocalStream.getTracks().forEach(track => track.stop());
+            voiceLocalStream = null;
+        }
+        renderVoiceParticipants();
+        updateVoicePanel();
+        return;
+    }
+
+    await ensureVoiceMicrophone();
+
+    peers.forEach(peerInfo => {
+        if (!voicePeers.has(peerInfo.id)) {
+            const shouldInitiate = String(socket.id) < String(peerInfo.id);
+            createVoicePeer(peerInfo, shouldInitiate);
+        }
+    });
+
+    renderVoiceParticipants();
+    updateVoicePanel();
+}
+
+async function reconnectVoice() {
+    closeAllVoicePeers();
+    if (voiceLocalStream) {
+        voiceLocalStream.getTracks().forEach(track => track.stop());
+        voiceLocalStream = null;
+    }
+    if (roomCode) socket.emit("voiceRequestState", { roomCode });
+    updateVoicePanel();
+}
+
+socket.on("voiceState", applyVoiceState);
+socket.on("voiceSignal", handleVoiceSignal);
+
+socket.on("connect", () => {
+    ensureVoicePanel();
+    if (roomCode) socket.emit("voiceRequestState", { roomCode });
+});
+
+socket.on("gameOver", () => {
+    setTimeout(() => {
+        if (roomCode) socket.emit("voiceRequestState", { roomCode });
+    }, 50);
+});
+
+socket.on("gameRestarted", () => {
+    closeAllVoicePeers();
+    if (roomCode) socket.emit("voiceRequestState", { roomCode });
+});
+
+window.addEventListener("beforeunload", () => {
+    closeAllVoicePeers();
+    if (voiceLocalStream) voiceLocalStream.getTracks().forEach(track => track.stop());
+});
+
+document.addEventListener("DOMContentLoaded", () => {
+    ensureVoicePanel();
+    updateVoicePanel();
+});
