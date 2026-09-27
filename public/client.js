@@ -21,11 +21,44 @@ function playGameSound(sound) {
 
     try {
         sound.currentTime = 0;
+        duckMicForSound(sound);
         const promise = sound.play();
         if (promise) promise.catch(() => {});
     } catch (error) {
         console.warn("Sound error:", error);
     }
+}
+
+/*
+   Without this, a game sound effect (like the death sound) plays out of
+   your speakers, your own microphone picks it up, and it gets re-sent
+   live over voice chat to everyone else — arriving garbled/echoey on top
+   of the same sound they already played locally. To stop that, we briefly
+   disable your outgoing mic track for the duration of the sound effect,
+   then restore it (unless you had already muted yourself on purpose).
+*/
+function duckMicForSound(sound) {
+    if (!voiceEnabled || !voiceLocalStream || voiceMuted) return;
+
+    const tracks = voiceLocalStream.getAudioTracks();
+    if (!tracks.length) return;
+
+    tracks.forEach(track => { track.enabled = false; });
+
+    let restored = false;
+    const restore = () => {
+        if (restored) return;
+        restored = true;
+        if (!voiceMuted) tracks.forEach(track => { track.enabled = true; });
+    };
+
+    sound.addEventListener("ended", restore, { once: true });
+    sound.addEventListener("pause", restore, { once: true });
+
+    // Fallback in case 'ended'/'pause' never fire for some reason -
+    // never leave the mic muted longer than the sound could possibly run.
+    const fallbackMs = (isFinite(sound.duration) && sound.duration > 0 ? sound.duration * 1000 : 3000) + 300;
+    setTimeout(restore, fallbackMs);
 }
 
 /* Short UI click sound for the Home buttons.
