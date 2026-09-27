@@ -191,6 +191,10 @@ function startNightTurn(roomCode, requestedIndex = 0) {
         "night"
     );
 
+    // The voice channel changes whenever the active night role changes.
+    // Broadcast it immediately so every browser closes the old peer group
+    // and connects to the correct group without waiting for another event.
+    broadcastVoiceState(roomCode);
     sendGameInformation(roomCode);
 }
 
@@ -870,8 +874,6 @@ function sendGameInformation(roomCode) {
             }
         );
     });
-
-    broadcastVoiceState(roomCode);
 }
 
 /* =========================================================
@@ -1399,6 +1401,9 @@ function endNight(roomCode) {
 
     room.phase = "day";
 
+    // Day voice is a shared channel for all living players.
+    broadcastVoiceState(roomCode);
+
     room.votes = {};
 
     resetNightActions(room);
@@ -1726,14 +1731,13 @@ function endVoting(roomCode) {
     startNextNight(roomCode);
 }
 
+
+
 /* =========================================================
    WEBRTC VOICE CHAT
-   Server handles permissions + signaling only. Audio stays peer-to-peer.
+   Server-side permissions + Socket.IO signaling only.
+   Raw audio never passes through this server.
 ========================================================= */
-
-function findPlayerBySocket(room, socketId) {
-    return room?.players?.find(p => p.id === socketId) || null;
-}
 
 function getVoiceGroup(room, player) {
     if (!room || !player) return "none";
@@ -1759,11 +1763,15 @@ function getVoicePeers(room, player) {
     if (group === "none" || group === "silent") return [];
 
     return room.players
-        .filter(other => other.id !== player.id && getVoiceGroup(room, other) === group)
+        .filter(other =>
+            other.id !== player.id &&
+            getVoiceGroup(room, other) === group
+        )
         .map(other => ({
             id: other.id,
             name: other.name,
-            alive: other.alive
+            alive: other.alive,
+            role: group === "mafia" && isMafiaTeam(other.role) ? other.role : null
         }));
 }
 
@@ -1772,10 +1780,9 @@ function broadcastVoiceState(roomCode) {
     if (!room) return;
 
     room.players.forEach(player => {
-        const group = getVoiceGroup(room, player);
         io.to(player.id).emit("voiceState", {
-            enabled: group !== "none" && group !== "silent",
-            group,
+            enabled: true,
+            group: getVoiceGroup(room, player),
             peers: getVoicePeers(room, player)
         });
     });
@@ -1794,42 +1801,47 @@ io.on(
             socket.id
         );
 
-
         /* =================================================
            WEBRTC VOICE SIGNALING
         ================================================= */
 
-        socket.on("voiceRequestState", data => {
-            const code = String(data?.roomCode || "").trim().toUpperCase();
-            if (rooms[code]) broadcastVoiceState(code);
+        socket.on("voiceRequestState", () => {
+            for (const roomCode of Object.keys(rooms)) {
+                const room = rooms[roomCode];
+                if (room?.players?.some(p => p.id === socket.id)) {
+                    broadcastVoiceState(roomCode);
+                    break;
+                }
+            }
         });
 
-        socket.on("voiceSignal", data => {
+        function relayVoiceSignal(eventName, data) {
             const roomCode = String(data?.roomCode || "").trim().toUpperCase();
             const targetId = String(data?.targetId || "");
             const room = rooms[roomCode];
-            if (!room || !targetId || !data?.signal) return;
+            if (!room || !targetId || targetId === socket.id) return;
 
-            const sender = findPlayerBySocket(room, socket.id);
-            const target = findPlayerBySocket(room, targetId);
+            const sender = room.players.find(p => p.id === socket.id);
+            const target = room.players.find(p => p.id === targetId);
             if (!sender || !target) return;
 
             const senderGroup = getVoiceGroup(room, sender);
             const targetGroup = getVoiceGroup(room, target);
-
-            if (
-                senderGroup === "none" ||
-                senderGroup === "silent" ||
-                senderGroup !== targetGroup
-            ) {
+            if (senderGroup === "none" || senderGroup === "silent" || senderGroup !== targetGroup) {
                 return;
             }
 
-            io.to(targetId).emit("voiceSignal", {
-                from: socket.id,
-                signal: data.signal
+            io.to(targetId).emit(eventName, {
+                fromId: socket.id,
+                fromName: sender.name,
+                ...data
             });
-        });
+        }
+
+        socket.on("voiceOffer", data => relayVoiceSignal("voiceOffer", data));
+        socket.on("voiceAnswer", data => relayVoiceSignal("voiceAnswer", data));
+        socket.on("voiceIceCandidate", data => relayVoiceSignal("voiceIceCandidate", data));
+
 
         /* =================================================
            CREATE ROOM
@@ -3096,6 +3108,7 @@ assignRoles(
                 ========================= */
 
                 emitLobby(roomCode);
+                broadcastVoiceState(roomCode);
 
                 /* =========================
                    TELL EVERYONE
@@ -3115,8 +3128,6 @@ assignRoles(
                         roomCode
                     }
                 );
-
-                broadcastVoiceState(roomCode);
 
                 announce(
                     roomCode,
@@ -3233,6 +3244,8 @@ assignRoles(
                         "danger"
                     );
 
+                    broadcastVoiceState(roomCode);
+
                     /* =========================
                        CHECK WINNER AFTER DISCONNECT
                     ========================= */
@@ -3252,7 +3265,6 @@ assignRoles(
                     ========================= */
 
                     emitLobby(roomCode);
-                    broadcastVoiceState(roomCode);
                     emitPublicMatches();
 
                     /* =========================
