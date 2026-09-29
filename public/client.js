@@ -163,6 +163,16 @@ let currentNightTurnEndsAt = null;
 let currentNightNumber = 0;
 let detectiveResultMessage = "";
 let deathScreenLocked = false;
+let gameStats = {
+    totalRounds: 0,
+    mafiaKills: 0,
+    successfulSaves: 0,
+    detectiveInvestigations: 0,
+    playersVotedOut: 0
+};
+let allowPeopleToJoin = true;
+let pendingRejoinRequestId = null;
+let pendingJoinRequests = new Map();
 
 const $ = id => document.getElementById(id);
 
@@ -193,12 +203,277 @@ function setScreen(screen) {
         "joinRoomScreen",
         "quickStartScreen",
         "publicMatchesScreen",
+        "rejoinScreen",
         "lobby",
         "gameScreen"
     ].forEach(id => hide(id));
 
     show(screen);
 }
+
+
+/* =========================================================
+   REJOIN / HOST APPROVAL UI
+   Created here so the existing HTML structure is untouched.
+========================================================= */
+
+function ensureRejoinUI() {
+    if (!$("rejoinScreen")) {
+        const screen = document.createElement("section");
+        screen.id = "rejoinScreen";
+        screen.style.display = "none";
+        screen.innerHTML = `
+            <div class="home-container rejoin-card">
+                <div class="rejoin-emblem">↻</div>
+                <h1>Rejoin Game</h1>
+                <p>Reconnect to your old role and player slot.</p>
+
+                <div class="rejoin-input-wrap">
+                    <label for="rejoinPlayerName">Your name</label>
+                    <input id="rejoinPlayerName" type="text" maxlength="20"
+                           placeholder="Enter your name" autocomplete="off">
+                </div>
+
+                <div class="rejoin-input-wrap">
+                    <label for="rejoinRoomCode">Room code</label>
+                    <input id="rejoinRoomCode" type="text" maxlength="6"
+                           placeholder="Enter the code" autocomplete="off">
+                </div>
+
+                <div id="rejoinStatus" class="rejoin-status"></div>
+
+                <button id="requestRejoinButton" class="rejoin-primary">🔄 JOIN REQUEST</button>
+                <button id="backFromRejoin" class="rejoin-secondary">⬅ BACK</button>
+            </div>
+        `;
+        document.body.appendChild(screen);
+    }
+
+    if (!$("rejoinHomeButton")) {
+        const homeButtons = document.querySelector(".home-buttons");
+        if (homeButtons) {
+            const button = document.createElement("button");
+            button.id = "rejoinHomeButton";
+            button.className = "rejoin-home-button";
+            button.textContent = "↻ REJOIN GAME";
+            homeButtons.appendChild(button);
+        }
+    }
+
+    $("rejoinHomeButton")?.addEventListener("click", () => {
+        playHomeButtonSound();
+        if ($("rejoinPlayerName")) $("rejoinPlayerName").value = "";
+        if ($("rejoinRoomCode")) $("rejoinRoomCode").value = "";
+        setRejoinStatus("");
+        setScreen("rejoinScreen");
+        setTimeout(() => $("rejoinPlayerName")?.focus(), 80);
+    });
+
+    $("backFromRejoin")?.addEventListener("click", () => {
+        playHomeButtonSound();
+        setScreen("homeScreen");
+    });
+
+    $("requestRejoinButton")?.addEventListener("click", requestRejoin);
+    $("rejoinRoomCode")?.addEventListener("input", e => {
+        e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    });
+    $("rejoinPlayerName")?.addEventListener("keydown", e => {
+        if (e.key === "Enter") requestRejoin();
+    });
+    $("rejoinRoomCode")?.addEventListener("keydown", e => {
+        if (e.key === "Enter") requestRejoin();
+    });
+}
+
+function setRejoinStatus(message, type = "") {
+    const box = $("rejoinStatus");
+    if (!box) return;
+    box.textContent = message || "";
+    box.className = `rejoin-status ${type}`;
+}
+
+function requestRejoin() {
+    const playerName = String($("rejoinPlayerName")?.value || "").trim();
+    const code = String($("rejoinRoomCode")?.value || "").trim().toUpperCase();
+
+    if (!playerName || !code) {
+        setRejoinStatus("Enter your name and room code.", "error");
+        return;
+    }
+
+    pendingRejoinRequestId = null;
+    setRejoinStatus("Sending your request to the host…", "waiting");
+
+    socket.emit("requestRejoin", {
+        playerName,
+        roomCode: code
+    });
+}
+
+function ensureHostJoinControls() {
+    if (!$("hostJoinControl")) {
+        const control = document.createElement("div");
+        control.id = "hostJoinControl";
+        control.className = "host-join-control";
+        control.innerHTML = `
+            <div class="host-join-label">
+                <span class="host-join-dot"></span>
+                <div>
+                    <strong>Allow people to join</strong>
+                    <small>Controls new Rejoin requests</small>
+                </div>
+            </div>
+            <button id="allowPeopleToggle" class="join-toggle" type="button">
+                <span class="toggle-knob"></span>
+                <span class="toggle-text">YES</span>
+            </button>
+        `;
+        document.body.appendChild(control);
+    }
+
+    $("allowPeopleToggle")?.addEventListener("click", () => {
+        if (!isHost || !roomCode) return;
+        allowPeopleToJoin = !allowPeopleToJoin;
+        updateHostJoinControl();
+        socket.emit("setAllowPeopleToJoin", {
+            roomCode,
+            allowed: allowPeopleToJoin
+        });
+    });
+
+    updateHostJoinControl();
+}
+
+function updateHostJoinControl() {
+    const control = $("hostJoinControl");
+    const toggle = $("allowPeopleToggle");
+    if (!control || !toggle) return;
+
+    control.style.display = isHost && Boolean(roomCode) ? "flex" : "none";
+    toggle.classList.toggle("off", !allowPeopleToJoin);
+
+    const text = toggle.querySelector(".toggle-text");
+    if (text) text.textContent = allowPeopleToJoin ? "YES" : "NO";
+}
+
+function showJoinRequestPopup(data) {
+    const id = data?.requestId;
+    if (!id) return;
+
+    pendingJoinRequests.set(id, data);
+
+    let popup = $("joinRequestPopup");
+    if (!popup) {
+        popup = document.createElement("div");
+        popup.id = "joinRequestPopup";
+        popup.className = "join-request-overlay";
+        document.body.appendChild(popup);
+    }
+
+    popup.innerHTML = `
+        <div class="join-request-card">
+            <div class="request-icon">↻</div>
+            <div class="request-kicker">JOIN REQUEST</div>
+            <h2>${escapeHtml(data.playerName || "Player")} wants to join</h2>
+            <p>${data.reconnecting ? "They are requesting to reconnect to their old slot." : "They are requesting access to the room."}</p>
+            <div class="request-code">ROOM ${escapeHtml(data.roomCode || roomCode)}</div>
+            <div class="request-actions">
+                <button class="request-no" data-request-no="${id}">NO</button>
+                <button class="request-yes" data-request-yes="${id}">YES</button>
+            </div>
+        </div>
+    `;
+    popup.style.display = "flex";
+
+    popup.querySelector("[data-request-no]")?.addEventListener("click", () => respondJoinRequest(id, false));
+    popup.querySelector("[data-request-yes]")?.addEventListener("click", () => respondJoinRequest(id, true));
+}
+
+function respondJoinRequest(requestId, approved) {
+    if (!roomCode || !isHost) return;
+    socket.emit("respondJoinRequest", {
+        roomCode,
+        requestId,
+        approved
+    });
+
+    pendingJoinRequests.delete(requestId);
+
+    const popup = $("joinRequestPopup");
+    if (popup) popup.style.display = "none";
+}
+
+function escapeHtml(value) {
+    return String(value ?? "").replace(/[&<>"']/g, char => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#039;"
+    }[char]));
+}
+
+/* Host controls are also visible during the game, top-left with the room code. */
+function ensureRoomHud() {
+    let hud = $("roomHud");
+    if (!hud) {
+        hud = document.createElement("div");
+        hud.id = "roomHud";
+        hud.className = "room-hud";
+        hud.innerHTML = `
+            <div class="room-hud-code">
+                <span>ROOM CODE</span>
+                <strong id="roomHudCode">-----</strong>
+            </div>
+            <div id="hostJoinControlInline" class="host-join-control host-join-control-inline">
+                <div class="host-join-label">
+                    <span class="host-join-dot"></span>
+                    <div><strong>Allow people to join</strong><small>New join requests</small></div>
+                </div>
+                <button id="allowPeopleToggleInline" class="join-toggle" type="button">
+                    <span class="toggle-knob"></span>
+                    <span class="toggle-text">YES</span>
+                </button>
+            </div>
+        `;
+        document.body.appendChild(hud);
+    }
+
+    $("allowPeopleToggleInline")?.addEventListener("click", () => {
+        if (!isHost || !roomCode) return;
+        allowPeopleToJoin = !allowPeopleToJoin;
+        updateRoomHud();
+        socket.emit("setAllowPeopleToJoin", {
+            roomCode,
+            allowed: allowPeopleToJoin
+        });
+    });
+
+    updateRoomHud();
+}
+
+function updateRoomHud() {
+    const hud = $("roomHud");
+    if (!hud) return;
+
+    hud.style.display = roomCode && (currentPhase === "lobby" || currentPhase === "night" || currentPhase === "day") ? "block" : "none";
+    const code = $("roomHudCode");
+    if (code) code.textContent = roomCode || "-----";
+
+    const inline = $("hostJoinControlInline");
+    if (inline) inline.style.display = isHost ? "flex" : "none";
+
+    const toggle = $("allowPeopleToggleInline");
+    if (toggle) {
+        toggle.classList.toggle("off", !allowPeopleToJoin);
+        const text = toggle.querySelector(".toggle-text");
+        if (text) text.textContent = allowPeopleToJoin ? "YES" : "NO";
+    }
+}
+
+ensureRejoinUI();
+ensureRoomHud();
 
 /* =========================================================
    ANNOUNCEMENT BOX
@@ -718,7 +993,9 @@ function renderLobbyPlayers() {
 
     list.innerHTML = "";
 
-    players.forEach(player => {
+    players
+        .filter(player => player.connected !== false)
+        .forEach(player => {
 
         const li =
             document.createElement("li");
@@ -881,9 +1158,12 @@ socket.on("roomCreated", code => {
     window.pendingRoomPlayerName = "";
 
     isHost = true;
+    allowPeopleToJoin = true;
 
     window.currentHostId =
         socket.id;
+
+    updateRoomHud();
 
     if ($("displayRoomCode")) {
 
@@ -915,6 +1195,8 @@ socket.on("joinedRoom", code => {
     window.quickStartPlayerName = "";
 
     isHost = false;
+    allowPeopleToJoin = true;
+    updateRoomHud();
 
     window.currentHostId = "";
 
@@ -968,6 +1250,10 @@ socket.on("playerJoined", data => {
 
         window.currentHostId =
             data?.hostId || "";
+
+        if (data?.allowPeopleToJoin !== undefined) {
+            allowPeopleToJoin = data.allowPeopleToJoin !== false;
+        }
     }
 
     isHost =
@@ -975,6 +1261,7 @@ socket.on("playerJoined", data => {
         window.currentHostId;
 
     updateHostUI();
+    updateRoomHud();
 });
 
 /* =========================================================
@@ -1748,6 +2035,25 @@ socket.on(
 
         currentPhase =
             data.phase || "";
+
+        if (data.stats) {
+            gameStats = {
+                ...gameStats,
+                ...data.stats
+            };
+        }
+
+        allowPeopleToJoin =
+            data.allowPeopleToJoin !== false;
+
+        isHost =
+            data.hostId === socket.id;
+
+        window.currentHostId =
+            data.hostId || "";
+
+        updateHostUI();
+        updateRoomHud();
 
         /*
            DEAD PLAYER MODE:
@@ -3100,6 +3406,69 @@ socket.on(
    ERRORS
 ========================================================= */
 
+
+/* =========================================================
+   REJOIN / HOST APPROVAL EVENTS
+========================================================= */
+
+socket.on("rejoinPending", data => {
+    pendingRejoinRequestId = data?.requestId || null;
+    setRejoinStatus(
+        data?.message || "Join request sent. Waiting for the host…",
+        "waiting"
+    );
+});
+
+socket.on("joinRequest", data => {
+    /*
+       The server sends this event only to the current host.
+       Do not gate it on the local `isHost` flag: a dead host
+       can still be the host, and the full-screen death UI can
+       otherwise leave that flag temporarily stale.
+    */
+    showJoinRequestPopup(data);
+});
+
+socket.on("rejoinApproved", data => {
+    roomCode = data?.roomCode || roomCode;
+    pendingRejoinRequestId = null;
+    setRejoinStatus(data?.message || "Approved!", "success");
+
+    isHost = data?.hostId === socket.id || isHost;
+    setScreen(data?.phase && data.phase !== "lobby" ? "gameScreen" : "lobby");
+
+    // The server will immediately send lobby/game information.
+    announcement(
+        "🔄 Rejoin approved. You are back in your old slot.",
+        "success"
+    );
+    ensureVoicePanel();
+    $("voiceChatPanel")?.style && ($("voiceChatPanel").style.display = "block");
+    setTimeout(() => enableVoice(), 250);
+});
+
+socket.on("rejoinDeclined", data => {
+    pendingRejoinRequestId = null;
+    setRejoinStatus(
+        data?.message || "Your join request was declined.",
+        "error"
+    );
+});
+
+socket.on("rejoinError", message => {
+    pendingRejoinRequestId = null;
+    setRejoinStatus(message || "Could not send the join request.", "error");
+});
+
+socket.on("gameInformation", data => {
+    if (data?.stats) {
+        gameStats = {
+            ...gameStats,
+            ...data.stats
+        };
+    }
+});
+
 socket.on(
     "joinError",
     msg => {
@@ -3168,20 +3537,38 @@ socket.on(
         hideDeathRevealOverlay(true);
         hideDetectiveResultPopup();
 
+        gameStats = {
+            ...gameStats,
+            ...(data.stats || {})
+        };
+
         showGameOverMenu(
             data.winner,
-            data.message
+            data.message,
+            gameStats
         );
     }
 );
 /* =========================================================
    GAME OVER
 ========================================================= */
-function showGameOverMenu(winner, message) {
+function showGameOverMenu(winner, message, stats = gameStats) {
 
     const overlay = $("gameOverOverlay");
     const messageBox = $("gameOverMessage");
     const winnerLogo = $("winnerLogo");
+
+    let statsBox = $("gameOverStats");
+    if (!statsBox && overlay) {
+        statsBox = document.createElement("div");
+        statsBox.id = "gameOverStats";
+        const box = $("gameOverBox");
+        if (box) {
+            const restartButton = $("restartGame");
+            if (restartButton) box.insertBefore(statsBox, restartButton);
+            else box.appendChild(statsBox);
+        }
+    }
 
     if (!overlay) {
         console.error("gameOverOverlay NOT FOUND!");
@@ -3208,6 +3595,20 @@ function showGameOverMenu(winner, message) {
     if (messageBox) {
         messageBox.textContent =
             `${winner}: ${message}`;
+    }
+
+    if (statsBox) {
+        const safeStats = stats || {};
+        statsBox.innerHTML = `
+            <div class="game-over-stats-title">GAME STATISTICS</div>
+            <div class="game-over-stats-grid">
+                <div class="game-stat-card"><span>⏱</span><strong>${Number(safeStats.totalRounds || 0)}</strong><small>Total Rounds</small></div>
+                <div class="game-stat-card"><span>☠</span><strong>${Number(safeStats.mafiaKills || 0)}</strong><small>Mafia Kills</small></div>
+                <div class="game-stat-card"><span>🩺</span><strong>${Number(safeStats.successfulSaves || 0)}</strong><small>Successful Saves</small></div>
+                <div class="game-stat-card"><span>🔎</span><strong>${Number(safeStats.detectiveInvestigations || 0)}</strong><small>Investigations</small></div>
+                <div class="game-stat-card"><span>🗳</span><strong>${Number(safeStats.playersVotedOut || 0)}</strong><small>Players Voted Out</small></div>
+            </div>
+        `;
     }
 
     /* SHOW GAME OVER */
@@ -3922,7 +4323,15 @@ socket.on("voiceState", async data => {
     if (!data) return;
 
     voiceGroup = data.group || "none";
-    voicePeers = Array.isArray(data.peers) ? data.peers : [];
+    voicePeers = Array.isArray(data.peers)
+        ? data.peers.filter(peer => peer && peer.connected !== false)
+        : [];
+
+    // A crashed/disconnected player is removed from the server's peer list.
+    // updateVoicePeers() immediately tears down that old WebRTC connection.
+    if (voiceEnabled) {
+        updateVoicePeers(voicePeers).catch(error => console.error("Voice peer update error:", error));
+    }
 
     ensureVoicePanel();
     const voicePanel = $("voiceChatPanel");
