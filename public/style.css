@@ -4005,3 +4005,394 @@ button {
 @media (max-width: 600px) {
     #voiceChatPanel { right:10px; bottom:10px; width:calc(100vw - 20px); }
 }
+
+
+/* =========================================================
+   REJOIN SCREEN — CENTERED CINEMATIC MODAL
+   Added without changing existing game screens.
+========================================================= */
+#rejoinScreen {
+    position: fixed;
+    inset: 0;
+    z-index: 9998;
+    min-height: 100vh;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 28px 18px;
+    overflow-y: auto;
+    background:
+        radial-gradient(circle at 50% 15%, rgba(145, 0, 0, .22), transparent 36%),
+        linear-gradient(180deg, rgba(2,2,2,.96), rgba(0,0,0,.985));
+}
+
+#rejoinScreen::before {
+    content: "";
+    position: absolute;
+    inset: 18px;
+    border: 1px solid rgba(150, 24, 24, .22);
+    pointer-events: none;
+    box-shadow: inset 0 0 80px rgba(120, 0, 0, .07);
+}
+
+#rejoinScreen .rejoin-card {
+    position: relative;
+    z-index: 1;
+    width: min(560px, 94vw);
+    margin: auto;
+    padding: 38px 38px 32px;
+    text-align: center;
+    border: 1px solid rgba(166, 34, 34, .58);
+    border-radius: 8px;
+    background:
+        linear-gradient(145deg, rgba(28, 28, 28, .98), rgba(5, 5, 5, .99));
+    box-shadow:
+        0 35px 100px rgba(0,0,0,.92),
+        0 0 55px rgba(120, 0, 0, .12),
+        inset 0 1px rgba(255,255,255,.07);
+}
+
+#rejoinScreen .rejoin-card::after {
+    content: "";
+    position: absolute;
+    left: 10%;
+    right: 10%;
+    bottom: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, #9e1d1d, #d43a3a, #9e1d1d, transparent);
+    opacity: .8;
+}
+
+.rejoin-emblem {
+    width: 78px;
+    height: 78px;
+    margin: 0 auto 18px;
+    display: grid;
+    place-items: center;
+    border: 1px solid rgba(205, 45, 45, .65);
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(125, 13, 13, .5), rgba(7,7,7,.98) 72%);
+    color: #eee;
+    font: 900 42px/1 Arial, sans-serif;
+    box-shadow: 0 12px 35px rgba(0,0,0,.8), inset 0 0 24px rgba(190,25,25,.16);
+}
+
+#rejoinScreen .rejoin-card h1 {
+    margin: 0 0 9px;
+    font-family: Impact, Haettenschweiler, "Arial Black", sans-serif;
+    font-size: clamp(42px, 7vw, 62px);
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: #eee;
+    text-shadow: 0 3px 0 #444, 0 12px 30px #000;
+}
+
+#rejoinScreen .rejoin-card > p {
+    margin: 0 0 26px;
+    color: #999;
+    font-size: 16px;
+}
+
+.rejoin-input-wrap {
+    width: 100%;
+    margin: 0 0 13px;
+    text-align: left;
+}
+
+.rejoin-input-wrap label {
+    display: block;
+    margin: 0 0 7px 3px;
+    color: #bdbdbd;
+    font: 900 11px/1 Arial, sans-serif;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+}
+
+#rejoinScreen .rejoin-input-wrap input {
+    width: 100%;
+    height: 56px;
+    padding: 0 17px;
+    margin: 0;
+    border: 1px solid rgba(151, 32, 32, .55);
+    border-radius: 5px;
+    outline: none;
+    background: #090909;
+    color: #fff;
+    font: 700 17px/1 Arial, sans-serif;
+    letter-spacing: .5px;
+    box-shadow: inset 0 0 20px rgba(0,0,0,.45);
+    transition: .2s ease;
+}
+
+#rejoinScreen .rejoin-input-wrap input:focus {
+    border-color: #c62b2b;
+    box-shadow: 0 0 0 2px rgba(190,35,35,.12), 0 0 22px rgba(150,15,15,.18);
+}
+
+#rejoinScreen .rejoin-input-wrap input::placeholder { color: #6f6f6f; }
+
+#rejoinScreen #requestRejoinButton,
+#rejoinScreen #backFromRejoin {
+    width: 100%;
+    min-height: 54px;
+    margin-top: 10px;
+    border-radius: 5px;
+    font: 900 13px/1 Arial, sans-serif;
+    letter-spacing: 2px;
+    transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+}
+
+#rejoinScreen #requestRejoinButton {
+    border: 1px solid #b32626;
+    background: linear-gradient(180deg, #9f1e1e, #480707);
+    color: #fff;
+    box-shadow: 0 12px 30px rgba(0,0,0,.65), inset 0 1px rgba(255,255,255,.13);
+}
+
+#rejoinScreen #backFromRejoin {
+    border: 1px solid #444;
+    background: linear-gradient(180deg, #191919, #090909);
+    color: #ddd;
+}
+
+#rejoinScreen #requestRejoinButton:hover,
+#rejoinScreen #backFromRejoin:hover {
+    transform: translateY(-2px);
+}
+
+#rejoinScreen #requestRejoinButton:hover {
+    border-color: #ef4545;
+    box-shadow: 0 16px 38px rgba(0,0,0,.8), 0 0 22px rgba(180,20,20,.18);
+}
+
+#rejoinScreen #backFromRejoin:hover { border-color: #777; background: #151515; }
+
+.rejoin-status {
+    min-height: 22px;
+    margin: 7px 0 2px;
+    padding: 8px 10px;
+    border-radius: 5px;
+    color: #999;
+    font: 700 13px/1.4 Arial, sans-serif;
+}
+.rejoin-status.waiting { color: #d7c18c; background: rgba(130,95,20,.08); border: 1px solid rgba(170,125,35,.18); }
+.rejoin-status.success { color: #9fe0a8; background: rgba(30,120,55,.08); border: 1px solid rgba(60,170,80,.18); }
+.rejoin-status.error { color: #ff9a9a; background: rgba(130,20,20,.10); border: 1px solid rgba(190,45,45,.2); }
+
+/* Home REJOIN button matches the existing Mafia Wars controls. */
+#homeScreen .rejoin-home-button {
+    position: relative;
+}
+
+/* =========================================================
+   HOST ROOM HUD — TOP LEFT, ALWAYS EASY TO SEE
+========================================================= */
+#roomHud {
+    position: fixed !important;
+    top: 18px !important;
+    left: 18px !important;
+    right: auto !important;
+    bottom: auto !important;
+    z-index: 9990 !important;
+    width: min(290px, calc(100vw - 36px));
+    padding: 12px;
+    border: 1px solid rgba(170, 35, 35, .55);
+    border-radius: 8px;
+    background: linear-gradient(145deg, rgba(20,20,20,.96), rgba(4,4,4,.97));
+    box-shadow: 0 16px 45px rgba(0,0,0,.78), inset 0 1px rgba(255,255,255,.06);
+    backdrop-filter: blur(8px);
+}
+
+.room-hud-code {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 2px 3px 10px;
+    border-bottom: 1px solid rgba(150,30,30,.25);
+}
+
+.room-hud-code span {
+    color: #8f8f8f;
+    font: 900 9px/1 Arial, sans-serif;
+    letter-spacing: 2px;
+}
+
+.room-hud-code strong {
+    color: #fff;
+    font: 900 18px/1 Arial, sans-serif;
+    letter-spacing: 3px;
+    text-shadow: 0 0 14px rgba(220,50,50,.18);
+}
+
+#hostJoinControlInline {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 2px 2px;
+}
+
+.host-join-label {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.host-join-label > div { min-width: 0; }
+.host-join-label strong {
+    display: block;
+    color: #eee;
+    font: 900 11px/1.2 Arial, sans-serif;
+    letter-spacing: .8px;
+}
+.host-join-label small {
+    display: block;
+    margin-top: 3px;
+    color: #777;
+    font: 600 9px/1.2 Arial, sans-serif;
+}
+.host-join-dot {
+    width: 8px;
+    height: 8px;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    background: #25d044;
+    box-shadow: 0 0 10px rgba(37,208,68,.45);
+}
+
+.join-toggle {
+    position: relative;
+    width: 72px;
+    height: 32px;
+    flex: 0 0 auto;
+    padding: 0 7px;
+    border: 1px solid rgba(45,170,75,.6);
+    border-radius: 999px;
+    background: rgba(18,75,30,.65);
+    color: #b9ffca;
+    font: 900 9px/1 Arial, sans-serif;
+    letter-spacing: 1px;
+    transition: .2s ease;
+}
+.join-toggle .toggle-knob {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: #e9fff0;
+    box-shadow: 0 2px 8px rgba(0,0,0,.45);
+    transition: .2s ease;
+}
+.join-toggle .toggle-text { margin-right: 23px; }
+.join-toggle.off {
+    border-color: rgba(170,50,50,.65);
+    background: rgba(90,18,18,.7);
+    color: #ffb2b2;
+}
+.join-toggle.off .toggle-knob { right: auto; left: 4px; background: #ffecec; }
+.join-toggle.off .toggle-text { margin-right: 0; margin-left: 23px; }
+
+/* =========================================================
+   HOST JOIN REQUEST POPUP — CENTERED, CINEMATIC
+========================================================= */
+.join-request-overlay {
+    position: fixed;
+    inset: 0;
+    /* Must remain above the full-screen death reveal so a dead
+       host can still approve/deny a rejoin request. */
+    z-index: 2147483647;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(0,0,0,.76);
+    backdrop-filter: blur(7px);
+}
+
+.join-request-card {
+    width: min(460px, 92vw);
+    padding: 30px;
+    text-align: center;
+    border: 1px solid rgba(190,42,42,.62);
+    border-radius: 9px;
+    background: linear-gradient(145deg, #202020, #060606);
+    box-shadow: 0 35px 100px rgba(0,0,0,.92), 0 0 40px rgba(140,10,10,.12);
+}
+
+.request-icon {
+    width: 62px;
+    height: 62px;
+    margin: 0 auto 13px;
+    display: grid;
+    place-items: center;
+    border: 1px solid rgba(190,42,42,.5);
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(120,15,15,.5), #080808 72%);
+    color: #eee;
+    font: 900 32px/1 Arial, sans-serif;
+}
+.request-kicker {
+    color: #c62b2b;
+    font: 900 10px/1 Arial, sans-serif;
+    letter-spacing: 3px;
+}
+.join-request-card h2 {
+    margin: 10px 0 9px;
+    color: #f1f1f1;
+    font: 900 25px/1.2 Arial, sans-serif;
+}
+.join-request-card p { color: #999; font-size: 14px; line-height: 1.5; }
+.request-code {
+    display: inline-block;
+    margin: 16px 0 18px;
+    padding: 8px 13px;
+    border: 1px solid rgba(150,30,30,.3);
+    border-radius: 999px;
+    background: rgba(100,15,15,.08);
+    color: #bbb;
+    font: 900 10px/1 Arial, sans-serif;
+    letter-spacing: 2px;
+}
+.request-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.request-actions button {
+    min-height: 48px;
+    border-radius: 5px;
+    font: 900 12px/1 Arial, sans-serif;
+    letter-spacing: 2px;
+}
+.request-no { border: 1px solid #555; background: #151515; color: #ddd; }
+.request-yes { border: 1px solid #a52222; background: linear-gradient(180deg,#9c1d1d,#450707); color: #fff; }
+.request-no:hover { border-color: #888; background: #222; }
+.request-yes:hover { border-color: #ed4545; transform: translateY(-1px); }
+
+/* The public-match screen gets a clean game-style background instead of the old page photo. */
+#publicMatchesScreen {
+    position: fixed;
+    inset: 0;
+    z-index: 9000;
+    overflow-y: auto;
+    background:
+        radial-gradient(circle at 50% 15%, rgba(135,0,0,.18), transparent 38%),
+        linear-gradient(180deg, #090909, #020202 78%);
+}
+
+#publicMatchesScreen::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background: radial-gradient(ellipse at center, transparent 25%, rgba(0,0,0,.58) 100%);
+}
+
+#publicMatchesScreen .public-matches-shell { position: relative; z-index: 1; }
+
+@media (max-width: 600px) {
+    #rejoinScreen .rejoin-card { padding: 30px 20px 25px; }
+    #roomHud { top: 10px !important; left: 10px !important; width: min(270px, calc(100vw - 20px)); }
+    .join-request-card { padding: 24px 18px; }
+}
