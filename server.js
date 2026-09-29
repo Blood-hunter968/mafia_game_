@@ -21,13 +21,16 @@ function getPublicMatches() {
             room.visibility === "public" &&
             room.phase === "lobby" &&
             !room.gameStarted &&
-            room.players.length > 0
+            room.players.some(player => player.connected !== false)
         )
-        .map(([roomCode, room]) => ({
-            roomCode,
-            playerCount: room.players.length,
-            hostName: room.players[0]?.name || "Host"
-        }))
+        .map(([roomCode, room]) => {
+            const connectedPlayers = room.players.filter(player => player.connected !== false);
+            return {
+                roomCode,
+                playerCount: connectedPlayers.length,
+                hostName: connectedPlayers.find(player => player.id === room.host)?.name || connectedPlayers[0]?.name || "Host"
+            };
+        })
         .sort((a, b) => b.playerCount - a.playerCount);
 }
 
@@ -106,25 +109,25 @@ function hasLivingRoleForTurn(room, turn) {
 
     if (turn === "mafia") {
         return room.players.some(
-            p => p.alive && isMafiaTeam(p.role)
+            p => p.alive && p.connected !== false && isMafiaTeam(p.role)
         );
     }
 
     if (turn === "doctor") {
         return room.players.some(
-            p => p.alive && p.role === "Doctor"
+            p => p.alive && p.connected !== false && p.role === "Doctor"
         );
     }
 
     if (turn === "detective") {
         return room.players.some(
-            p => p.alive && p.role === "Detective"
+            p => p.alive && p.connected !== false && p.role === "Detective"
         );
     }
 
     if (turn === "cupid") {
         return room.nightNumber === 1 && room.players.some(
-            p => p.alive && p.role === "Clupid"
+            p => p.alive && p.connected !== false && p.role === "Clupid"
         );
     }
 
@@ -205,7 +208,7 @@ function currentTurnActionsDone(room) {
 
     if (turn === "mafia") {
         const mafia = room.players.filter(
-            p => p.alive && isMafiaTeam(p.role)
+            p => p.alive && p.connected !== false && isMafiaTeam(p.role)
         );
 
         if (mafia.some(p => !room.nightActions.mafia[p.id])) {
@@ -232,7 +235,7 @@ function currentTurnActionsDone(room) {
 
     if (turn === "doctor") {
         const doctors = room.players.filter(
-            p => p.alive && p.role === "Doctor"
+            p => p.alive && p.connected !== false && p.role === "Doctor"
         );
         return !doctors.some(
             p => !room.nightActions.doctor[p.id]
@@ -241,7 +244,7 @@ function currentTurnActionsDone(room) {
 
     if (turn === "detective") {
         const detectives = room.players.filter(
-            p => p.alive && p.role === "Detective"
+            p => p.alive && p.connected !== false && p.role === "Detective"
         );
         return !detectives.some(
             p => !room.nightActions.detective[p.id]
@@ -250,7 +253,7 @@ function currentTurnActionsDone(room) {
 
     if (turn === "cupid") {
         const clupids = room.players.filter(
-            p => p.alive && p.role === "Clupid"
+            p => p.alive && p.connected !== false && p.role === "Clupid"
         );
         return !clupids.some(
             p => !room.nightActions.clupid[p.id]
@@ -451,6 +454,14 @@ function resetGameState(room) {
 
     room.nightNumber = 1;
 
+    room.stats = {
+        totalRounds: 0,
+        mafiaKills: 0,
+        successfulSaves: 0,
+        detectiveInvestigations: 0,
+        playersVotedOut: 0
+    };
+
     room.clupidUsed = {};
     room.clupidPairs = {};
 
@@ -477,21 +488,24 @@ function getPublicPlayers(room, viewer) {
         viewer && isMafiaTeam(viewer.role)
     );
 
-    return room.players.map(player => {
-        const visibleRole =
-            viewer &&
-            (player.id === viewer.id ||
-             (viewerIsMafia && isMafiaTeam(player.role)))
-                ? player.role
-                : null;
+    return room.players
+        .filter(player => player.connected !== false)
+        .map(player => {
+            const visibleRole =
+                viewer &&
+                (player.id === viewer.id ||
+                 (viewerIsMafia && isMafiaTeam(player.role)))
+                    ? player.role
+                    : null;
 
-        return {
-            id: player.id,
-            name: player.name,
-            alive: player.alive,
-            role: visibleRole
-        };
-    });
+            return {
+                id: player.id,
+                name: player.name,
+                alive: player.alive,
+                role: visibleRole,
+                connected: true
+            };
+        });
 }
 
 /* =========================================================
@@ -511,7 +525,12 @@ function emitLobby(roomCode) {
                 getPublicPlayers(room),
 
             hostId:
-                room.host
+                room.host,
+
+            allowPeopleToJoin:
+                room.allowPeopleToJoin !== false,
+
+            roomCode
         }
     );
 }
@@ -550,6 +569,7 @@ function getActionTargets(room, player) {
         return room.players
             .filter(p =>
                 p.alive &&
+                p.connected !== false &&
                 p.id !== player.id &&
                 !isMafiaTeam(p.role)
             )
@@ -573,7 +593,7 @@ function getActionTargets(room, player) {
         }
 
         return room.players
-            .filter(p => p.alive)
+            .filter(p => p.alive && p.connected !== false)
             .map(p => p.id);
     }
 
@@ -596,6 +616,7 @@ function getActionTargets(room, player) {
         return room.players
             .filter(p =>
                 p.alive &&
+                p.connected !== false &&
                 p.id !== player.id
             )
             .map(p => p.id);
@@ -818,6 +839,18 @@ function sendGameInformation(roomCode) {
                 hostId:
                     room.host,
 
+                allowPeopleToJoin:
+                    room.allowPeopleToJoin !== false,
+
+                stats:
+                    room.stats || {
+                        totalRounds: 0,
+                        mafiaKills: 0,
+                        successfulSaves: 0,
+                        detectiveInvestigations: 0,
+                        playersVotedOut: 0
+                    },
+
                 phase:
                     room.phase,
 
@@ -880,6 +913,23 @@ function sendGameInformation(roomCode) {
    WINNER CHECK
 ========================================================= */
 
+/*
+   A player only counts as alive for win-condition purposes
+   when they are both alive AND connected.
+
+   IMPORTANT:
+   This does not change the player's actual `alive` state.
+   It only prevents dead/disconnected slots from keeping a
+   game running when calculating the winner.
+*/
+function isCountedAlive(player) {
+    return Boolean(
+        player &&
+        player.alive &&
+        player.connected !== false
+    );
+}
+
 function checkWinner(roomCode) {
 
     const room = rooms[roomCode];
@@ -923,7 +973,8 @@ function checkWinner(roomCode) {
             {
                 winner: "Jester",
                 message:
-                    "The Jester was eliminated and wins the game!"
+                    "The Jester was eliminated and wins the game!",
+                stats: room.stats
             }
         );
 
@@ -933,14 +984,14 @@ function checkWinner(roomCode) {
     const mafiaAlive =
         room.players.filter(
             p =>
-                p.alive &&
+                isCountedAlive(p) &&
                 isMafiaTeam(p.role)
         );
 
     const innocentAlive =
         room.players.filter(
             p =>
-                p.alive &&
+                isCountedAlive(p) &&
                 !isMafiaTeam(p.role)
         );
 
@@ -963,7 +1014,8 @@ function checkWinner(roomCode) {
             {
                 winner: "Civilians",
                 message:
-                    "The Mafia team has been eliminated!"
+                    "The Mafia team has been eliminated!",
+                stats: room.stats
             }
         );
 
@@ -992,7 +1044,8 @@ function checkWinner(roomCode) {
             {
                 winner: "Mafia Team",
                 message:
-                    "The Mafia team has taken control!"
+                    "The Mafia team has taken control!",
+                stats: room.stats
             }
         );
 
@@ -1318,6 +1371,13 @@ function endNight(roomCode) {
 
     let eliminatedPlayers = [];
 
+    const doctorSavedTarget =
+        Boolean(mafiaTarget && protectedPlayers.has(mafiaTarget));
+
+    if (doctorSavedTarget) {
+        room.stats.successfulSaves += 1;
+    }
+
     /* =====================================================
        MAFIA ATTACK
     ===================================================== */
@@ -1381,6 +1441,10 @@ function endNight(roomCode) {
                     room,
                     target
                 );
+
+            if (eliminatedPlayers.length) {
+                room.stats.mafiaKills += 1;
+            }
         }
     }
 
@@ -1413,11 +1477,19 @@ function endNight(roomCode) {
             p => p.name
         );
 
-    if (names.length) {
+    if (doctorSavedTarget) {
 
         announce(
             roomCode,
-            `☀️ Morning: ${names.join(", ")} was eliminated.`,
+            "☀️ The doctor saved someone. Nobody died tonight.",
+            "success"
+        );
+
+    } else if (names.length) {
+
+        announce(
+            roomCode,
+            `☀️ ${names.join(", ")} died. The doctor did not save the person.`,
             "danger"
         );
 
@@ -1425,7 +1497,7 @@ function endNight(roomCode) {
 
         announce(
             roomCode,
-            "☀️ Morning: Nobody was eliminated.",
+            "☀️ Nobody died tonight.",
             "info"
         );
     }
@@ -1441,6 +1513,13 @@ function endNight(roomCode) {
 
             eliminatedPlayerIds:
                 eliminatedPlayers.map(p => p.id),
+
+            doctorSaved: doctorSavedTarget,
+
+            mafiaTargetName:
+                mafiaTarget
+                    ? room.players.find(p => p.id === mafiaTarget)?.name || null
+                    : null,
 
             babyMafiaCreated
         }
@@ -1478,6 +1557,17 @@ function startNextNight(roomCode) {
     room.phase = "night";
 
     room.nightNumber += 1;
+
+    // A "round" is each night/day cycle. Night 1 is counted
+    // when the game starts below; later nights are counted here.
+    room.stats = room.stats || {
+        totalRounds: 0,
+        mafiaKills: 0,
+        successfulSaves: 0,
+        detectiveInvestigations: 0,
+        playersVotedOut: 0
+    };
+    room.stats.totalRounds += 1;
 
     room.votes = {};
 
@@ -1686,6 +1776,10 @@ function endVoting(roomCode) {
             p => p.name
         );
 
+    if (eliminatedPlayers.length) {
+        room.stats.playersVotedOut += 1;
+    }
+
     room.votes = {};
 
     /* =====================================================
@@ -1740,7 +1834,7 @@ function endVoting(roomCode) {
 ========================================================= */
 
 function getVoiceGroup(room, player) {
-    if (!room || !player) return "none";
+    if (!room || !player || player.connected === false) return "none";
 
     if (room.phase === "lobby") return "lobby";
     if (room.phase === "gameover") return "gameover";
@@ -1765,6 +1859,7 @@ function getVoicePeers(room, player) {
     return room.players
         .filter(other =>
             other.id !== player.id &&
+            other.connected !== false &&
             getVoiceGroup(room, other) === group
         )
         .map(other => ({
@@ -1785,6 +1880,82 @@ function broadcastVoiceState(roomCode) {
             group: getVoiceGroup(room, player),
             peers: getVoicePeers(room, player)
         });
+    });
+}
+
+
+/* =========================================================
+   REJOIN / HOST APPROVAL HELPERS
+========================================================= */
+
+function makeJoinRequestId() {
+    return `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function migratePlayerReferences(room, oldId, newId) {
+    if (!room || oldId === newId) return;
+
+    // Night action maps
+    Object.values(room.nightActions || {}).forEach(group => {
+        if (Object.prototype.hasOwnProperty.call(group, oldId)) {
+            group[newId] = group[oldId];
+            delete group[oldId];
+        }
+
+        Object.keys(group).forEach(key => {
+            if (group[key] === oldId) group[key] = newId;
+        });
+    });
+
+    // Votes
+    if (room.votes && Object.prototype.hasOwnProperty.call(room.votes, oldId)) {
+        room.votes[newId] = room.votes[oldId];
+        delete room.votes[oldId];
+    }
+    Object.keys(room.votes || {}).forEach(key => {
+        if (room.votes[key] === oldId) room.votes[key] = newId;
+    });
+
+    // Clupid maps
+    if (room.clupidUsed && Object.prototype.hasOwnProperty.call(room.clupidUsed, oldId)) {
+        room.clupidUsed[newId] = room.clupidUsed[oldId];
+        delete room.clupidUsed[oldId];
+    }
+    if (room.clupidPairs && Object.prototype.hasOwnProperty.call(room.clupidPairs, oldId)) {
+        room.clupidPairs[newId] = room.clupidPairs[oldId];
+        delete room.clupidPairs[oldId];
+    }
+    Object.keys(room.clupidPairs || {}).forEach(key => {
+        if (room.clupidPairs[key] === oldId) room.clupidPairs[key] = newId;
+    });
+
+    if (room.grandmafiaTarget === oldId) {
+        room.grandmafiaTarget = newId;
+    }
+
+    if (room.host === oldId) {
+        room.host = newId;
+    }
+}
+
+function emitHostJoinRequest(roomCode, request) {
+    const room = rooms[roomCode];
+    if (!room) return;
+
+    /*
+       Host status is independent of the player's alive state.
+       A dead host must still receive and answer rejoin requests.
+       We only need an active socket connection here.
+    */
+    const host = room.players.find(p => p.id === room.host);
+    if (!host || host.connected === false) return;
+
+    io.to(host.id).emit("joinRequest", {
+        requestId: request.requestId,
+        playerName: request.playerName,
+        roomCode,
+        reconnecting: Boolean(request.oldPlayerId),
+        message: `${request.playerName} wants to join`
     });
 }
 
@@ -1885,6 +2056,19 @@ io.on(
 
                     visibility,
 
+                    // Rejoin / host approval controls.
+                    allowPeopleToJoin: true,
+                    pendingJoinRequests: {},
+
+                    // Live game statistics.
+                    stats: {
+                        totalRounds: 0,
+                        mafiaKills: 0,
+                        successfulSaves: 0,
+                        detectiveInvestigations: 0,
+                        playersVotedOut: 0
+                    },
+
                     players: [
                         {
                             id:
@@ -1897,6 +2081,9 @@ io.on(
                                 null,
 
                             alive:
+                                true,
+
+                            connected:
                                 true
                         }
                     ],
@@ -2028,7 +2215,14 @@ io.on(
 
                     return socket.emit(
                         "joinError",
-                        "Game has already started!"
+                        "Game has already started. Use Rejoin to request access from the host."
+                    );
+                }
+
+                if (room.allowPeopleToJoin === false) {
+                    return socket.emit(
+                        "joinError",
+                        "The host is not allowing new players to join right now."
                     );
                 }
 
@@ -2044,6 +2238,9 @@ io.on(
                             null,
 
                         alive:
+                            true,
+
+                        connected:
                             true
                     }
                 );
@@ -2067,6 +2264,164 @@ io.on(
                 emitPublicMatches();
             }
         );
+
+
+        /* =================================================
+           REJOIN REQUEST
+        ================================================= */
+
+        socket.on("requestRejoin", data => {
+            const playerName = String(data?.playerName || "").trim();
+            const roomCode = String(data?.roomCode || "").trim().toUpperCase();
+
+            if (!playerName || !roomCode) {
+                return socket.emit("rejoinError", "Enter your name and room code.");
+            }
+
+            const room = rooms[roomCode];
+            if (!room) {
+                return socket.emit("rejoinError", "Room does not exist.");
+            }
+
+            if (room.allowPeopleToJoin === false) {
+                return socket.emit("rejoinError", "The host is not allowing people to join right now.");
+            }
+
+            const oldPlayer = room.players.find(
+                p => p.name.toLowerCase() === playerName.toLowerCase()
+            );
+
+            if (!oldPlayer) {
+                return socket.emit(
+                    "rejoinError",
+                    "No disconnected player with that name was found in this room."
+                );
+            }
+
+            if (oldPlayer.connected !== false) {
+                return socket.emit("rejoinError", "That player is already connected.");
+            }
+
+            room.pendingJoinRequests = room.pendingJoinRequests || {};
+
+            // Replace an older request from the same socket/name.
+            const requestId = makeJoinRequestId();
+            room.pendingJoinRequests[requestId] = {
+                requestId,
+                socketId: socket.id,
+                playerName,
+                roomCode,
+                oldPlayerId: oldPlayer.id,
+                createdAt: Date.now()
+            };
+
+            socket.emit("rejoinPending", {
+                requestId,
+                message: "Join request sent to the host."
+            });
+
+            emitHostJoinRequest(roomCode, room.pendingJoinRequests[requestId]);
+        });
+
+        /* =================================================
+           HOST APPROVES / DECLINES REJOIN
+        ================================================= */
+
+        socket.on("respondJoinRequest", data => {
+            const roomCode = String(data?.roomCode || "").trim().toUpperCase();
+            const requestId = String(data?.requestId || "");
+            const approved = Boolean(data?.approved);
+            const room = rooms[roomCode];
+
+            if (!room || room.host !== socket.id) return;
+
+            const request = room.pendingJoinRequests?.[requestId];
+            if (!request) return;
+
+            delete room.pendingJoinRequests[requestId];
+
+            const requester = io.sockets.sockets.get(request.socketId);
+
+            if (!approved) {
+                if (requester) {
+                    requester.emit("rejoinDeclined", {
+                        message: "Your join request was declined by the host."
+                    });
+                }
+                return;
+            }
+
+            const oldPlayer = room.players.find(p => p.id === request.oldPlayerId);
+            if (!oldPlayer || oldPlayer.connected !== false) {
+                if (requester) {
+                    requester.emit("rejoinDeclined", {
+                        message: "That old player slot is no longer available."
+                    });
+                }
+                return;
+            }
+
+            if (!requester) return;
+
+            const oldId = oldPlayer.id;
+            oldPlayer.id = requester.id;
+            oldPlayer.connected = true;
+            oldPlayer.name = request.playerName;
+
+            migratePlayerReferences(room, oldId, requester.id);
+
+            requester.join(roomCode);
+
+            requester.emit("rejoinApproved", {
+                roomCode,
+                phase: room.phase,
+                hostId: room.host,
+                message: "The host approved your request. Welcome back."
+            });
+
+            announce(
+                roomCode,
+                `🔄 ${oldPlayer.name} rejoined the room.`,
+                "success"
+            );
+
+            if (room.phase === "lobby") {
+                emitLobby(roomCode);
+            } else {
+                sendGameInformation(roomCode);
+            }
+
+            broadcastVoiceState(roomCode);
+            emitPublicMatches();
+        });
+
+        /* =================================================
+           HOST JOIN TOGGLE
+        ================================================= */
+
+        socket.on("setAllowPeopleToJoin", data => {
+            const roomCode = String(data?.roomCode || "").trim().toUpperCase();
+            const room = rooms[roomCode];
+
+            if (!room || room.host !== socket.id) return;
+
+            room.allowPeopleToJoin = Boolean(data?.allowed);
+
+            // Close outstanding requests when the host switches joining off.
+            if (!room.allowPeopleToJoin && room.pendingJoinRequests) {
+                Object.values(room.pendingJoinRequests).forEach(request => {
+                    const requester = io.sockets.sockets.get(request.socketId);
+                    requester?.emit("rejoinDeclined", {
+                        message: "The host has closed joining for this room."
+                    });
+                });
+                room.pendingJoinRequests = {};
+            }
+
+            emitLobby(roomCode);
+            sendGameInformation(roomCode);
+            emitPublicMatches();
+        });
 
         /* =================================================
            PUBLIC MATCH LIST
@@ -2155,8 +2510,12 @@ io.on(
                     );
                 }
 
+                const connectedPlayerCount = room.players.filter(
+                    player => player.connected !== false
+                ).length;
+
                 if (
-                    room.players.length < 4
+                    connectedPlayerCount < 4
                 ) {
 
                     return socket.emit(
@@ -2222,7 +2581,7 @@ io.on(
 
                 if (
                     total !==
-                    room.players.length
+                    connectedPlayerCount
                 ) {
 
                     return socket.emit(
@@ -2277,6 +2636,15 @@ room.grandmafiaUsed = false;
 room.grandmafiaTarget = null;
 
 room.nightNumber = 1;
+
+// Reset statistics for a brand-new game.
+room.stats = {
+    totalRounds: 1,
+    mafiaKills: 0,
+    successfulSaves: 0,
+    detectiveInvestigations: 0,
+    playersVotedOut: 0
+};
 
 room.clupidUsed = {};
 
@@ -2796,6 +3164,8 @@ assignRoles(
                 ] =
                     target.id;
 
+                room.stats.detectiveInvestigations += 1;
+
                 socket.emit(
                     "detectiveResult",
                     {
@@ -2807,7 +3177,15 @@ assignRoles(
                                 target.role
                             )
                                 ? "MAFIA"
-                                : "NOT MAFIA"
+                                : "NOT MAFIA",
+
+                        // The client can show the night outcome
+                        // alongside the private Detective result.
+                        doctorWillSave:
+                            Boolean(
+                                room.nightActions.doctor &&
+                                Object.values(room.nightActions.doctor).includes(target.id)
+                            )
                     }
                 );
 
@@ -3173,26 +3551,9 @@ assignRoles(
                     const disconnected =
                         room.players[index];
 
-                    room.players.splice(
-                        index,
-                        1
-                    );
-
-                    /* =========================
-                       DELETE EMPTY ROOM
-                    ========================= */
-
-                    if (
-                        !room.players.length
-                    ) {
-
-                        delete rooms[
-                            roomCode
-                        ];
-
-                        emitPublicMatches();
-                        continue;
-                    }
+                    // Preserve the player object so Rejoin can restore the
+                    // exact role/alive state and all game references.
+                    disconnected.connected = false;
 
                     /* =========================
                        HOST TRANSFER
@@ -3202,45 +3563,31 @@ assignRoles(
                         room.host === socket.id
                     ) {
 
-                        room.host =
-                            room.players[0].id;
+                        const newHost =
+                            room.players.find(
+                                p => p.connected !== false
+                            );
 
-                        announce(
-                            roomCode,
-                            `👑 ${room.players[0].name} is now the host.`,
-                            "info"
-                        );
+                        if (newHost) {
+                            room.host = newHost.id;
+
+                            announce(
+                                roomCode,
+                                `👑 ${newHost.name} is now the host.`,
+                                "info"
+                            );
+                        }
                     }
 
                     /* =========================
-                       REMOVE STALE REFERENCES
+                       KEEP GAME REFERENCES
+                       The disconnected player's old id is
+                       intentionally preserved until rejoin.
                     ========================= */
-
-                    Object.values(
-                        room.nightActions
-                    ).forEach(
-                        group => {
-                            delete group[
-                                socket.id
-                            ];
-                        }
-                    );
-
-                    delete room.votes[
-                        socket.id
-                    ];
-
-                    delete room.clupidUsed[
-                        socket.id
-                    ];
-
-                    delete room.clupidPairs[
-                        socket.id
-                    ];
 
                     announce(
                         roomCode,
-                        `🚪 ${disconnected.name} was kicked from the game because they disconnected.`,
+                        `📡 ${disconnected.name} disconnected and can rejoin from the Home screen.`,
                         "danger"
                     );
 
@@ -3250,7 +3597,11 @@ assignRoles(
                        CHECK WINNER AFTER DISCONNECT
                     ========================= */
 
+                    const connectedPlayers =
+                        room.players.filter(p => p.connected !== false);
+
                     if (
+                        connectedPlayers.length &&
                         room.gameStarted &&
                         room.phase !== "lobby" &&
                         checkWinner(roomCode)
