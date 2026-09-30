@@ -11,6 +11,151 @@ app.use(express.static("public"));
 const rooms = {};
 
 /* =========================================================
+   ACCOUNTS + PERMANENT RANK STATISTICS
+   - Sign Up / Login / Skip (guests can play, but are never ranked)
+   - Passwords are hashed with scrypt + a random salt (never plain text)
+   - Data is saved in ./data/accounts.json (set DATA_DIR to change it)
+========================================================= */
+
+const crypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
+
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
+const ACCOUNTS_FILE = path.join(DATA_DIR, "accounts.json");
+
+const STAT_KEYS = ["kills", "saves", "detects", "civilianVotes", "jesterWins"];
+
+let accountsDb = { users: {} };
+
+try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+
+    if (fs.existsSync(ACCOUNTS_FILE)) {
+        accountsDb = JSON.parse(fs.readFileSync(ACCOUNTS_FILE, "utf8"));
+    }
+
+    if (!accountsDb || typeof accountsDb.users !== "object") {
+        accountsDb = { users: {} };
+    }
+} catch (error) {
+    console.error("Could not load accounts file:", error);
+    accountsDb = { users: {} };
+}
+
+let accountsSaveTimer = null;
+
+function writeAccountsNow() {
+    try {
+        const tempFile = ACCOUNTS_FILE + ".tmp";
+        fs.writeFileSync(tempFile, JSON.stringify(accountsDb));
+        fs.renameSync(tempFile, ACCOUNTS_FILE);
+    } catch (error) {
+        console.error("Could not save accounts file:", error);
+    }
+}
+
+function saveAccounts() {
+    if (accountsSaveTimer) return;
+
+    accountsSaveTimer = setTimeout(() => {
+        accountsSaveTimer = null;
+        writeAccountsNow();
+    }, 500);
+}
+
+function flushAccountsAndExit() {
+    if (accountsSaveTimer) {
+        clearTimeout(accountsSaveTimer);
+        accountsSaveTimer = null;
+    }
+    writeAccountsNow();
+    process.exit(0);
+}
+
+process.on("SIGINT", flushAccountsAndExit);
+process.on("SIGTERM", flushAccountsAndExit);
+
+const socketAccounts = new Map();   // socket.id -> account key
+const accountSessions = new Map();  // session token -> account key
+
+function getSocketAccountKey(socket) {
+    return socketAccounts.get(socket.id) || null;
+}
+
+function hashPassword(password, salt) {
+    return new Promise((resolve, reject) => {
+        crypto.scrypt(password, salt, 64, (error, derived) => {
+            if (error) reject(error);
+            else resolve(derived.toString("hex"));
+        });
+    });
+}
+
+function isValidUsername(name) {
+    return /^[A-Za-z0-9_]{3,20}$/.test(name);
+}
+
+function emptyStats() {
+    return { kills: 0, saves: 0, detects: 0, civilianVotes: 0, jesterWins: 0 };
+}
+
+function totalStats(stats) {
+    return STAT_KEYS.reduce((sum, key) => sum + (Number(stats?.[key]) || 0), 0);
+}
+
+/* Adds +1 to one stat of an ACCOUNT player. Skip players are ignored. */
+function recordStat(player, stat) {
+    if (!player || !player.account) return;
+    if (!STAT_KEYS.includes(stat)) return;
+
+    const user = accountsDb.users[player.account];
+    if (!user) return;
+
+    user.stats = user.stats || emptyStats();
+    user.stats[stat] = (Number(user.stats[stat]) || 0) + 1;
+    saveAccounts();
+}
+
+/* Names only. Accounts only. Skip players never appear here. */
+function getRanksList() {
+    return Object.values(accountsDb.users)
+        .map(user => ({
+            username: user.username,
+            total: totalStats(user.stats)
+        }))
+        .sort((a, b) =>
+            b.total - a.total ||
+            a.username.localeCompare(b.username)
+        )
+        .slice(0, 100)
+        .map((user, index) => ({
+            rank: index + 1,
+            username: user.username
+        }));
+}
+
+function loginSocket(socket, accountKey, silent) {
+    const user = accountsDb.users[accountKey];
+    if (!user) return false;
+
+    socketAccounts.set(socket.id, accountKey);
+
+    const token = crypto.randomBytes(24).toString("hex");
+    accountSessions.set(token, accountKey);
+
+    socket.emit("authResult", {
+        ok: true,
+        guest: false,
+        username: user.username,
+        token,
+        silent: Boolean(silent)
+    });
+
+    return true;
+}
+
+/* =========================================================
    PUBLIC MATCHMAKING
 ========================================================= */
 
@@ -962,6 +1107,9 @@ function checkWinner(roomCode) {
 
         room.phase = "gameover";
 
+        // Permanent stat: Jester win.
+        recordStat(deadJester, "jesterWins");
+
         announce(
             roomCode,
             `🤡 ${deadJester.name} was the Jester and wins!`,
@@ -1376,6 +1524,16 @@ function endNight(roomCode) {
 
     if (doctorSavedTarget) {
         room.stats.successfulSaves += 1;
+
+        // Permanent stat: every Doctor who protected the attacked player.
+        Object.entries(room.nightActions.doctor).forEach(([doctorId, protectedId]) => {
+            if (protectedId === mafiaTarget) {
+                recordStat(
+                    room.players.find(p => p.id === doctorId),
+                    "saves"
+                );
+            }
+        });
     }
 
     /* =====================================================
@@ -1444,6 +1602,14 @@ function endNight(roomCode) {
 
             if (eliminatedPlayers.length) {
                 room.stats.mafiaKills += 1;
+
+                // Permanent stat: every Mafia who voted for this kill.
+                (mafiaVotes[mafiaTarget] || []).forEach(attackerId => {
+                    recordStat(
+                        room.players.find(p => p.id === attackerId),
+                        "kills"
+                    );
+                });
             }
         }
     }
@@ -1973,6 +2139,185 @@ io.on(
         );
 
         /* =================================================
+           ACCOUNTS: SIGN UP / LOGIN / SKIP / RANKS
+        ================================================= */
+
+        socket.on("signUp", async data => {
+            try {
+                const username = String(data?.username || "").trim();
+                const password = String(data?.password || "");
+
+                if (!isValidUsername(username)) {
+                    return socket.emit("authResult", {
+                        ok: false,
+                        error: "Username must be 3-20 letters, numbers or _ only."
+                    });
+                }
+
+                if (password.length < 6 || password.length > 72) {
+                    return socket.emit("authResult", {
+                        ok: false,
+                        error: "Password must be 6-72 characters."
+                    });
+                }
+
+                const key = username.toLowerCase();
+
+                if (accountsDb.users[key]) {
+                    return socket.emit("authResult", {
+                        ok: false,
+                        error: "That username is already taken."
+                    });
+                }
+
+                const salt = crypto.randomBytes(16).toString("hex");
+                const hash = await hashPassword(password, salt);
+
+                // Check again: someone may have taken it while hashing.
+                if (accountsDb.users[key]) {
+                    return socket.emit("authResult", {
+                        ok: false,
+                        error: "That username is already taken."
+                    });
+                }
+
+                accountsDb.users[key] = {
+                    username,
+                    salt,
+                    hash,
+                    created: Date.now(),
+                    stats: emptyStats()
+                };
+
+                saveAccounts();
+                loginSocket(socket, key, false);
+            } catch (error) {
+                console.error("signUp error:", error);
+                socket.emit("authResult", {
+                    ok: false,
+                    error: "Something went wrong. Try again."
+                });
+            }
+        });
+
+        socket.on("login", async data => {
+            try {
+                const now = Date.now();
+
+                if (socket.data.authLockUntil && now < socket.data.authLockUntil) {
+                    return socket.emit("authResult", {
+                        ok: false,
+                        error: "Too many wrong attempts. Wait 30 seconds."
+                    });
+                }
+
+                const username = String(data?.username || "").trim();
+                const password = String(data?.password || "");
+                const key = username.toLowerCase();
+                const user = accountsDb.users[key];
+
+                let valid = false;
+
+                if (user && password.length <= 72) {
+                    const attempt = await hashPassword(password, user.salt);
+                    const a = Buffer.from(attempt, "hex");
+                    const b = Buffer.from(user.hash, "hex");
+                    valid = a.length === b.length && crypto.timingSafeEqual(a, b);
+                } else {
+                    // Same amount of work for unknown users.
+                    await hashPassword(password.slice(0, 72), "0000000000000000");
+                }
+
+                if (!valid) {
+                    socket.data.authFails = (socket.data.authFails || 0) + 1;
+
+                    if (socket.data.authFails >= 5) {
+                        socket.data.authFails = 0;
+                        socket.data.authLockUntil = Date.now() + 30000;
+                    }
+
+                    return socket.emit("authResult", {
+                        ok: false,
+                        error: "Wrong username or password."
+                    });
+                }
+
+                socket.data.authFails = 0;
+                loginSocket(socket, key, false);
+            } catch (error) {
+                console.error("login error:", error);
+                socket.emit("authResult", {
+                    ok: false,
+                    error: "Something went wrong. Try again."
+                });
+            }
+        });
+
+        socket.on("resumeSession", data => {
+            const token = String(data?.token || "");
+            const key = accountSessions.get(token);
+
+            if (!key || !accountsDb.users[key]) {
+                return socket.emit("authResult", {
+                    ok: false,
+                    resume: true,
+                    error: ""
+                });
+            }
+
+            socketAccounts.set(socket.id, key);
+
+            socket.emit("authResult", {
+                ok: true,
+                guest: false,
+                username: accountsDb.users[key].username,
+                token,
+                silent: Boolean(data?.silent)
+            });
+        });
+
+        socket.on("skipAuth", () => {
+            socketAccounts.delete(socket.id);
+
+            socket.emit("authResult", {
+                ok: true,
+                guest: true,
+                username: null,
+                silent: false
+            });
+        });
+
+        socket.on("logout", data => {
+            const token = String(data?.token || "");
+            if (token) accountSessions.delete(token);
+            socketAccounts.delete(socket.id);
+        });
+
+        socket.on("getRanks", () => {
+            socket.emit("ranksData", getRanksList());
+        });
+
+        socket.on("getPlayerStats", data => {
+            const key = String(data?.username || "").trim().toLowerCase();
+            const user = accountsDb.users[key];
+
+            if (!user) {
+                return socket.emit("playerStatsData", { ok: false });
+            }
+
+            socket.emit("playerStatsData", {
+                ok: true,
+                username: user.username,
+                stats: { ...emptyStats(), ...(user.stats || {}) }
+            });
+        });
+
+        socket.on("disconnect", () => {
+            socketAccounts.delete(socket.id);
+        });
+
+
+        /* =================================================
            WEBRTC VOICE SIGNALING
         ================================================= */
 
@@ -2073,6 +2418,9 @@ io.on(
                         {
                             id:
                                 socket.id,
+
+                            account:
+                                getSocketAccountKey(socket),
 
                             name:
                                 playerName,
@@ -2230,6 +2578,9 @@ io.on(
                     {
                         id:
                             socket.id,
+
+                        account:
+                            getSocketAccountKey(socket),
 
                         name:
                             playerName,
@@ -3166,6 +3517,9 @@ assignRoles(
 
                 room.stats.detectiveInvestigations += 1;
 
+                // Permanent stat: one detect per investigation.
+                recordStat(detective, "detects");
+
                 socket.emit(
                     "detectiveResult",
                     {
@@ -3279,6 +3633,11 @@ assignRoles(
                     socket.id
                 ] =
                     target.id;
+
+                // Permanent stat: a vote cast by a Civilian.
+                if (voter.role === "Civilian") {
+                    recordStat(voter, "civilianVotes");
+                }
 
                 socket.emit(
                     "voteConfirmed",
