@@ -197,6 +197,8 @@ function hide(id) {
 function setScreen(screen) {
 
     [
+        "authScreen",
+        "ranksScreen",
         "homeScreen",
         "createRoomScreen",
         "createModeScreen",
@@ -3934,6 +3936,8 @@ let voiceGroup = "none";
 let voicePeers = [];
 const voiceConnections = new Map();
 const voiceVolumes = new Map();
+// Players YOU muted on your own side only. Nobody else is affected.
+const voiceMutedPeers = new Set();
 // Tracks each peer's REAL WebRTC connection state (not just "who should be
 // in this channel"), so the UI can show whether audio is actually flowing
 // instead of just showing the name and looking connected regardless.
@@ -3990,8 +3994,10 @@ function ensureVoicePanel() {
             <div id="voiceParticipants" class="voice-participants"></div>
             <div class="voice-controls">
                 <button id="voiceMuteButton" class="voice-control-button" type="button" disabled>🎤 UNMUTE</button>
+                <button id="voiceSpeakerButton" class="voice-control-button" type="button">🔊 SPEAKER</button>
                 <button id="voiceReconnectButton" class="voice-control-button" type="button">🔄 RECONNECT</button>
             </div>
+            <div id="voiceSpeakerPanel" class="voice-speaker-panel" style="display:none;"></div>
         </div>
     `;
 
@@ -4001,6 +4007,7 @@ function ensureVoicePanel() {
     $("voiceEnableButton")?.addEventListener("click", enableVoice);
     $("voiceMuteButton")?.addEventListener("click", toggleVoiceMute);
     $("voiceReconnectButton")?.addEventListener("click", reconnectVoice);
+    $("voiceSpeakerButton")?.addEventListener("click", toggleSpeakerPanel);
     $("voiceCollapseButton")?.addEventListener("click", () => {
         const body = $("voiceBody");
         const button = $("voiceCollapseButton");
@@ -4173,6 +4180,7 @@ function createVoicePeer(peer) {
         }
         audio.srcObject = event.streams[0] || new MediaStream([event.track]);
         audio.volume = voiceVolumes.has(peer.id) ? voiceVolumes.get(peer.id) : 1;
+        audio.muted = voiceMutedPeers.has(peer.id);
         const play = () => audio.play().then(() => { voiceAudioUnlocked = true; }).catch(error => {
             console.warn(`[voice] audio.play() blocked for ${peer.name || peer.id}:`, error?.name || error);
         });
@@ -4284,30 +4292,124 @@ function renderVoiceParticipants() {
         stateLabel.style.fontSize = "0.8em";
         stateLabel.style.opacity = "0.8";
 
-        const controls = document.createElement("div");
-        controls.className = "voice-player-controls";
+        row.append(name, stateLabel);
+        container.appendChild(row);
+    });
 
-        const icon = document.createElement("span");
-        icon.className = "voice-speaking-icon";
-        icon.textContent = "🎙️";
+    // Keep the Speaker menu in step with who is in the channel.
+    renderSpeakerPanel();
+}
+
+/* =========================================================
+   SPEAKER MENU
+   Choose which player to mute (only for you) and set each
+   player's volume. Rows are updated IN PLACE, so the slider
+   never resets while you are dragging it.
+========================================================= */
+
+function toggleSpeakerPanel() {
+    const panel = $("voiceSpeakerPanel");
+    if (!panel) return;
+
+    const open = panel.style.display === "none";
+    panel.style.display = open ? "" : "none";
+    $("voiceSpeakerButton")?.classList.toggle("voice-control-active", open);
+
+    if (open) renderSpeakerPanel(true);
+}
+
+function applyPeerAudio(peerId) {
+    const audio = document.getElementById(`voice-audio-${CSS.escape(peerId)}`);
+    if (!audio) return;
+
+    audio.volume = voiceVolumes.has(peerId) ? voiceVolumes.get(peerId) : 1;
+    audio.muted = voiceMutedPeers.has(peerId);
+}
+
+function renderSpeakerPanel(force = false) {
+    const panel = $("voiceSpeakerPanel");
+    if (!panel || panel.style.display === "none") return;
+
+    const signature = voicePeers.map(p => p.id).join("|");
+
+    // Same players as before -> only refresh names, do not rebuild the sliders.
+    if (!force && panel.dataset.signature === signature) {
+        voicePeers.forEach(peer => {
+            const nameEl = panel.querySelector(`[data-speaker-name="${CSS.escape(peer.id)}"]`);
+            if (nameEl) nameEl.textContent = peer.name || "Player";
+        });
+        return;
+    }
+
+    panel.dataset.signature = signature;
+    panel.innerHTML = "";
+
+    if (!voicePeers.length) {
+        panel.innerHTML = '<div class="voice-empty">No one is in your current voice channel.</div>';
+        return;
+    }
+
+    voicePeers.forEach(peer => {
+        const row = document.createElement("div");
+        row.className = "speaker-row";
+
+        const top = document.createElement("div");
+        top.className = "speaker-row-top";
+
+        const name = document.createElement("div");
+        name.className = "speaker-name";
+        name.dataset.speakerName = peer.id;
+        name.textContent = peer.name || "Player";
+
+        const muteButton = document.createElement("button");
+        muteButton.type = "button";
+        muteButton.className = "speaker-mute";
 
         const slider = document.createElement("input");
         slider.type = "range";
+        slider.className = "speaker-slider";
         slider.min = "0";
-        slider.max = "1";
-        slider.step = "0.01";
-        slider.value = String(voiceVolumes.has(peer.id) ? voiceVolumes.get(peer.id) : 1);
+        slider.max = "100";
+        slider.step = "1";
+        slider.value = String(Math.round((voiceVolumes.has(peer.id) ? voiceVolumes.get(peer.id) : 1) * 100));
         slider.title = `Volume for ${peer.name || "player"}`;
+
+        const percent = document.createElement("span");
+        percent.className = "speaker-percent";
+
+        const refreshLabels = () => {
+            const muted = voiceMutedPeers.has(peer.id);
+            muteButton.textContent = muted ? "🔇 UNMUTE" : "🔊 MUTE";
+            muteButton.classList.toggle("is-muted", muted);
+            slider.disabled = muted;
+            row.classList.toggle("is-muted", muted);
+            percent.textContent = muted ? "muted" : `${slider.value}%`;
+        };
+
         slider.addEventListener("input", () => {
-            const value = Number(slider.value);
-            voiceVolumes.set(peer.id, value);
-            const audio = document.getElementById(`voice-audio-${CSS.escape(peer.id)}`);
-            if (audio) audio.volume = value;
+            voiceVolumes.set(peer.id, Number(slider.value) / 100);
+            applyPeerAudio(peer.id);
+            refreshLabels();
         });
 
-        controls.append(icon, slider);
-        row.append(name, stateLabel, controls);
-        container.appendChild(row);
+        muteButton.addEventListener("click", () => {
+            if (voiceMutedPeers.has(peer.id)) voiceMutedPeers.delete(peer.id);
+            else voiceMutedPeers.add(peer.id);
+
+            applyPeerAudio(peer.id);
+            refreshLabels();
+        });
+
+        refreshLabels();
+
+        top.append(name, muteButton);
+
+        const sliderLine = document.createElement("div");
+        sliderLine.className = "speaker-slider-line";
+        sliderLine.append(slider, percent);
+
+        row.append(top, sliderLine);
+        panel.appendChild(row);
     });
 }
 
@@ -4460,4 +4562,334 @@ socket.on("gameRestarted", () => {
 window.addEventListener("beforeunload", () => {
     try { closeAllVoicePeers(); } catch (_) {}
     if (voiceLocalStream) voiceLocalStream.getTracks().forEach(track => track.stop());
+});
+
+
+/* =========================================================
+   ACCOUNTS: SIGN UP / LOGIN / SKIP + RANKS
+   Added as a separate block so the existing game code is untouched.
+========================================================= */
+
+const authState = {
+    username: null,     // null = Skip / guest
+    token: null,
+    entered: false,     // true once the player passed the first screen
+    mode: "signup"
+};
+
+try {
+    authState.token = localStorage.getItem("mafiaWarsToken") || null;
+} catch (_) {}
+
+function saveAuthToken(token) {
+    authState.token = token || null;
+    try {
+        if (token) localStorage.setItem("mafiaWarsToken", token);
+        else localStorage.removeItem("mafiaWarsToken");
+    } catch (_) {}
+}
+
+function setAuthMessage(text, type = "") {
+    const box = $("authMessage");
+    if (!box) return;
+    box.textContent = text || "";
+    box.className = "auth-message" + (type ? " " + type : "");
+}
+
+function setAuthBusy(busy) {
+    const button = $("authSubmitBtn");
+    if (button) button.disabled = Boolean(busy);
+}
+
+function showAuthToast(text) {
+    const toast = document.createElement("div");
+    toast.className = "auth-toast";
+    toast.textContent = text;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 4500);
+}
+
+function setAccountInfoOpen(open) {
+    const info = $("accountInfo");
+    const button = $("accountChipButton");
+    if (!info || !button) return;
+
+    const canOpen = Boolean(authState.username) && open;
+    info.style.display = canOpen ? "" : "none";
+    button.textContent = authState.username ? (canOpen ? "−" : "+") : "SIGN IN";
+    button.classList.toggle("account-plus", Boolean(authState.username));
+}
+
+function updateAccountChip() {
+    const text = $("accountChipText");
+    const name = $("accountInfoName");
+    if (!text) return;
+
+    if (authState.username) {
+        text.textContent = "👤 Account";
+        if (name) name.textContent = authState.username;
+    } else {
+        text.textContent = "👻 Guest";
+        if (name) name.textContent = "";
+    }
+
+    setAccountInfoOpen(false);
+}
+
+function doLogout() {
+    socket.emit("logout", { token: authState.token });
+    authState.username = null;
+    saveAuthToken(null);
+    authState.entered = false;
+    updateAccountChip();
+    showAuthMenu();
+    setScreen("authScreen");
+}
+
+function showAuthMenu() {
+    $("authMenu").style.display = "";
+    $("authForm").style.display = "none";
+    setAuthMessage("");
+}
+
+function showAuthForm(mode) {
+    authState.mode = mode;
+    $("authMenu").style.display = "none";
+    $("authForm").style.display = "";
+    $("authFormTitle").textContent = mode === "signup" ? "Sign Up" : "Login";
+    $("authSubmitBtn").textContent = mode === "signup" ? "MAKE ACCOUNT" : "LOGIN";
+    $("authPassword").setAttribute(
+        "autocomplete",
+        mode === "signup" ? "new-password" : "current-password"
+    );
+    $("authUsername").value = "";
+    $("authPassword").value = "";
+    $("authPassword").type = "password";
+    if ($("authTogglePassword")) {
+        $("authTogglePassword").textContent = "👁";
+        $("authTogglePassword").title = "Show password";
+    }
+    setAuthMessage("");
+    setAuthBusy(false);
+    setTimeout(() => $("authUsername")?.focus(), 60);
+}
+
+function submitAuth() {
+    const username = $("authUsername").value.trim();
+    const password = $("authPassword").value;
+
+    if (!username || !password) {
+        setAuthMessage("Enter a username and a password.", "error");
+        return;
+    }
+
+    if (authState.mode === "signup" && !/^[A-Za-z0-9_]{3,20}$/.test(username)) {
+        setAuthMessage("Username: 3-20 letters, numbers or _ only.", "error");
+        return;
+    }
+
+    if (authState.mode === "signup" && password.length < 6) {
+        setAuthMessage("Password must be at least 6 characters.", "error");
+        return;
+    }
+
+    setAuthBusy(true);
+    setAuthMessage(authState.mode === "signup" ? "Making your account..." : "Logging in...", "waiting");
+
+    socket.emit(authState.mode === "signup" ? "signUp" : "login", { username, password });
+}
+
+/* Fill the name box with the account name (only if it is empty). */
+function prefillAccountNames() {
+    if (!authState.username) return;
+
+    ["createPlayerName", "joinPlayerName", "quickStartPlayerName", "rejoinPlayerName"]
+        .forEach(id => {
+            const input = $(id);
+            if (input && !input.value.trim()) input.value = authState.username;
+        });
+}
+
+socket.on("authResult", data => {
+
+    if (!data || !data.ok) {
+
+        // A saved session that is no longer valid (for example after a server restart).
+        if (data && data.resume) {
+            const hadAccount = Boolean(authState.username);
+            saveAuthToken(null);
+
+            if (authState.entered && hadAccount) {
+                authState.username = null;
+                updateAccountChip();
+                showAuthToast("Your login expired. Sign in again to keep saving stats.");
+            }
+            return;
+        }
+
+        setAuthBusy(false);
+        setAuthMessage((data && data.error) || "Something went wrong.", "error");
+        return;
+    }
+
+    if (data.guest) {
+        authState.username = null;
+        saveAuthToken(null);
+    } else {
+        authState.username = data.username;
+        saveAuthToken(data.token);
+    }
+
+    updateAccountChip();
+    setAuthBusy(false);
+
+    if (!data.silent) {
+        authState.entered = true;
+        showAuthMenu();
+        setScreen("homeScreen");
+        prefillAccountNames();
+    }
+});
+
+// Log the new socket back in after a reconnect or a page refresh.
+socket.on("connect", () => {
+    if (authState.token) {
+        socket.emit("resumeSession", {
+            token: authState.token,
+            silent: authState.entered
+        });
+    }
+});
+
+/* ---------- Ranks ---------- */
+
+function renderRanks(list) {
+    const box = $("ranksList");
+    const empty = $("ranksEmpty");
+    if (!box) return;
+
+    box.innerHTML = "";
+
+    if (!Array.isArray(list) || list.length === 0) {
+        if (empty) empty.style.display = "";
+        return;
+    }
+
+    if (empty) empty.style.display = "none";
+
+    list.forEach(entry => {
+        const row = document.createElement("div");
+        row.className = "rank-row" + (entry.rank <= 3 ? " rank-top-" + entry.rank : "");
+
+        const position = document.createElement("span");
+        position.className = "rank-position";
+        position.textContent = "#" + entry.rank;
+
+        const name = document.createElement("span");
+        name.className = "rank-name";
+        name.textContent = entry.username;
+
+        const details = document.createElement("button");
+        details.type = "button";
+        details.className = "rank-details-button";
+        details.textContent = "DETAILS";
+        details.addEventListener("click", () => {
+            socket.emit("getPlayerStats", { username: entry.username });
+        });
+
+        row.append(position, name, details);
+        box.appendChild(row);
+    });
+}
+
+socket.on("ranksData", renderRanks);
+
+socket.on("playerStatsData", data => {
+    if (!data || !data.ok) return;
+
+    $("ranksDetailsName").textContent = data.username;
+    $("statKills").textContent = data.stats.kills || 0;
+    $("statSaves").textContent = data.stats.saves || 0;
+    $("statDetects").textContent = data.stats.detects || 0;
+    $("statCivilianVotes").textContent = data.stats.civilianVotes || 0;
+    $("statJesterWins").textContent = data.stats.jesterWins || 0;
+
+    $("ranksDetailsOverlay").style.display = "";
+});
+
+/* ---------- Buttons ---------- */
+
+document.addEventListener("DOMContentLoaded", () => {
+
+    $("authSignUpBtn")?.addEventListener("click", () => showAuthForm("signup"));
+    $("authLoginBtn")?.addEventListener("click", () => showAuthForm("login"));
+    $("authBackBtn")?.addEventListener("click", showAuthMenu);
+    $("authSubmitBtn")?.addEventListener("click", submitAuth);
+
+    $("authSkipBtn")?.addEventListener("click", () => {
+        socket.emit("skipAuth");
+    });
+
+    ["authUsername", "authPassword"].forEach(id => {
+        $(id)?.addEventListener("keydown", event => {
+            if (event.key === "Enter") submitAuth();
+        });
+    });
+
+    $("accountChipButton")?.addEventListener("click", () => {
+        if (authState.username) {
+            // Account player: "+" opens / closes the account info underneath.
+            setAccountInfoOpen($("accountInfo").style.display === "none");
+            return;
+        }
+
+        // Skip player: SIGN IN goes back to the account screen.
+        showAuthMenu();
+        setScreen("authScreen");
+    });
+
+    $("accountLogoutButton")?.addEventListener("click", doLogout);
+
+    // Show / hide password
+    $("authTogglePassword")?.addEventListener("click", () => {
+        const input = $("authPassword");
+        const button = $("authTogglePassword");
+        if (!input || !button) return;
+
+        const show = input.type === "password";
+        input.type = show ? "text" : "password";
+        button.textContent = show ? "🙈" : "👁";
+        button.title = show ? "Hide password" : "Show password";
+        button.setAttribute("aria-label", button.title);
+        input.focus();
+    });
+
+    $("ranksButton")?.addEventListener("click", () => {
+        socket.emit("getRanks");
+        $("ranksDetailsOverlay").style.display = "none";
+        setScreen("ranksScreen");
+    });
+
+    $("backFromRanks")?.addEventListener("click", () => setScreen("homeScreen"));
+    $("closeRanksDetails")?.addEventListener("click", () => {
+        $("ranksDetailsOverlay").style.display = "none";
+    });
+
+    $("ranksDetailsOverlay")?.addEventListener("click", event => {
+        if (event.target.id === "ranksDetailsOverlay") {
+            $("ranksDetailsOverlay").style.display = "none";
+        }
+    });
+
+    // Account players get their name filled in on the Create / Join / Quick Start / Rejoin pages.
+    document.addEventListener("click", event => {
+        const button = event.target.closest("button");
+        if (!button) return;
+
+        if (["createRoom", "joinRoom", "quickStart", "rejoinHomeButton"].includes(button.id)) {
+            setTimeout(prefillAccountNames, 0);
+        }
+    });
+
+    updateAccountChip();
 });
