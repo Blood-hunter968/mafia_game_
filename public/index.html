@@ -16,7 +16,177 @@
          HOME / STARTING SCREEN
     ====================================================== -->
 
-    <section id="homeScreen">
+    <!-- =====================================================
+         ACCOUNT SCREEN: SIGN UP / LOGIN / SKIP
+    ====================================================== -->
+
+    <section id="authScreen">
+
+        <div class="home-container auth-card">
+
+            <div class="logo-icon">
+                <img src="mafia-wars-main-logo.png" alt="Mafia Wars">
+            </div>
+
+            <h1>Mafia Wars</h1>
+
+            <div id="authMenu" class="auth-buttons">
+
+                <button id="authSignUpBtn" class="auth-btn">
+                    SIGN UP
+                </button>
+
+                <button id="authLoginBtn" class="auth-btn">
+                    I ALREADY HAVE AN ACCOUNT
+                </button>
+
+                <button id="authSkipBtn" class="auth-btn auth-btn-dark">
+                    SKIP
+                </button>
+
+            </div>
+
+            <div id="authForm" class="auth-form" style="display:none;">
+
+                <h2 id="authFormTitle">Sign Up</h2>
+
+                <input
+                    id="authUsername"
+                    type="text"
+                    maxlength="20"
+                    placeholder="Username"
+                    autocomplete="username"
+                    autocapitalize="off"
+                    spellcheck="false"
+                >
+
+                <div class="password-wrap">
+
+                    <input
+                        id="authPassword"
+                        type="password"
+                        maxlength="72"
+                        placeholder="Password"
+                        autocomplete="current-password"
+                    >
+
+                    <button
+                        id="authTogglePassword"
+                        class="password-toggle"
+                        type="button"
+                        aria-label="Show password"
+                        title="Show password"
+                    >👁</button>
+
+                </div>
+
+                <div id="authMessage" class="auth-message"></div>
+
+                <button id="authSubmitBtn" class="auth-btn">
+                    MAKE ACCOUNT
+                </button>
+
+                <button id="authBackBtn" class="auth-btn auth-btn-dark">
+                    ← BACK
+                </button>
+
+            </div>
+
+        </div>
+
+    </section>
+
+
+    <!-- =====================================================
+         RANKS SCREEN (names only, stats are in DETAILS)
+    ====================================================== -->
+
+    <section id="ranksScreen" style="display:none;">
+
+        <div class="home-container ranks-card">
+
+            <div class="screen-emblem">🏆</div>
+
+            <h1>Mafia Wars Ranks</h1>
+
+            <div id="ranksList" class="ranks-list"></div>
+
+            <div id="ranksEmpty" class="ranks-empty" style="display:none;">
+                No ranked players yet. Make an account to get on the board!
+            </div>
+
+            <button id="backFromRanks" class="secondary-screen-button">
+                ← BACK
+            </button>
+
+        </div>
+
+        <div id="ranksDetailsOverlay" class="ranks-overlay" style="display:none;">
+
+            <div class="ranks-details-card">
+
+                <h2 id="ranksDetailsName"></h2>
+
+                <div class="ranks-stat-row">
+                    <span>💀 Kills</span>
+                    <strong id="statKills">0</strong>
+                </div>
+
+                <div class="ranks-stat-row">
+                    <span>❤️ Saves</span>
+                    <strong id="statSaves">0</strong>
+                </div>
+
+                <div class="ranks-stat-row">
+                    <span>🔎 Detects</span>
+                    <strong id="statDetects">0</strong>
+                </div>
+
+                <div class="ranks-stat-row">
+                    <span>🗳️ Civilian Votes</span>
+                    <strong id="statCivilianVotes">0</strong>
+                </div>
+
+                <div class="ranks-stat-row">
+                    <span>🃏 Jester Wins</span>
+                    <strong id="statJesterWins">0</strong>
+                </div>
+
+                <button id="closeRanksDetails" class="secondary-screen-button">
+                    CLOSE
+                </button>
+
+            </div>
+
+        </div>
+
+    </section>
+
+
+    <!-- =====================================================
+         HOME / STARTING SCREEN
+    ====================================================== -->
+
+    <section id="homeScreen" style="display:none;">
+
+        <div id="accountChip" class="account-chip">
+
+            <div class="account-chip-top">
+                <span id="accountChipText">👻 Guest</span>
+                <button id="accountChipButton" type="button">SIGN IN</button>
+            </div>
+
+            <div id="accountInfo" class="account-info" style="display:none;">
+                <div class="account-info-label">ACCOUNT INFO</div>
+                <div id="accountInfoName" class="account-info-name"></div>
+                <button id="accountLogoutButton" type="button">LOG OUT</button>
+            </div>
+
+        </div>
+
+        <button id="ranksButton" class="ranks-top-button" type="button">
+            🏆 RANKS
+        </button>
 
         <div class="home-container">
 
@@ -28,6 +198,7 @@
 
             <p>
                 ☆ 𝕎𝔼𝕃ℂ𝕆𝕄𝔼 𝕋𝕆 𝕄𝔸𝔽𝕀𝔸 𝕎𝔸ℝ𝕊 ☆
+               
             </p>
 
             <div class="home-buttons">
@@ -395,186 +566,476 @@
 
 
         <!-- ================= GUIDE POPUP ================= -->
+<div 
+    id="guideOverlay" 
+    class="guide-overlay" 
+    style="display:none;"
+>
 
-        <div
-            id="guideOverlay"
-            class="guide-overlay"
-            style="display:none;"
+    <div class="guide-box">
+
+        <button
+            id="closeGuide"
+            class="close-guide"
+            type="button"
         >
+            ✕
+        </button>
 
-            <div class="guide-box">
+        <h2>
+               </span>⚔️ MAFIA WARS</span>
+            
+        </h2>
 
-                <button
-                    id="closeGuide"
-                    class="close-guide"
-                    type="button"
-                >
-                    ✕
-                </button>
+        <div class="guide-subtitle">
+            🎭 GAME GUIDE // CLASSIFIED
+        </div>
 
-                <h2>
-                    📖 MAFIA WARS GUIDE
-                </h2>
+        <div class="guide-content">
 
-                <div class="guide-content">
+            <!-- CIVILIAN -->
+            <section class="guide-role">
+                <h3>👤 CIVILIAN</h3>
+                <span class="guide-team">TEAM // TOWN</span>
 
-                ```html
-<div class="guide-content">
+                <p>
+                    Civilians are normal members of the Town.
+                    They do not have a special night ability.
+                    Their goal is to work together, gather information,
+                    identify the Mafia, and eliminate the threat.
+                </p>
 
-    <h3>👤 Civilian</h3>
-    <p>
-        Civilians are normal Town players. They do not have
-        a special night ability. Their goal is to work together
-        with the Town and identify the Mafia.
-    </p>
-
-    <h3>🔴 Mafia</h3>
-    <p>
-        Mafia members work together during the night.
-        Mafia players can communicate privately through
-        Mafia Chat and choose players to eliminate.
-    </p>
-
-    <h3>👑 Godfather</h3>
-    <p>
-        The Godfather is an important member of the Mafia team.
-        The Godfather works with the Mafia to eliminate the Town
-        and help the Mafia team win and if Godfather die every 
-        member of mafia team also die.
-    </p>
-
-    <h3>🔥 Grandmafia</h3>
-    <p>
-        Grandmafia is a special Mafia role.
-        On the first night, Grandmafia can choose a player
-        to become Baby Mafia and the baby mafia will active 
-        after the death of grandmafia.
-    </p>
-
-    <h3>👵 Grandma</h3>
-    <p>
-        Grandma is a special powers that if any member of mafia team
-        attack grandma the first attacker die.
-    </p>
-
-    <h3>🩺 Doctor</h3>
-    <p>
-        The Doctor can protect a player during the night.
-        Choose a player and use the Doctor action to save them and doctor 
-        can choose 1 person at  night if the doctor want to save the same
-        person first he have to save all the player to save the same person.
-    </p>
-
-    <h3>🔎 Detective</h3>
-    <p>
-        The Detective investigates players during the night.
-        The Detective receives information that can help discover
-        the Mafia.
-    </p>
-
-    <h3>🤡 Jester</h3>
-    <p>
-        The Jester has a special powers that if he voted out or killed 
-        by mafia member the jester win jester is neutral he is not in 
-        the team of civilian or mafia.
-    </p>
-
-    <h3>💕 Clupid</h3>
-    <p>
-        Clupid can link two players together.
-        On the first night, Clupid chooses two different players
-        and creates a special connection between them and if one 
-        person die the second person also die
-    </p>
-
-    <div class="guide-divider"></div>
-
-    <h3>🌙 Night</h3>
-    <p>
-        During the night, players with special abilities can
-        perform their actions.
-    </p>
-
-    <h3>☀️ Day</h3>
-    <p>
-        During the day, everyone can discuss the game and vote
-        for a player they suspect.
-    </p>
-
-    <h3>🎯 Your Action</h3>
-    <p>
-        If your role has an available action, select a player
-        and press the action button.
-    </p>
-
-    <h3>💬 Public Chat</h3>
-    <p>
-        Public Chat is visible to everyone in the game.
-        Use it to discuss and share information.
-    </p>
-
-    <h3>🔴 Mafia Chat</h3>
-    <p>
-        Mafia Chat is private to Mafia-team players.
-        Use it to communicate with your teammates.
-    </p>
-
-</div>
+                <div class="guide-win">
+                    🏆 <strong>WIN CONDITION:</strong>
+                    The Town wins when all Mafia-team players are eliminated.
+                </div>
+            </section>
 
 
-                    <h3>🌙 Night</h3>
-                    <p>
-                        During the night, special roles can use
-                        their abilities.
-                    </p>
+            <!-- MAFIA -->
+            <section class="guide-role">
+                <h3>🔴 MAFIA</h3>
+                <span class="guide-team">TEAM // MAFIA</span>
 
-                    <h3>🎯 Your Action</h3>
-                    <p>
-                        Select a player and choose your available
-                        action, then press CONFIRM.
-                    </p>
+                <p>
+                    Mafia members work together during the night.
+                    They can communicate privately through Mafia Chat
+                    and choose players to eliminate.
+                </p>
 
-                    <h3>👥 Players</h3>
-                    <p>
-                        The player list shows everyone currently
-                        in the game.
-                    </p>
+                <div class="guide-win">
+                    🏆 <strong>WIN CONDITION:</strong>
+                    Mafia wins when the number of living Mafia-team
+                    players is equal to or greater than the number
+                    of living non-Mafia players.
+                </div>
+            </section>
 
-                    <h3>💬 Public Chat</h3>
-                    <p>
-                        Use the public chat to communicate with
-                        everyone.
-                    </p>
 
-                    <h3>🔴 Mafia Chat</h3>
-                    <p>
-                        Mafia members can use Mafia Chat to
-                        communicate privately with other Mafia
-                        players.
-                    </p>
+            <!-- GODFATHER -->
+            <section class="guide-role">
+                <h3>👑 GODFATHER</h3>
+                <span class="guide-team">TEAM // MAFIA</span>
 
-                    <h3>🎭 Your Role</h3>
-                    <p>
-                        Your role is shown on the right side of
-                        the screen.
-                    </p>
+                <p>
+                    The Godfather is the leader of the Mafia team.
+                    He works with the Mafia to eliminate the Town
+                    and help his team achieve victory.
+                </p>
 
+                <div class="guide-warning">
+                    ☠️ <strong>DEATH EFFECT:</strong>
+                    If the Godfather dies, every member of the
+                    Mafia team dies with him.
                 </div>
 
-                <button
-                    id="closeGuideBottom"
-                    class="guide-close-button"
-                    type="button"
-                >
-                    CLOSE
-                </button>
+                <div class="guide-win">
+                    🏆 <strong>WIN CONDITION:</strong>
+                    Win with the Mafia team by reaching the Mafia
+                    victory condition.
+                </div>
+            </section>
 
-            </div>
+
+            <!-- GRANDMAFIA -->
+            <section class="guide-role">
+                <h3>🔥 GRANDMAFIA</h3>
+                <span class="guide-team">TEAM // MAFIA</span>
+
+                <p>
+                    Grandmafia is a special Mafia role.
+                </p>
+
+                <p>
+                    🌙 <strong>NIGHT 1:</strong>
+                    Grandmafia can choose one player to become
+                    <strong>Baby Mafia</strong>.
+                </p>
+
+                <p>
+                    👶 Baby Mafia remains inactive until Grandmafia dies.
+                    After Grandmafia's death, Baby Mafia becomes active.
+                </p>
+
+                <div class="guide-win">
+                    🏆 <strong>WIN CONDITION:</strong>
+                    Win with the Mafia team by reaching the Mafia
+                    victory condition.
+                </div>
+            </section>
+
+
+            <!-- GRANDMA -->
+            <section class="guide-role">
+                <h3>👵 GRANDMA</h3>
+                <span class="guide-team">TEAM // TOWN</span>
+
+                <p>
+                    Grandma has a special defensive ability.
+                </p>
+
+                <div class="guide-warning">
+                    ⚔️ If a member of the Mafia attacks Grandma,
+                    the first Mafia attacker dies.
+                </div>
+
+                <div class="guide-win">
+                    🏆 <strong>WIN CONDITION:</strong>
+                    Win with the Town when all Mafia-team
+                    players are eliminated.
+                </div>
+            </section>
+
+
+            <!-- DOCTOR -->
+            <section class="guide-role">
+                <h3>🩺 DOCTOR</h3>
+                <span class="guide-team">TEAM // TOWN</span>
+
+                <p>
+                    The Doctor can protect one player during the night.
+                    Choose a player and use the Doctor action to save them.
+                </p>
+
+                <div class="guide-warning">
+                    ⚠️ <strong>PROTECTION RULE:</strong>
+                    The Doctor cannot protect the same player repeatedly.
+                    To protect that player again, the Doctor must first
+                    protect every other player.
+                </div>
+
+                <div class="guide-win">
+                    🏆 <strong>WIN CONDITION:</strong>
+                    Win with the Town when all Mafia-team
+                    players are eliminated.
+                </div>
+            </section>
+
+
+            <!-- DETECTIVE -->
+            <section class="guide-role">
+                <h3>🔎 DETECTIVE</h3>
+                <span class="guide-team">TEAM // TOWN</span>
+
+                <p>
+                    The Detective investigates players during the night.
+                    The Detective receives information that can help
+                    discover the Mafia.
+                </p>
+
+                <div class="guide-win">
+                    🏆 <strong>WIN CONDITION:</strong>
+                    Win with the Town when all Mafia-team
+                    players are eliminated.
+                </div>
+            </section>
+
+
+            <!-- JESTER -->
+            <section class="guide-role">
+                <h3>🤡 JESTER</h3>
+                <span class="guide-team">TEAM // NEUTRAL</span>
+
+                <p>
+                    The Jester is a neutral role.
+                    The Jester is not part of the Town or Mafia.
+                </p>
+
+                <div class="guide-win">
+                    🏆 <strong>WIN CONDITION:</strong>
+                    The Jester wins if they are voted out by the Town
+                    OR killed by a Mafia member.
+                </div>
+
+                <div class="guide-special">
+                    🎭 YOUR DEATH IS YOUR VICTORY.
+                </div>
+            </section>
+
+
+            <!-- CUPID -->
+            <section class="guide-role">
+                <h3>💕 CUPID</h3>
+                <span class="guide-team">TEAM // NEUTRAL</span>
+
+                <p>
+                    Cupid can link two players together.
+                </p>
+
+                <p>
+                    🌙 <strong>NIGHT 1:</strong>
+                    Cupid chooses two different players and creates
+                    a special connection between them.
+                </p>
+
+                <div class="guide-warning">
+                    🔗 <strong>LINKED FATE:</strong>
+                    If one linked player dies, the other linked
+                    player also dies.
+                </div>
+
+                <div class="guide-win">
+                    🏆 <strong>WIN CONDITION:</strong>
+                    Cupid follows the special objective assigned
+                    to the Cupid role.
+                </div>
+            </section>
+
+
+            <div class="guide-divider"></div>
+
+
+            <!-- VICTORY CONDITIONS -->
+            <section class="guide-system">
+                <h3>🏆 VICTORY CONDITIONS</h3>
+
+                <div class="guide-win-card">
+                    <strong>🏘️ TOWN VICTORY</strong>
+                    <p>
+                        All Mafia-team players must be eliminated.
+                    </p>
+                </div>
+
+                <div class="guide-win-card mafia-win-card">
+                    <strong>🔴 MAFIA VICTORY</strong>
+                    <p>
+                        Living Mafia players are equal to or greater
+                        than living non-Mafia players.
+                    </p>
+                </div>
+
+                <div class="guide-win-card">
+                    <strong>🤡 JESTER VICTORY</strong>
+                    <p>
+                        Jester is voted out or killed by Mafia.
+                    </p>
+                </div>
+            </section>
+
+
+            <div class="guide-divider"></div>
+
+
+            <!-- NIGHT -->
+            <section class="guide-system">
+                <h3>🌙 NIGHT PHASE</h3>
+
+                <span class="guide-status">
+                    STATUS // NIGHT
+                </span>
+
+                <p>
+                    The city goes dark.
+                    Players with special abilities can secretly
+                    perform their actions.
+                </p>
+
+                <div class="guide-action">
+                    🎯 SELECT PLAYER
+                    <span>→</span>
+                    SELECT ACTION
+                    <span>→</span>
+                    CONFIRM
+                </div>
+
+                <div class="guide-special">
+                    🤫 KEEP YOUR ACTION SECRET.
+                </div>
+            </section>
+
+
+            <!-- DAY -->
+            <section class="guide-system">
+                <h3>☀️ DAY PHASE</h3>
+
+                <span class="guide-status">
+                    STATUS // DAY
+                </span>
+
+                <p>
+                    During the day, everyone can discuss the events
+                    of the night, share information, accuse suspects,
+                    and vote.
+                </p>
+
+                <div class="guide-action">
+                    💬 DISCUSS
+                    <span>•</span>
+                    🔍 INVESTIGATE
+                    <span>•</span>
+                    ⚠️ ACCUSE
+                    <span>•</span>
+                    🗳️ VOTE
+                </div>
+            </section>
+
+
+            <!-- ACTION -->
+            <section class="guide-system">
+                <h3>🎯 YOUR ACTION</h3>
+
+                <p>
+                    If your role has an available action:
+                </p>
+
+                <div class="guide-steps">
+                    <div>① SELECT A PLAYER</div>
+                    <div>↓</div>
+                    <div>② CHOOSE YOUR ACTION</div>
+                    <div>↓</div>
+                    <div>③ PRESS CONFIRM</div>
+                </div>
+
+                <div class="guide-warning">
+                    ⚠️ Every action can change the game.
+                </div>
+            </section>
+
+
+            <!-- PLAYERS -->
+            <section class="guide-system">
+                <h3>👥 PLAYERS</h3>
+
+                <span class="guide-status">
+                    DATABASE // ACTIVE PLAYERS
+                </span>
+
+                <p>
+                    The Players List shows everyone currently
+                    in the game.
+                </p>
+
+                <ul>
+                    <li>Living Players</li>
+                    <li>Eliminated Players</li>
+                    <li>Known Roles</li>
+                    <li>Mafia Teammates</li>
+                </ul>
+            </section>
+
+
+            <!-- PUBLIC CHAT -->
+            <section class="guide-system">
+                <h3>💬 PUBLIC CHAT</h3>
+
+                <span class="guide-status">
+                    CHANNEL // EVERYONE
+                </span>
+
+                <p>
+                    Public Chat is visible to everyone in the game.
+                    Use it to discuss, share clues, make accusations,
+                    and defend yourself.
+                </p>
+
+                <div class="guide-special">
+                    💬 EVERY WORD CAN REVEAL A SECRET.
+                </div>
+            </section>
+
+
+            <!-- MAFIA CHAT -->
+            <section class="guide-system">
+                <h3>🔴 MAFIA CHAT</h3>
+
+                <span class="guide-status">
+                    CHANNEL // CLASSIFIED
+                </span>
+
+                <p>
+                    Mafia Chat is private to Mafia-team players.
+                    Use it to communicate with your teammates and
+                    coordinate your night actions.
+                </p>
+
+                <div class="guide-warning">
+                    🔒 CLASSIFIED CHANNEL — TOWN ACCESS DENIED.
+                </div>
+            </section>
+
+
+            <!-- YOUR ROLE -->
+            <section class="guide-system">
+                <h3>🎭 YOUR ROLE</h3>
+
+                <span class="guide-status">
+                    IDENTITY // CLASSIFIED
+                </span>
+
+                <p>
+                    Your role is displayed on the right side
+                    of the screen.
+                </p>
+
+                <div class="guide-role-info">
+                    <span>TEAM</span>
+                    <span>ABILITY</span>
+                    <span>OBJECTIVE</span>
+                    <span>WIN CONDITION</span>
+                </div>
+
+                <div class="guide-warning">
+                    ⚠️ NEVER REVEAL YOUR ROLE WITHOUT A REASON.
+                </div>
+            </section>
+
+
+            <div class="guide-divider"></div>
+
+
+            <!-- FINAL WARNING -->
+            <section class="guide-final">
+                <h3>☠️ FINAL WARNING</h3>
+
+                <div class="guide-final-text">
+                    TRUST NO ONE.<br>
+                    WATCH EVERYONE.<br>
+                    QUESTION EVERYTHING.
+                </div>
+
+                <p>
+                    THE NIGHT HAS EYES.<br>
+                    THE DAY HAS LIES.<br>
+                    THE MAFIA IS AMONG YOU.
+                </p>
+
+                <h2>👑 MAFIA WARS</h2>
+                <strong>⚔️ ONLY THE SURVIVORS WRITE THE STORY.</strong>
+            </section>
 
         </div>
 
+        <button
+            id="closeGuideBottom"
+            class="guide-close-button"
+            type="button"
+        >
+            CLOSE
+        </button>
 
+    </div>
 
+</div>
 
     <!-- =====================================================
          GAME SCREEN
