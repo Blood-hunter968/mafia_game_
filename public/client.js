@@ -377,7 +377,7 @@ function showJoinRequestPopup(data) {
         <div class="join-request-card">
             <div class="request-icon">↻</div>
             <div class="request-kicker">JOIN REQUEST</div>
-            <h2>${escapeHtml(data.playerName || "Player")} wants to join</h2>
+            <h2>${escapeHtml(data.playerName || "Player")} ${userBadgeHtml(data.badge)} wants to join</h2>
             <p>${data.reconnecting ? "They are requesting to reconnect to their old slot." : "They are requesting access to the room."}</p>
             <div class="request-code">ROOM ${escapeHtml(data.roomCode || roomCode)}</div>
             <div class="request-actions">
@@ -827,6 +827,7 @@ function renderPublicMatches(matches) {
         const host = document.createElement("div");
         host.className = "public-match-host";
         host.textContent = `👑 Host: ${match.hostName || "Host"}`;
+        appendUserBadge(host, match.hostBadge);
 
         const joinButton = document.createElement("button");
         joinButton.type = "button";
@@ -1010,6 +1011,8 @@ function renderLobbyPlayers() {
 
         name.textContent =
             player.name;
+
+        appendUserBadge(name, player.badge);
 
         if (
             player.id ===
@@ -1552,7 +1555,7 @@ function isMyActiveNightTurn(turn) {
     // Cupid does not see the Cupid turn photo.
     if (turn === "cupid") {
         const role = String(myRole || "").trim().toLowerCase();
-        return role !== "cupid" && role !== "clupid";
+        return role !== "cupid" && role !== "cupid";
     }
     return false;
 }
@@ -1743,7 +1746,6 @@ function updateRoleDisplay(role) {
         "Detective": getRoleImage("detective"),
         "Doctor": getRoleImage("doctor"),
         "Jester": "jester.png",
-        "Clupid": getRoleImage("cupid"),
         "Cupid": getRoleImage("cupid"),
         "Baby Mafia": getRoleImage("babymafia")
     };
@@ -2408,26 +2410,26 @@ function renderSpecialActions(data) {
     }
 
     /* =====================================================
-       CLUPID
+       CUPID
     ===================================================== */
 
     if (
-        myRole === "Clupid" &&
+        myRole === "Cupid" &&
         data.nightNumber === 1 &&
-        !data.clupidUsed
+        !data.cupidUsed
     ) {
 
         show("loverPanel");
         show("loverButton");
 
-        fillClupidSelect(
+        fillCupidSelect(
             "lover1",
-            data.clupidTargets || []
+            data.cupidTargets || []
         );
 
-        fillClupidSelect(
+        fillCupidSelect(
             "lover2",
-            data.clupidTargets || []
+            data.cupidTargets || []
         );
 
     } else {
@@ -2438,10 +2440,10 @@ function renderSpecialActions(data) {
 }
 
 /* =========================================================
-   CLUPID SELECT
+   CUPID SELECT
 ========================================================= */
 
-function fillClupidSelect(
+function fillCupidSelect(
     id,
     targets
 ) {
@@ -2452,7 +2454,7 @@ function fillClupidSelect(
     if (!select) return;
 
     select.innerHTML =
-        `<option value="">-- Select Clupid --</option>`;
+        `<option value="">-- Select Cupid --</option>`;
 
     targets.forEach(
         targetId =>
@@ -2631,33 +2633,33 @@ function setupGrandmafia() {
 }
 
 /* =========================================================
-   CLUPID BUTTON
+   CUPID BUTTON
 ========================================================= */
 
-function setupClupid() {
+function setupCupid() {
 
     $("loverButton")
         ?.addEventListener(
             "click",
             () => {
 
-                const clupid1 =
+                const cupid1 =
                     $("lover1")?.value;
 
-                const clupid2 =
+                const cupid2 =
                     $("lover2")?.value;
 
-                if (!clupid1 || !clupid2) {
+                if (!cupid1 || !cupid2) {
 
                     alert(
-                        "Choose both clupids!"
+                        "Choose both cupids!"
                     );
 
                     return;
                 }
 
                 if (
-                    clupid1 === clupid2
+                    cupid1 === cupid2
                 ) {
 
                     alert(
@@ -2669,11 +2671,11 @@ function setupClupid() {
 
                 stopLast10Sound();
                 socket.emit(
-                    "clupidChoose",
+                    "cupidChoose",
                     {
                         roomCode,
-                        clupid1,
-                        clupid2
+                        cupid1,
+                        cupid2
                     }
                 );
             }
@@ -2714,7 +2716,7 @@ function updateActionMessage() {
             (currentNightTurn === "mafia" && isMafiaTeamClient(myRole)) ||
             (currentNightTurn === "doctor" && myRole === "Doctor") ||
             (currentNightTurn === "detective" && myRole === "Detective") ||
-            (currentNightTurn === "cupid" && (myRole === "Clupid" || myRole === "Cupid"))
+            (currentNightTurn === "cupid" && (myRole === "Cupid" || myRole === "Cupid"))
         ) {
             message.textContent = `🎯 ${activeRole} turn — make your decision.`;
         } else {
@@ -2786,18 +2788,18 @@ socket.on(
 );
 
 /* =========================================================
-   CLUPID
+   CUPID
 ========================================================= */
 
 socket.on(
-    "clupidConfirmed",
+    "cupidConfirmed",
     message => {
 
         stopLast10Sound();
         if ($("actionMessage")) {
 
             $("actionMessage").textContent =
-                "💕 Clupids linked: " +
+                "💕 Cupids linked: " +
                 message;
         }
     }
@@ -3884,7 +3886,7 @@ document.addEventListener(
 
         setupGrandmafia();
 
-        setupClupid();
+        setupCupid();
 
         setupPublicChat();
 
@@ -4274,6 +4276,7 @@ function renderVoiceParticipants() {
         const name = document.createElement("div");
         name.className = "voice-player-name";
         name.textContent = peer.name || "Player";
+        if (!isGameScreenOpen()) appendUserBadge(name, peer.badge);
 
         // Real WebRTC state for this peer, not just "they're in my channel".
         // This is what tells you whether audio can actually flow.
@@ -4336,7 +4339,10 @@ function renderSpeakerPanel(force = false) {
     if (!force && panel.dataset.signature === signature) {
         voicePeers.forEach(peer => {
             const nameEl = panel.querySelector(`[data-speaker-name="${CSS.escape(peer.id)}"]`);
-            if (nameEl) nameEl.textContent = peer.name || "Player";
+            if (nameEl) {
+                nameEl.textContent = peer.name || "Player";
+                if (!isGameScreenOpen()) appendUserBadge(nameEl, peer.badge);
+            }
         });
         return;
     }
@@ -4360,6 +4366,7 @@ function renderSpeakerPanel(force = false) {
         name.className = "speaker-name";
         name.dataset.speakerName = peer.id;
         name.textContent = peer.name || "Player";
+        if (!isGameScreenOpen()) appendUserBadge(name, peer.badge);
 
         const muteButton = document.createElement("button");
         muteButton.type = "button";
@@ -4618,6 +4625,11 @@ function setAccountInfoOpen(open) {
     info.style.display = canOpen ? "" : "none";
     button.textContent = authState.username ? (canOpen ? "−" : "+") : "SIGN IN";
     button.classList.toggle("account-plus", Boolean(authState.username));
+
+    if (canOpen) {
+        // Refresh the player's permanent points every time ACCOUNT INFO opens.
+        socket.emit("getMyAccountStats");
+    }
 }
 
 function updateAccountChip() {
@@ -4627,7 +4639,10 @@ function updateAccountChip() {
 
     if (authState.username) {
         text.textContent = "👤 Account";
-        if (name) name.textContent = authState.username;
+        if (name) {
+            name.textContent = authState.username;
+            appendUserBadge(name, myBadge);
+        }
     } else {
         text.textContent = "👻 Guest";
         if (name) name.textContent = "";
@@ -4665,6 +4680,10 @@ function showAuthForm(mode) {
     $("authUsername").value = "";
     $("authPassword").value = "";
     $("authPassword").type = "password";
+    if ($("authPin")) {
+        $("authPin").value = "";
+        $("authPin").type = "password";
+    }
     if ($("authTogglePassword")) {
         $("authTogglePassword").textContent = "👁";
         $("authTogglePassword").title = "Show password";
@@ -4677,9 +4696,10 @@ function showAuthForm(mode) {
 function submitAuth() {
     const username = $("authUsername").value.trim();
     const password = $("authPassword").value;
+    const pin = $("authPin")?.value || "";
 
-    if (!username || !password) {
-        setAuthMessage("Enter a username and a password.", "error");
+    if (!username || !password || !pin) {
+        setAuthMessage("Enter your username, password and PIN.", "error");
         return;
     }
 
@@ -4693,10 +4713,15 @@ function submitAuth() {
         return;
     }
 
+    if (!/^\d{4,8}$/.test(pin)) {
+        setAuthMessage("PIN must be 4-8 digits.", "error");
+        return;
+    }
+
     setAuthBusy(true);
     setAuthMessage(authState.mode === "signup" ? "Making your account..." : "Logging in...", "waiting");
 
-    socket.emit(authState.mode === "signup" ? "signUp" : "login", { username, password });
+    socket.emit(authState.mode === "signup" ? "signUp" : "login", { username, password, pin });
 }
 
 /* Fill the name box with the account name (only if it is empty). */
@@ -4763,21 +4788,38 @@ socket.on("connect", () => {
 
 /* ---------- Ranks ---------- */
 
+let ranksCache = [];
+
 function renderRanks(list) {
     const box = $("ranksList");
     const empty = $("ranksEmpty");
     if (!box) return;
 
+    if (Array.isArray(list)) ranksCache = list;
+
     box.innerHTML = "";
 
-    if (!Array.isArray(list) || list.length === 0) {
+    if (ranksCache.length === 0) {
         if (empty) empty.style.display = "";
         return;
     }
 
     if (empty) empty.style.display = "none";
 
-    list.forEach(entry => {
+    const query = ($("ranksSearch")?.value || "").trim().toLowerCase();
+    const shown = ranksCache.filter(entry =>
+        !query || String(entry.username).toLowerCase().includes(query)
+    );
+
+    if (shown.length === 0) {
+        const none = document.createElement("div");
+        none.className = "ranks-empty";
+        none.textContent = "No players found.";
+        box.appendChild(none);
+        return;
+    }
+
+    shown.forEach(entry => {
         const row = document.createElement("div");
         row.className = "rank-row" + (entry.rank <= 3 ? " rank-top-" + entry.rank : "");
 
@@ -4788,6 +4830,7 @@ function renderRanks(list) {
         const name = document.createElement("span");
         name.className = "rank-name";
         name.textContent = entry.username;
+        appendUserBadge(name, entry.badge);
 
         const details = document.createElement("button");
         details.type = "button";
@@ -4797,17 +4840,23 @@ function renderRanks(list) {
             socket.emit("getPlayerStats", { username: entry.username });
         });
 
-        row.append(position, name, details);
+        const points = document.createElement("span");
+        points.className = "rank-points";
+        points.textContent = `${Number(entry.points) || 0} points`;
+
+        row.append(position, name, points, details);
         box.appendChild(row);
     });
 }
 
 socket.on("ranksData", renderRanks);
+$("ranksSearch")?.addEventListener("input", () => renderRanks());
 
 socket.on("playerStatsData", data => {
     if (!data || !data.ok) return;
 
     $("ranksDetailsName").textContent = data.username;
+    appendUserBadge($("ranksDetailsName"), data.badge);
     $("statKills").textContent = data.stats.kills || 0;
     $("statSaves").textContent = data.stats.saves || 0;
     $("statDetects").textContent = data.stats.detects || 0;
@@ -4815,6 +4864,120 @@ socket.on("playerStatsData", data => {
     $("statJesterWins").textContent = data.stats.jesterWins || 0;
 
     $("ranksDetailsOverlay").style.display = "";
+});
+
+/* ---------- Account points card ---------- */
+
+socket.on("myAccountStatsData", data => {
+    if (!data || !data.ok) return;
+
+    const stats = data.stats || {};
+    $("accountPointsTotal").textContent = Number(data.points) || 0;
+    $("accountStatKills").textContent = Number(stats.kills) || 0;
+    $("accountStatSaves").textContent = Number(stats.saves) || 0;
+    $("accountStatDetects").textContent = Number(stats.detects) || 0;
+    $("accountStatCivilianVotes").textContent = Number(stats.civilianVotes) || 0;
+    $("accountStatJesterWins").textContent = Number(stats.jesterWins) || 0;
+});
+
+/* ---------- Account password / delete security ---------- */
+
+let accountSecurityAction = null;
+
+function openAccountSecurity(action) {
+    const overlay = $("accountSecurityOverlay");
+    const pin = $("accountSecurityPin");
+    const title = $("accountSecurityTitle");
+    const text = $("accountSecurityText");
+    const message = $("accountSecurityMessage");
+    const confirm = $("accountSecurityConfirm");
+    if (!overlay || !pin) return;
+
+    accountSecurityAction = action;
+    const deleting = action === "delete";
+    title.textContent = deleting ? "DELETE ACCOUNT" : "ENTER PIN";
+    text.textContent = deleting
+        ? "Enter your PIN to permanently delete your account."
+        : "Enter your PIN to reveal your password.";
+    confirm.textContent = deleting ? "DELETE ACCOUNT" : "SHOW PASSWORD";
+    message.textContent = "";
+    message.className = "account-security-message";
+    pin.value = "";
+    overlay.style.display = "flex";
+    setTimeout(() => pin.focus(), 50);
+}
+
+function closeAccountSecurity() {
+    const overlay = $("accountSecurityOverlay");
+    if (overlay) overlay.style.display = "none";
+    accountSecurityAction = null;
+}
+
+function submitAccountSecurity() {
+    const pin = $("accountSecurityPin")?.value || "";
+    const message = $("accountSecurityMessage");
+    if (!/^\d{4,8}$/.test(pin)) {
+        if (message) {
+            message.textContent = "PIN must be 4-8 digits.";
+            message.className = "account-security-message error";
+        }
+        return;
+    }
+
+    if (accountSecurityAction === "delete") {
+        socket.emit("deleteMyAccount", { pin });
+    } else {
+        socket.emit("showMyPassword", { pin });
+    }
+}
+
+socket.on("showMyPasswordResult", data => {
+    if (!data?.ok) {
+        const message = $("accountSecurityMessage");
+        if (message) {
+            message.textContent = data?.error || "Wrong PIN.";
+            message.className = "account-security-message error";
+        }
+        return;
+    }
+
+    closeAccountSecurity();
+    const password = $("accountPasswordMasked");
+    if (password) {
+        password.textContent = data.password;
+        password.classList.add("account-password-revealed");
+    }
+
+    const button = $("accountShowPasswordButton");
+    if (button) button.textContent = "🔓 PASSWORD SHOWN";
+
+    setTimeout(() => {
+        if (password) {
+            password.textContent = "••••••••";
+            password.classList.remove("account-password-revealed");
+        }
+        if (button) button.textContent = "🔒 SHOW PASSWORD";
+    }, 10000);
+});
+
+socket.on("deleteMyAccountResult", data => {
+    if (!data?.ok) {
+        const message = $("accountSecurityMessage");
+        if (message) {
+            message.textContent = data?.error || "Wrong PIN.";
+            message.className = "account-security-message error";
+        }
+        return;
+    }
+
+    closeAccountSecurity();
+    authState.username = null;
+    saveAuthToken(null);
+    authState.entered = false;
+    updateAccountChip();
+    showAuthToast("Your account has been deleted.");
+    showAuthMenu();
+    setScreen("authScreen");
 });
 
 /* ---------- Buttons ---------- */
@@ -4830,7 +4993,7 @@ document.addEventListener("DOMContentLoaded", () => {
         socket.emit("skipAuth");
     });
 
-    ["authUsername", "authPassword"].forEach(id => {
+    ["authUsername", "authPassword", "authPin"].forEach(id => {
         $(id)?.addEventListener("keydown", event => {
             if (event.key === "Enter") submitAuth();
         });
@@ -4849,6 +5012,17 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     $("accountLogoutButton")?.addEventListener("click", doLogout);
+    $("accountShowPasswordButton")?.addEventListener("click", () => openAccountSecurity("show"));
+    $("accountDeleteButton")?.addEventListener("click", () => openAccountSecurity("delete"));
+    $("accountSecurityCancel")?.addEventListener("click", closeAccountSecurity);
+    $("accountSecurityConfirm")?.addEventListener("click", submitAccountSecurity);
+    $("accountSecurityPin")?.addEventListener("keydown", event => {
+        if (event.key === "Enter") submitAccountSecurity();
+        if (event.key === "Escape") closeAccountSecurity();
+    });
+    $("accountSecurityOverlay")?.addEventListener("click", event => {
+        if (event.target.id === "accountSecurityOverlay") closeAccountSecurity();
+    });
 
     // Show / hide password
     $("authTogglePassword")?.addEventListener("click", () => {
@@ -4893,3 +5067,281 @@ document.addEventListener("DOMContentLoaded", () => {
 
     updateAccountChip();
 });
+
+
+/* =========================================================
+   BADGES (Owner / Admin / Member)
+   Shown next to names everywhere except once the game starts.
+========================================================= */
+
+const BADGE_LABELS = { owner: "Owner", admin: "Admin", member: "Member" };
+const BADGE_STORAGE_KEY = "mafiaWarsBadgeKey";
+let myBadge = "member";
+
+function normalizeBadge(badge) {
+    return BADGE_LABELS[badge] ? badge : "member";
+}
+
+function userBadgeHtml(badge) {
+    const b = normalizeBadge(badge);
+    return `<span class="user-badge ${b}">${BADGE_LABELS[b]}</span>`;
+}
+
+function appendUserBadge(element, badge) {
+    if (!element) return;
+    const b = normalizeBadge(badge);
+    const span = document.createElement("span");
+    span.className = `user-badge ${b}`;
+    span.textContent = BADGE_LABELS[b];
+    element.appendChild(span);
+}
+
+function isGameScreenOpen() {
+    const gameScreen = $("gameScreen");
+    return Boolean(gameScreen && gameScreen.style.display !== "none");
+}
+
+function setMyBadge(badge) {
+    myBadge = normalizeBadge(badge);
+
+    const pill = $("roleSelectBadge");
+    if (pill) {
+        pill.className = `user-badge ${myBadge}`;
+        pill.textContent = BADGE_LABELS[myBadge];
+    }
+
+    if ($("questionsOverlay")?.style.display === "flex") renderQuestions();
+
+    // Keep the account box name in sync (without closing the box).
+    const accountName = $("accountInfoName");
+    if (accountName && typeof authState !== "undefined" && authState.username) {
+        accountName.textContent = authState.username;
+        appendUserBadge(accountName, myBadge);
+    }
+}
+
+function applyBadgeKey(key, done) {
+    socket.emit("badgeApply", { key }, result => {
+        const badge = normalizeBadge(result?.badge);
+
+        try {
+            if (badge === "member") localStorage.removeItem(BADGE_STORAGE_KEY);
+            else localStorage.setItem(BADGE_STORAGE_KEY, key);
+        } catch (error) {}
+
+        setMyBadge(badge);
+        if (done) done(badge);
+    });
+}
+
+// Re-apply the saved key whenever the socket (re)connects.
+socket.on("connect", () => {
+    let saved = "";
+    try { saved = localStorage.getItem(BADGE_STORAGE_KEY) || ""; } catch (error) {}
+    if (saved) applyBadgeKey(saved);
+});
+
+function openRoleSelection() {
+    let overlay = $("roleSelectOverlay");
+
+    if (!overlay) {
+        overlay = document.createElement("div");
+        overlay.id = "roleSelectOverlay";
+        overlay.className = "qa-overlay qa-center";
+        document.body.appendChild(overlay);
+    }
+
+    overlay.innerHTML = `
+        <div class="qa-modal">
+            <h2>Role selection</h2>
+            <p>Enter the owner key or admin key. Any other key gives you the Member role.</p>
+            <input id="roleKeyInput" type="password" autocomplete="off" placeholder="Enter key">
+            <div id="roleKeyResult" class="qa-note"></div>
+            <div class="qa-actions">
+                <button id="roleKeyCancel" type="button">CANCEL</button>
+                <button id="roleKeyConfirm" type="button">CONFIRM</button>
+            </div>
+        </div>
+    `;
+    overlay.style.display = "flex";
+
+    const input = $("roleKeyInput");
+    input.focus();
+
+    const close = () => { overlay.style.display = "none"; };
+
+    const confirm = () => {
+        applyBadgeKey(input.value, badge => {
+            $("roleKeyResult").textContent = `Your role is now ${BADGE_LABELS[badge]}.`;
+            setTimeout(close, 900);
+        });
+    };
+
+    $("roleKeyCancel").addEventListener("click", close);
+    $("roleKeyConfirm").addEventListener("click", confirm);
+    input.addEventListener("keydown", event => { if (event.key === "Enter") confirm(); });
+}
+
+/* =========================================================
+   QUESTIONS (everyone can ask, only the owner can reply)
+========================================================= */
+
+let questionsData = [];
+let openQuestionId = null;
+
+function qaTimeAgo(t) {
+    const minutes = Math.max(1, Math.round((Date.now() - t) / 60000));
+    if (minutes < 60) return `${minutes}m ago`;
+    if (minutes < 1440) return `${Math.round(minutes / 60)}h ago`;
+    return `${Math.round(minutes / 1440)}d ago`;
+}
+
+function openQuestions() {
+    let overlay = $("questionsOverlay");
+
+    if (!overlay) {
+        overlay = document.createElement("div");
+        overlay.id = "questionsOverlay";
+        overlay.className = "qa-overlay";
+        overlay.innerHTML = `
+            <div class="qa-page">
+                <div class="qa-top">
+                    <button id="qaBack" type="button">BACK</button>
+                    <h2>Questions</h2>
+                </div>
+                <div id="qaListView">
+                    <div class="qa-form">
+                        <input id="qaName" maxlength="20" placeholder="Your name">
+                        <input id="qaTitle" maxlength="80" placeholder="Question title">
+                        <textarea id="qaBody" maxlength="500" placeholder="Describe your question"></textarea>
+                        <div id="qaFormNote" class="qa-note"></div>
+                        <button id="qaPost" type="button">POST QUESTION</button>
+                    </div>
+                    <div id="qaList"></div>
+                </div>
+                <div id="qaThread" style="display:none;"></div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+
+        $("qaBack").addEventListener("click", () => {
+            overlay.style.display = "none";
+            socket.emit("questionsLeave");
+        });
+
+        $("qaList").addEventListener("click", event => {
+            const card = event.target.closest(".qa-card");
+            if (!card) return;
+            openQuestionId = Number(card.dataset.id);
+            renderQuestions();
+        });
+
+        $("qaPost").addEventListener("click", () => {
+            const name = $("qaName").value;
+            const title = $("qaTitle").value;
+            const body = $("qaBody").value;
+
+            socket.emit("questionsAsk", { name, title, body }, result => {
+                if (!result?.ok) {
+                    $("qaFormNote").textContent = result?.error || "Could not post your question.";
+                    return;
+                }
+                try { localStorage.setItem("mafiaWarsAskName", name.trim()); } catch (error) {}
+                $("qaTitle").value = "";
+                $("qaBody").value = "";
+                $("qaFormNote").textContent = "Question posted.";
+            });
+        });
+    }
+
+    try { $("qaName").value = $("qaName").value || localStorage.getItem("mafiaWarsAskName") || ""; } catch (error) {}
+
+    openQuestionId = null;
+    $("qaFormNote").textContent = "";
+    overlay.style.display = "flex";
+
+    socket.emit("questionsGet", list => {
+        questionsData = Array.isArray(list) ? list : [];
+        renderQuestions();
+    });
+}
+
+function renderQuestions() {
+    if (!$("qaList")) return;
+
+    const listView = $("qaListView");
+    const thread = $("qaThread");
+    const question = questionsData.find(q => q.id === openQuestionId);
+
+    if (!question) {
+        openQuestionId = null;
+        listView.style.display = "";
+        thread.style.display = "none";
+
+        $("qaList").innerHTML = questionsData
+            .slice()
+            .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.t - a.t)
+            .map(q => `
+                <div class="qa-card" data-id="${q.id}">
+                    ${q.pinned ? '<div class="qa-pin">📌</div>' : ""}
+                    <h3>${escapeHtml(q.title)}${q.replies.length ? '<span class="qa-answered">Answered</span>' : ""}</h3>
+                    <div class="qa-line"><span class="qa-author ${normalizeBadge(q.badge)}">${escapeHtml(q.author)}</span>: ${escapeHtml(q.body)}</div>
+                    <div class="qa-meta">💬 ${q.replies.length} · ${qaTimeAgo(q.t)}</div>
+                </div>
+            `).join("");
+        return;
+    }
+
+    const draft = $("qaReplyText")?.value || "";
+
+    listView.style.display = "none";
+    thread.style.display = "";
+
+    thread.innerHTML = `
+        <button id="qaThreadBack" type="button" class="qa-small-button">BACK</button>
+        <h3 class="qa-thread-title">${escapeHtml(question.title)}</h3>
+        <div class="qa-msg">
+            <span class="qa-author ${normalizeBadge(question.badge)}">${escapeHtml(question.author)}</span>
+            ${userBadgeHtml(question.badge)} <span class="qa-time">${qaTimeAgo(question.t)}</span>
+            <p>${escapeHtml(question.body)}</p>
+        </div>
+        ${question.replies.map(r => `
+            <div class="qa-msg qa-reply">
+                <span class="qa-author owner">Owner</span> <span class="qa-time">${qaTimeAgo(r.t)}</span>
+                <p>${escapeHtml(r.text)}</p>
+            </div>
+        `).join("")}
+        ${myBadge === "owner"
+            ? `<textarea id="qaReplyText" maxlength="500" placeholder="Write a reply"></textarea>
+               <div id="qaReplyNote" class="qa-note"></div>
+               <button id="qaReplySend" type="button">REPLY</button>`
+            : `<p class="qa-note">Only the owner can reply to questions.</p>`}
+    `;
+
+    $("qaThreadBack").addEventListener("click", () => {
+        openQuestionId = null;
+        renderQuestions();
+    });
+
+    if (myBadge === "owner") {
+        $("qaReplyText").value = draft;
+        $("qaReplySend").addEventListener("click", () => {
+            const text = $("qaReplyText").value;
+            socket.emit("questionsReply", { id: openQuestionId, text }, result => {
+                if (!result?.ok) {
+                    $("qaReplyNote").textContent = result?.error || "Could not send the reply.";
+                    return;
+                }
+                $("qaReplyText").value = "";
+            });
+        });
+    }
+}
+
+socket.on("questionsUpdate", list => {
+    questionsData = Array.isArray(list) ? list : [];
+    if ($("questionsOverlay")?.style.display === "flex") renderQuestions();
+});
+
+$("roleSelectButton")?.addEventListener("click", openRoleSelection);
+$("askQuestionButton")?.addEventListener("click", openQuestions);
