@@ -80,6 +80,17 @@
 
                 </div>
 
+                <div class="pin-wrap">
+                    <input
+                        id="authPin"
+                        type="password"
+                        inputmode="numeric"
+                        maxlength="8"
+                        placeholder="PIN (4-8 digits)"
+                        autocomplete="off"
+                    >
+                </div>
+
                 <div id="authMessage" class="auth-message"></div>
 
                 <button id="authSubmitBtn" class="auth-btn">
@@ -108,6 +119,17 @@
             <div class="screen-emblem">🏆</div>
 
             <h1>Mafia Wars Ranks</h1>
+
+            <div class="ranks-guide">
+                <div class="ranks-guide-title">🏆 RANKING</div>
+                <div>🔪 1 Kill = 3 Points</div>
+                <div>🛡️ 1 Save = 1 Point</div>
+                <div>🔎 Detective Check = 2 Points</div>
+                <div>🤡 Jester Win = 4 Points</div>
+                <div>📦 Civilian Correct Mafia Vote = 1 Point</div>
+            </div>
+
+            <input id="ranksSearch" class="ranks-search" type="text" placeholder="🔍 Search players..." autocomplete="off">
 
             <div id="ranksList" class="ranks-list"></div>
 
@@ -179,14 +201,68 @@
             <div id="accountInfo" class="account-info" style="display:none;">
                 <div class="account-info-label">ACCOUNT INFO</div>
                 <div id="accountInfoName" class="account-info-name"></div>
+
+                <div class="account-info-label account-password-label">PASSWORD</div>
+                <div class="account-password-row">
+                    <span id="accountPasswordMasked" class="account-password-masked">••••••••</span>
+                    <button id="accountShowPasswordButton" class="account-show-password" type="button">🔒 SHOW PASSWORD</button>
+                </div>
+
+                <div class="account-points-card">
+                    <div class="account-points-icon">🏆</div>
+                    <div class="account-points-content">
+                        <div class="account-points-label">RANK POINTS</div>
+                        <div id="accountPointsTotal" class="account-points-total">0</div>
+                    </div>
+                </div>
+
+                <div class="account-points-grid">
+                    <div class="account-point-stat"><span>🔪 Kills</span><strong id="accountStatKills">0</strong></div>
+                    <div class="account-point-stat"><span>🛡️ Saves</span><strong id="accountStatSaves">0</strong></div>
+                    <div class="account-point-stat"><span>🔎 Correct Detects</span><strong id="accountStatDetects">0</strong></div>
+                    <div class="account-point-stat"><span>🗳️ Correct Votes</span><strong id="accountStatCivilianVotes">0</strong></div>
+                    <div class="account-point-stat"><span>🤡 Jester Wins</span><strong id="accountStatJesterWins">0</strong></div>
+                </div>
+
+                <div id="accountPointsFormula" class="account-points-formula">
+                    3 per kill · 1 per save · 2 per correct detect · 4 per Jester win · 1 per correct Mafia vote
+                </div>
+
                 <button id="accountLogoutButton" type="button">LOG OUT</button>
+                <button id="accountDeleteButton" class="account-delete-button" type="button">🗑️ DELETE ACCOUNT</button>
             </div>
 
         </div>
 
-        <button id="ranksButton" class="ranks-top-button" type="button">
-            🏆 RANKS
-        </button>
+        <!-- Account PIN security dialog -->
+        <div id="accountSecurityOverlay" class="account-security-overlay" style="display:none;">
+            <div class="account-security-card">
+                <div class="account-security-title" id="accountSecurityTitle">ENTER PIN</div>
+                <div class="account-security-text" id="accountSecurityText">Enter your PIN to continue.</div>
+                <input id="accountSecurityPin" type="password" inputmode="numeric" maxlength="8" placeholder="Enter PIN" autocomplete="off">
+                <div id="accountSecurityMessage" class="account-security-message"></div>
+                <div class="account-security-actions">
+                    <button id="accountSecurityCancel" type="button">CANCEL</button>
+                    <button id="accountSecurityConfirm" type="button">CONTINUE</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="home-top-actions">
+
+            <button id="askQuestionButton" class="ranks-top-button" type="button">
+                ❓ ASK QUESTION
+            </button>
+
+            <button id="roleSelectButton" class="ranks-top-button" type="button">
+                🎖 ROLE SELECTION <span id="roleSelectBadge" class="user-badge member">Member</span>
+            </button>
+
+            <button id="ranksButton" class="ranks-top-button" type="button">
+                🏆 RANKS
+            </button>
+
+        </div>
 
         <div class="home-container">
 
@@ -521,12 +597,12 @@
                 </label>
 
 
-                <!-- CLUPID -->
-                <!-- FIX: id changed from "clupidCount" to "loverCount"
+                <!-- CUPID -->
+                <!-- FIX: id changed from "cupidCount" to "loverCount"
                      so it matches what client.js reads via $("loverCount") -->
 
                 <label>
-                    clupid
+                    cupid
 
                     <input
                         id="loverCount"
@@ -1160,7 +1236,7 @@
                     </button>
 
 
-                    <!-- CLUPID / LOVER -->
+                    <!-- CUPID / LOVER -->
 
                     <div
                         id="loverPanel"
@@ -1178,7 +1254,7 @@
                         <select id="lover1">
 
                             <option value="">
-                                -- Select clupid --
+                                -- Select cupid --
                             </option>
 
                         </select>
@@ -1186,7 +1262,7 @@
                         <select id="lover2">
 
                             <option value="">
-                                -- Select clupid --
+                                -- Select cupid --
                             </option>
 
                         </select>
@@ -1198,7 +1274,7 @@
                         id="loverButton"
                         style="display:none;"
                     >
-                        💕 LINK CLUPID
+                        💕 LINK CUPID
                     </button>
 
 
