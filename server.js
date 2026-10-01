@@ -92,6 +92,42 @@ function hashPassword(password, salt) {
     });
 }
 
+function isValidPin(pin) {
+    return /^\d{4,8}$/.test(String(pin || ""));
+}
+
+function encryptPassword(password, pin, saltHex) {
+    const key = crypto.scryptSync(String(pin), Buffer.from(saltHex, "hex"), 32);
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+    const ciphertext = Buffer.concat([cipher.update(String(password), "utf8"), cipher.final()]);
+    return {
+        iv: iv.toString("hex"),
+        tag: cipher.getAuthTag().toString("hex"),
+        ciphertext: ciphertext.toString("hex")
+    };
+}
+
+function decryptPassword(user, pin) {
+    if (!user?.passwordEncrypted?.salt || !user.passwordEncrypted.iv || !user.passwordEncrypted.tag || !user.passwordEncrypted.ciphertext) {
+        return null;
+    }
+
+    const encrypted = user.passwordEncrypted;
+    const key = crypto.scryptSync(String(pin), Buffer.from(encrypted.salt, "hex"), 32);
+    const decipher = crypto.createDecipheriv(
+        "aes-256-gcm",
+        key,
+        Buffer.from(encrypted.iv, "hex")
+    );
+    decipher.setAuthTag(Buffer.from(encrypted.tag, "hex"));
+    const plaintext = Buffer.concat([
+        decipher.update(Buffer.from(encrypted.ciphertext, "hex")),
+        decipher.final()
+    ]);
+    return plaintext.toString("utf8");
+}
+
 function isValidUsername(name) {
     return /^[A-Za-z0-9_]{3,20}$/.test(name);
 }
@@ -100,8 +136,15 @@ function emptyStats() {
     return { kills: 0, saves: 0, detects: 0, civilianVotes: 0, jesterWins: 0 };
 }
 
+/* Points per action: 1 kill = 3, 1 save = 1, 1 detective check = 2,
+   1 Jester win = 4, 1 civilian correct Mafia vote = 1. */
+const POINT_VALUES = { kills: 3, saves: 1, detects: 2, jesterWins: 4, civilianVotes: 1 };
+
 function totalStats(stats) {
-    return STAT_KEYS.reduce((sum, key) => sum + (Number(stats?.[key]) || 0), 0);
+    return STAT_KEYS.reduce(
+        (sum, key) => sum + (Number(stats?.[key]) || 0) * (POINT_VALUES[key] || 0),
+        0
+    );
 }
 
 /* Adds +1 to one stat of an ACCOUNT player. Skip players are ignored. */
@@ -117,11 +160,27 @@ function recordStat(player, stat) {
     saveAccounts();
 }
 
+/* Saves the socket's current badge on its account (shown on the Ranks screen). */
+function syncAccountBadge(socket, force) {
+    const key = socketAccounts.get(socket.id);
+    const user = key ? accountsDb.users[key] : null;
+    if (!user) return;
+
+    const badge = socket.badge || "member";
+    if (!force && badge === "member") return;
+
+    if ((user.badge || "member") !== badge) {
+        user.badge = badge;
+        saveAccounts();
+    }
+}
+
 /* Names only. Accounts only. Skip players never appear here. */
 function getRanksList() {
     return Object.values(accountsDb.users)
         .map(user => ({
             username: user.username,
+            badge: user.badge || "member",
             total: totalStats(user.stats)
         }))
         .sort((a, b) =>
@@ -131,7 +190,9 @@ function getRanksList() {
         .slice(0, 100)
         .map((user, index) => ({
             rank: index + 1,
-            username: user.username
+            username: user.username,
+            badge: user.badge,
+            points: user.total
         }));
 }
 
@@ -140,6 +201,7 @@ function loginSocket(socket, accountKey, silent) {
     if (!user) return false;
 
     socketAccounts.set(socket.id, accountKey);
+    syncAccountBadge(socket, false);
 
     const token = crypto.randomBytes(24).toString("hex");
     accountSessions.set(token, accountKey);
@@ -173,7 +235,8 @@ function getPublicMatches() {
             return {
                 roomCode,
                 playerCount: connectedPlayers.length,
-                hostName: connectedPlayers.find(player => player.id === room.host)?.name || connectedPlayers[0]?.name || "Host"
+                hostName: connectedPlayers.find(player => player.id === room.host)?.name || connectedPlayers[0]?.name || "Host",
+                hostBadge: getBadgeOf(connectedPlayers.find(player => player.id === room.host)?.id || connectedPlayers[0]?.id)
             };
         })
         .sort((a, b) => b.playerCount - a.playerCount);
@@ -272,7 +335,7 @@ function hasLivingRoleForTurn(room, turn) {
 
     if (turn === "cupid") {
         return room.nightNumber === 1 && room.players.some(
-            p => p.alive && p.connected !== false && p.role === "Clupid"
+            p => p.alive && p.connected !== false && p.role === "Cupid"
         );
     }
 
@@ -397,11 +460,11 @@ function currentTurnActionsDone(room) {
     }
 
     if (turn === "cupid") {
-        const clupids = room.players.filter(
-            p => p.alive && p.connected !== false && p.role === "Clupid"
+        const cupids = room.players.filter(
+            p => p.alive && p.connected !== false && p.role === "Cupid"
         );
-        return !clupids.some(
-            p => !room.nightActions.clupid[p.id]
+        return !cupids.some(
+            p => !room.nightActions.cupid[p.id]
         );
     }
 
@@ -555,7 +618,7 @@ function assignRoles(players, settings) {
     }
 
     for (let i = 0; i < settings.lover; i++) {
-        roles.push("Clupid");
+        roles.push("Cupid");
     }
 
     for (let i = 0; i < settings.civilian; i++) {
@@ -584,7 +647,7 @@ function resetNightActions(room) {
         grandmafia: {},
         doctor: {},
         detective: {},
-        clupid: {}
+        cupid: {}
     };
 }
 function resetGameState(room) {
@@ -607,8 +670,8 @@ function resetGameState(room) {
         playersVotedOut: 0
     };
 
-    room.clupidUsed = {};
-    room.clupidPairs = {};
+    room.cupidUsed = {};
+    room.cupidPairs = {};
 
     room.votes = {};
 
@@ -646,6 +709,7 @@ function getPublicPlayers(room, viewer) {
             return {
                 id: player.id,
                 name: player.name,
+                badge: getBadgeOf(player.id),
                 alive: player.alive,
                 role: visibleRole,
                 connected: true
@@ -799,19 +863,19 @@ function getGrandmafiaTargets(room, player) {
 }
 
 /* =========================================================
-   CLUPID TARGETS
+   CUPID TARGETS
 ========================================================= */
 
-function getClupidTargets(room, player) {
+function getCupidTargets(room, player) {
 
     if (
         !room ||
         !player ||
         !player.alive ||
-        player.role !== "Clupid" ||
+        player.role !== "Cupid" ||
         room.nightTurn !== "cupid" ||
         room.nightNumber !== 1 ||
-        room.clupidUsed[player.id]
+        room.cupidUsed[player.id]
     ) {
         return [];
     }
@@ -825,20 +889,20 @@ function getClupidTargets(room, player) {
 }
 
 /* =========================================================
-   LINK CLUPIDS
+   LINK CUPIDS
 ========================================================= */
 
-function linkClupids(room, a, b) {
+function linkCupids(room, a, b) {
 
-    room.clupidPairs[a] = b;
-    room.clupidPairs[b] = a;
+    room.cupidPairs[a] = b;
+    room.cupidPairs[b] = a;
 }
 
 /* =========================================================
-   ELIMINATE PLAYER + CLUPID + GODFATHER
+   ELIMINATE PLAYER + CUPID + GODFATHER
 ========================================================= */
 
-function eliminatePlayerWithClupid(room, player) {
+function eliminatePlayerWithCupid(room, player) {
 
     if (!player || !player.alive) {
         return [];
@@ -851,11 +915,11 @@ function eliminatePlayerWithClupid(room, player) {
     eliminated.push(player);
 
     /* =========================
-       CLUPID
+       CUPID
     ========================= */
 
     const partnerId =
-        room.clupidPairs[player.id];
+        room.cupidPairs[player.id];
 
     if (partnerId) {
 
@@ -1017,9 +1081,9 @@ function sendGameInformation(roomCode) {
                 grandmafiaUsed:
                     room.grandmafiaUsed,
 
-                clupidUsed:
+                cupidUsed:
                     Boolean(
-                        room.clupidUsed[player.id]
+                        room.cupidUsed[player.id]
                     ),
 
                 doctorUsed:
@@ -1044,8 +1108,8 @@ function sendGameInformation(roomCode) {
                         player
                     ),
 
-                clupidTargets:
-                    getClupidTargets(
+                cupidTargets:
+                    getCupidTargets(
                         room,
                         player
                     )
@@ -1090,7 +1154,7 @@ function checkWinner(roomCode) {
        JESTER WIN
 
        The Jester wins immediately if they are eliminated
-       for ANY reason: daytime vote, night kill, Clupid
+       for ANY reason: daytime vote, night kill, Cupid
        chain, or another existing elimination mechanic.
 
        This check MUST happen before Mafia/Civilian wins.
@@ -1296,22 +1360,22 @@ function allRequiredNightActionsDone(room) {
     }
 
     /* =========================
-       CLUPID
+       CUPID
     ========================= */
 
     if (room.nightNumber === 1) {
 
-        const clupids =
+        const cupids =
             room.players.filter(
                 p =>
                     p.alive &&
-                    p.role === "Clupid"
+                    p.role === "Cupid"
             );
 
         if (
-            clupids.some(
+            cupids.some(
                 p =>
-                    !room.nightActions.clupid[p.id]
+                    !room.nightActions.cupid[p.id]
             )
         ) {
             return false;
@@ -1406,23 +1470,23 @@ function endNight(roomCode) {
     }
 
     /* =====================================================
-       CLUPIDS
+       CUPIDS
     ===================================================== */
 
     if (room.nightNumber === 1) {
 
-        const clupids =
+        const cupids =
             room.players.filter(
                 p =>
                     p.alive &&
-                    p.role === "Clupid"
+                    p.role === "Cupid"
             );
 
-        for (const clupid of clupids) {
+        for (const cupid of cupids) {
 
             const action =
-                room.nightActions.clupid[
-                    clupid.id
+                room.nightActions.cupid[
+                    cupid.id
                 ];
 
             if (!action) continue;
@@ -1445,18 +1509,18 @@ function endNight(roomCode) {
                 first.alive &&
                 second.alive &&
                 first.id !== second.id &&
-                first.id !== clupid.id &&
-                second.id !== clupid.id
+                first.id !== cupid.id &&
+                second.id !== cupid.id
             ) {
 
-                linkClupids(
+                linkCupids(
                     room,
                     first.id,
                     second.id
                 );
 
-                io.to(clupid.id).emit(
-                    "clupidConfirmed",
+                io.to(cupid.id).emit(
+                    "cupidConfirmed",
                     `${first.name} ❤️ ${second.name}`
                 );
             }
@@ -1575,7 +1639,7 @@ function endNight(roomCode) {
             ) {
 
                 eliminatedPlayers =
-                    eliminatePlayerWithClupid(
+                    eliminatePlayerWithCupid(
                         room,
                         attacker
                     );
@@ -1595,7 +1659,7 @@ function endNight(roomCode) {
         ) {
 
             eliminatedPlayers =
-                eliminatePlayerWithClupid(
+                eliminatePlayerWithCupid(
                     room,
                     target
                 );
@@ -1920,7 +1984,7 @@ function endVoting(roomCode) {
     }
 
     const eliminatedPlayers =
-        eliminatePlayerWithClupid(
+        eliminatePlayerWithCupid(
             room,
             eliminatedPlayer
         );
@@ -2011,7 +2075,7 @@ function getVoiceGroup(room, player) {
         if (room.nightTurn === "mafia" && isMafiaTeam(player.role)) return "mafia";
         if (room.nightTurn === "doctor" && player.role === "Doctor") return "doctor";
         if (room.nightTurn === "detective" && player.role === "Detective") return "detective";
-        if (room.nightTurn === "cupid" && player.role === "Clupid") return "cupid";
+        if (room.nightTurn === "cupid" && player.role === "Cupid") return "cupid";
         return "silent";
     }
 
@@ -2031,6 +2095,7 @@ function getVoicePeers(room, player) {
         .map(other => ({
             id: other.id,
             name: other.name,
+            badge: getBadgeOf(other.id),
             alive: other.alive,
             role: group === "mafia" && isMafiaTeam(other.role) ? other.role : null
         }));
@@ -2082,17 +2147,17 @@ function migratePlayerReferences(room, oldId, newId) {
         if (room.votes[key] === oldId) room.votes[key] = newId;
     });
 
-    // Clupid maps
-    if (room.clupidUsed && Object.prototype.hasOwnProperty.call(room.clupidUsed, oldId)) {
-        room.clupidUsed[newId] = room.clupidUsed[oldId];
-        delete room.clupidUsed[oldId];
+    // Cupid maps
+    if (room.cupidUsed && Object.prototype.hasOwnProperty.call(room.cupidUsed, oldId)) {
+        room.cupidUsed[newId] = room.cupidUsed[oldId];
+        delete room.cupidUsed[oldId];
     }
-    if (room.clupidPairs && Object.prototype.hasOwnProperty.call(room.clupidPairs, oldId)) {
-        room.clupidPairs[newId] = room.clupidPairs[oldId];
-        delete room.clupidPairs[oldId];
+    if (room.cupidPairs && Object.prototype.hasOwnProperty.call(room.cupidPairs, oldId)) {
+        room.cupidPairs[newId] = room.cupidPairs[oldId];
+        delete room.cupidPairs[oldId];
     }
-    Object.keys(room.clupidPairs || {}).forEach(key => {
-        if (room.clupidPairs[key] === oldId) room.clupidPairs[key] = newId;
+    Object.keys(room.cupidPairs || {}).forEach(key => {
+        if (room.cupidPairs[key] === oldId) room.cupidPairs[key] = newId;
     });
 
     if (room.grandmafiaTarget === oldId) {
@@ -2119,10 +2184,75 @@ function emitHostJoinRequest(roomCode, request) {
     io.to(host.id).emit("joinRequest", {
         requestId: request.requestId,
         playerName: request.playerName,
+        badge: getBadgeOf(request.socketId),
         roomCode,
         reconnecting: Boolean(request.oldPlayerId),
         message: `${request.playerName} wants to join`
     });
+}
+
+/* =========================================================
+   BADGES (Owner / Admin / Member) + QUESTIONS
+   - Badge is stored on the socket, so it cannot be faked by the browser
+   - Questions are saved in ./data/questions.json (same DATA_DIR as accounts)
+========================================================= */
+
+const OWNER_BADGE_KEY = "Pakistan@143";
+const ADMIN_BADGE_KEY = "Saudi_arabia@968";
+const QUESTIONS_FILE = path.join(DATA_DIR, "questions.json");
+const QUESTIONS_WATCHERS = "qa:watchers";
+
+function getBadgeOf(socketId) {
+    return io.sockets.sockets.get(socketId)?.badge || "member";
+}
+
+let questionsDb = [];
+
+try {
+    if (fs.existsSync(QUESTIONS_FILE)) {
+        const parsed = JSON.parse(fs.readFileSync(QUESTIONS_FILE, "utf8"));
+        if (Array.isArray(parsed)) questionsDb = parsed;
+    }
+} catch (error) {
+    console.error("Could not load questions file:", error);
+    questionsDb = [];
+}
+
+if (!questionsDb.length) {
+    questionsDb.push({
+        id: 1,
+        pinned: true,
+        title: "Your Questions!",
+        author: "Owner",
+        badge: "owner",
+        body: "Feel free to post your questions here. Only the owner can reply.",
+        t: Date.now(),
+        replies: []
+    });
+}
+
+let questionsSaveTimer = null;
+
+function writeQuestionsNow() {
+    try {
+        const tempFile = QUESTIONS_FILE + ".tmp";
+        fs.writeFileSync(tempFile, JSON.stringify(questionsDb));
+        fs.renameSync(tempFile, QUESTIONS_FILE);
+    } catch (error) {
+        console.error("Could not save questions file:", error);
+    }
+}
+
+function saveQuestions() {
+    if (questionsSaveTimer) return;
+    questionsSaveTimer = setTimeout(() => {
+        questionsSaveTimer = null;
+        writeQuestionsNow();
+    }, 300);
+}
+
+function emitQuestionsUpdate() {
+    io.to(QUESTIONS_WATCHERS).emit("questionsUpdate", questionsDb);
 }
 
 /* =========================================================
@@ -2139,6 +2269,100 @@ io.on(
         );
 
         /* =================================================
+           BADGES + QUESTIONS
+        ================================================= */
+
+        socket.badge = "member";
+
+        socket.on("badgeApply", (data, callback) => {
+            const key = String(data?.key ?? "");
+
+            socket.badge =
+                key === OWNER_BADGE_KEY ? "owner" :
+                key === ADMIN_BADGE_KEY ? "admin" :
+                "member";
+
+            syncAccountBadge(socket, true);
+
+            if (typeof callback === "function") {
+                callback({ badge: socket.badge });
+            }
+        });
+
+        socket.on("questionsGet", callback => {
+            socket.join(QUESTIONS_WATCHERS);
+            if (typeof callback === "function") callback(questionsDb);
+        });
+
+        socket.on("questionsLeave", () => {
+            socket.leave(QUESTIONS_WATCHERS);
+        });
+
+        socket.on("questionsAsk", (data, callback) => {
+            const reply = result => {
+                if (typeof callback === "function") callback(result);
+            };
+
+            const name = String(data?.name || "").trim().slice(0, 20);
+            const title = String(data?.title || "").trim().slice(0, 80);
+            const body = String(data?.body || "").trim().slice(0, 500);
+
+            if (!name || !title || !body) {
+                return reply({ ok: false, error: "Fill in your name, title and details." });
+            }
+
+            if (Date.now() - (socket.lastQuestionAt || 0) < 5000) {
+                return reply({ ok: false, error: "Please wait a few seconds before asking again." });
+            }
+
+            socket.lastQuestionAt = Date.now();
+
+            questionsDb.push({
+                id: Date.now() + Math.floor(Math.random() * 1000),
+                pinned: false,
+                title,
+                author: name,
+                badge: socket.badge || "member",
+                body,
+                t: Date.now(),
+                replies: []
+            });
+
+            if (questionsDb.length > 500) {
+                const oldest = questionsDb.findIndex(q => !q.pinned);
+                if (oldest !== -1) questionsDb.splice(oldest, 1);
+            }
+
+            saveQuestions();
+            emitQuestionsUpdate();
+            reply({ ok: true });
+        });
+
+        socket.on("questionsReply", (data, callback) => {
+            const reply = result => {
+                if (typeof callback === "function") callback(result);
+            };
+
+            // Only the owner can reply.
+            if (socket.badge !== "owner") {
+                return reply({ ok: false, error: "Only the owner can reply." });
+            }
+
+            const question = questionsDb.find(q => q.id === data?.id);
+            const text = String(data?.text || "").trim().slice(0, 500);
+
+            if (!question || !text) {
+                return reply({ ok: false, error: "Write a reply first." });
+            }
+
+            question.replies.push({ text, t: Date.now() });
+
+            saveQuestions();
+            emitQuestionsUpdate();
+            reply({ ok: true });
+        });
+
+        /* =================================================
            ACCOUNTS: SIGN UP / LOGIN / SKIP / RANKS
         ================================================= */
 
@@ -2146,6 +2370,7 @@ io.on(
             try {
                 const username = String(data?.username || "").trim();
                 const password = String(data?.password || "");
+                const pin = String(data?.pin || "");
 
                 if (!isValidUsername(username)) {
                     return socket.emit("authResult", {
@@ -2161,6 +2386,13 @@ io.on(
                     });
                 }
 
+                if (!isValidPin(pin)) {
+                    return socket.emit("authResult", {
+                        ok: false,
+                        error: "PIN must be 4-8 digits."
+                    });
+                }
+
                 const key = username.toLowerCase();
 
                 if (accountsDb.users[key]) {
@@ -2172,6 +2404,12 @@ io.on(
 
                 const salt = crypto.randomBytes(16).toString("hex");
                 const hash = await hashPassword(password, salt);
+                const pinSalt = crypto.randomBytes(16).toString("hex");
+                const pinHash = await hashPassword(pin, pinSalt);
+                const passwordEncrypted = {
+                    salt: pinSalt,
+                    ...encryptPassword(password, pin, pinSalt)
+                };
 
                 // Check again: someone may have taken it while hashing.
                 if (accountsDb.users[key]) {
@@ -2185,6 +2423,9 @@ io.on(
                     username,
                     salt,
                     hash,
+                    pinSalt,
+                    pinHash,
+                    passwordEncrypted,
                     created: Date.now(),
                     stats: emptyStats()
                 };
@@ -2213,22 +2454,43 @@ io.on(
 
                 const username = String(data?.username || "").trim();
                 const password = String(data?.password || "");
+                const pin = String(data?.pin || "");
                 const key = username.toLowerCase();
                 const user = accountsDb.users[key];
 
-                let valid = false;
+                let validPassword = false;
+                let validPin = false;
 
                 if (user && password.length <= 72) {
                     const attempt = await hashPassword(password, user.salt);
                     const a = Buffer.from(attempt, "hex");
                     const b = Buffer.from(user.hash, "hex");
-                    valid = a.length === b.length && crypto.timingSafeEqual(a, b);
+                    validPassword = a.length === b.length && crypto.timingSafeEqual(a, b);
                 } else {
                     // Same amount of work for unknown users.
                     await hashPassword(password.slice(0, 72), "0000000000000000");
                 }
 
-                if (!valid) {
+                if (user && isValidPin(pin)) {
+                    if (user.pinHash && user.pinSalt) {
+                        const pinAttempt = await hashPassword(pin, user.pinSalt);
+                        const a = Buffer.from(pinAttempt, "hex");
+                        const b = Buffer.from(user.pinHash, "hex");
+                        validPin = a.length === b.length && crypto.timingSafeEqual(a, b);
+                    } else if (validPassword) {
+                        // Backwards-compatible migration for accounts created before PIN support.
+                        user.pinSalt = crypto.randomBytes(16).toString("hex");
+                        user.pinHash = await hashPassword(pin, user.pinSalt);
+                        user.passwordEncrypted = {
+                            salt: user.pinSalt,
+                            ...encryptPassword(password, pin, user.pinSalt)
+                        };
+                        saveAccounts();
+                        validPin = true;
+                    }
+                }
+
+                if (!validPassword || !validPin) {
                     socket.data.authFails = (socket.data.authFails || 0) + 1;
 
                     if (socket.data.authFails >= 5) {
@@ -2238,7 +2500,7 @@ io.on(
 
                     return socket.emit("authResult", {
                         ok: false,
-                        error: "Wrong username or password."
+                        error: !validPassword ? "Wrong username or password." : "Wrong PIN."
                     });
                 }
 
@@ -2266,6 +2528,7 @@ io.on(
             }
 
             socketAccounts.set(socket.id, key);
+            syncAccountBadge(socket, false);
 
             socket.emit("authResult", {
                 ok: true,
@@ -2308,8 +2571,110 @@ io.on(
             socket.emit("playerStatsData", {
                 ok: true,
                 username: user.username,
+                badge: user.badge || "member",
+                points: totalStats(user.stats),
                 stats: { ...emptyStats(), ...(user.stats || {}) }
             });
+        });
+
+        /* Current signed-in player's own points/statistics for ACCOUNT INFO. */
+        socket.on("getMyAccountStats", () => {
+            const key = getSocketAccountKey(socket);
+            const user = key ? accountsDb.users[key] : null;
+
+            if (!user) {
+                return socket.emit("myAccountStatsData", { ok: false });
+            }
+
+            socket.emit("myAccountStatsData", {
+                ok: true,
+                points: totalStats(user.stats),
+                stats: { ...emptyStats(), ...(user.stats || {}) }
+            });
+        });
+
+        /* Password reveal: the PIN is checked server-side before the password is decrypted. */
+        socket.on("showMyPassword", async data => {
+            try {
+                const key = getSocketAccountKey(socket);
+                const user = key ? accountsDb.users[key] : null;
+                const pin = String(data?.pin || "");
+
+                if (!user || !isValidPin(pin)) {
+                    return socket.emit("showMyPasswordResult", { ok: false, error: "Wrong PIN." });
+                }
+
+                if (!user.pinHash || !user.pinSalt) {
+                    return socket.emit("showMyPasswordResult", { ok: false, error: "This account needs to be signed in again with a PIN." });
+                }
+
+                const attempt = await hashPassword(pin, user.pinSalt);
+                const a = Buffer.from(attempt, "hex");
+                const b = Buffer.from(user.pinHash, "hex");
+                const valid = a.length === b.length && crypto.timingSafeEqual(a, b);
+
+                if (!valid) {
+                    return socket.emit("showMyPasswordResult", { ok: false, error: "Wrong PIN." });
+                }
+
+                let password = null;
+                try {
+                    password = decryptPassword(user, pin);
+                } catch (_) {
+                    password = null;
+                }
+
+                if (!password) {
+                    return socket.emit("showMyPasswordResult", { ok: false, error: "Password is not available for this account yet. Log in once with your PIN to secure it." });
+                }
+
+                socket.emit("showMyPasswordResult", { ok: true, password });
+            } catch (error) {
+                console.error("showMyPassword error:", error);
+                socket.emit("showMyPasswordResult", { ok: false, error: "Could not show the password." });
+            }
+        });
+
+        socket.on("deleteMyAccount", async data => {
+            try {
+                const key = getSocketAccountKey(socket);
+                const user = key ? accountsDb.users[key] : null;
+                const pin = String(data?.pin || "");
+
+                if (!user || !isValidPin(pin) || !user.pinHash || !user.pinSalt) {
+                    return socket.emit("deleteMyAccountResult", { ok: false, error: "Wrong PIN." });
+                }
+
+                const attempt = await hashPassword(pin, user.pinSalt);
+                const a = Buffer.from(attempt, "hex");
+                const b = Buffer.from(user.pinHash, "hex");
+                const valid = a.length === b.length && crypto.timingSafeEqual(a, b);
+
+                if (!valid) {
+                    return socket.emit("deleteMyAccountResult", { ok: false, error: "Wrong PIN." });
+                }
+
+                // Remove this account from any current room player records without deleting the player.
+                for (const room of Object.values(rooms)) {
+                    if (!room?.players) continue;
+                    for (const player of room.players) {
+                        if (player.account === key) player.account = null;
+                    }
+                }
+
+                for (const [token, accountKey] of accountSessions.entries()) {
+                    if (accountKey === key) accountSessions.delete(token);
+                }
+
+                delete accountsDb.users[key];
+                socketAccounts.delete(socket.id);
+                saveAccounts();
+
+                socket.emit("deleteMyAccountResult", { ok: true });
+            } catch (error) {
+                console.error("deleteMyAccount error:", error);
+                socket.emit("deleteMyAccountResult", { ok: false, error: "Could not delete the account." });
+            }
         });
 
         socket.on("disconnect", () => {
@@ -2454,10 +2819,10 @@ io.on(
                     nightNumber:
                         1,
 
-                    clupidUsed:
+                    cupidUsed:
                         {},
 
-                    clupidPairs:
+                    cupidPairs:
                         {},
 
                     nightActions: {
@@ -2465,7 +2830,7 @@ io.on(
                         grandmafia: {},
                         doctor: {},
                         detective: {},
-                        clupid: {}
+                        cupid: {}
                     },
 
                     votes:
@@ -2957,7 +3322,7 @@ io.on(
 
                     return socket.emit(
                         "gameError",
-                        "You can have at most 1 Clupid!"
+                        "You can have at most 1 Cupid!"
                     );
                 }
 
@@ -2997,9 +3362,9 @@ room.stats = {
     playersVotedOut: 0
 };
 
-room.clupidUsed = {};
+room.cupidUsed = {};
 
-room.clupidPairs = {};
+room.cupidPairs = {};
 
 room.votes = {};
 
@@ -3225,11 +3590,11 @@ assignRoles(
         );
 
         /* =================================================
-           CLUPID CHOOSE
+           CUPID CHOOSE
         ================================================= */
 
         socket.on(
-            "clupidChoose",
+            "cupidChoose",
             data => {
 
                 const room =
@@ -3249,35 +3614,35 @@ assignRoles(
 
                     return socket.emit(
                         "actionError",
-                        "Clupid can only choose on Night 1!"
+                        "Cupid can only choose on Night 1!"
                     );
                 }
 
-                const clupid =
+                const cupid =
                     room.players.find(
                         p =>
                             p.id === socket.id &&
                             p.alive &&
-                            p.role === "Clupid"
+                            p.role === "Cupid"
                     );
 
-                if (!clupid) {
+                if (!cupid) {
 
                     return socket.emit(
                         "actionError",
-                        "Only the Clupid can use this ability!"
+                        "Only the Cupid can use this ability!"
                     );
                 }
 
                 if (
-                    room.clupidUsed[
+                    room.cupidUsed[
                         socket.id
                     ]
                 ) {
 
                     return socket.emit(
                         "actionError",
-                        "You already linked the clupids!"
+                        "You already linked the cupids!"
                     );
                 }
 
@@ -3285,14 +3650,14 @@ assignRoles(
                     room.players.find(
                         p =>
                             p.id ===
-                            data.clupid1
+                            data.cupid1
                     );
 
                 const second =
                     room.players.find(
                         p =>
                             p.id ===
-                            data.clupid2
+                            data.cupid2
                     );
 
                 if (
@@ -3338,7 +3703,7 @@ assignRoles(
                     );
                 }
 
-                room.nightActions.clupid[
+                room.nightActions.cupid[
                     socket.id
                 ] = {
                     firstId:
@@ -3348,12 +3713,12 @@ assignRoles(
                         second.id
                 };
 
-                room.clupidUsed[
+                room.cupidUsed[
                     socket.id
                 ] = true;
 
                 socket.emit(
-                    "clupidConfirmed",
+                    "cupidConfirmed",
                     `${first.name} ❤️ ${second.name}`
                 );
 
@@ -3517,8 +3882,12 @@ assignRoles(
 
                 room.stats.detectiveInvestigations += 1;
 
-                // Permanent stat: one detect per investigation.
-                recordStat(detective, "detects");
+                const detectiveFoundMafia = isDetectiveMafia(target.role);
+
+                // Permanent stat: only a CORRECT Detective Mafia result earns points.
+                if (detectiveFoundMafia) {
+                    recordStat(detective, "detects");
+                }
 
                 socket.emit(
                     "detectiveResult",
@@ -3527,9 +3896,7 @@ assignRoles(
                             target.name,
 
                         result:
-                            isDetectiveMafia(
-                                target.role
-                            )
+                            detectiveFoundMafia
                                 ? "MAFIA"
                                 : "NOT MAFIA",
 
@@ -3634,8 +4001,8 @@ assignRoles(
                 ] =
                     target.id;
 
-                // Permanent stat: a vote cast by a Civilian.
-                if (voter.role === "Civilian") {
+                // Permanent stat: a Civilian voting for a Mafia member (correct vote).
+                if (voter.role === "Civilian" && isMafiaTeam(target.role)) {
                     recordStat(voter, "civilianVotes");
                 }
 
