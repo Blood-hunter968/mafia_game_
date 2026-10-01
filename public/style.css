@@ -4737,6 +4737,7 @@ button {
 
 @media (max-width: 600px) {
     .account-chip { max-width: calc(100vw - 150px); font-size: 12px; }
+    .account-points-grid { grid-template-columns: 1fr; }
     .ranks-top-button { padding: 10px 14px; font-size: 12px; letter-spacing: 1px; }
     #authScreen .home-container,
     #ranksScreen .home-container { padding: 30px 18px; }
@@ -4797,6 +4798,80 @@ button {
     color: #fff;
     font: 900 15px Arial, sans-serif;
     overflow-wrap: anywhere;
+}
+
+/* Permanent account points card */
+.account-points-card {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    margin: 4px 0 10px;
+    padding: 10px 11px;
+    border: 1px solid rgba(180, 30, 30, .7);
+    border-radius: 3px;
+    background: linear-gradient(145deg, rgba(70, 8, 8, .98), rgba(18, 5, 5, .99));
+    box-shadow: inset 0 1px rgba(255,255,255,.06), 0 8px 22px rgba(0,0,0,.45);
+}
+
+.account-points-icon {
+    width: 38px;
+    height: 38px;
+    display: grid;
+    place-items: center;
+    border: 1px solid rgba(220, 65, 65, .5);
+    border-radius: 3px;
+    background: rgba(0,0,0,.35);
+    font-size: 20px;
+}
+
+.account-points-content {
+    min-width: 0;
+}
+
+.account-points-label {
+    color: #b8b8b8;
+    font: 900 8px/1 Arial, sans-serif;
+    letter-spacing: 1.7px;
+}
+
+.account-points-total {
+    margin-top: 3px;
+    color: #fff;
+    font: 900 24px/1 "Arial Black", Arial, sans-serif;
+    letter-spacing: 1px;
+    text-shadow: 0 2px 8px rgba(0,0,0,.7);
+}
+
+.account-points-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+    margin-bottom: 8px;
+}
+
+.account-point-stat {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 5px;
+    padding: 6px 7px;
+    border: 1px solid rgba(120, 120, 120, .18);
+    border-radius: 2px;
+    background: rgba(255,255,255,.025);
+    color: #bdbdbd;
+    font: 800 8px/1.2 Arial, sans-serif;
+}
+
+.account-point-stat strong {
+    color: #fff;
+    font: 900 11px Arial, sans-serif;
+}
+
+.account-points-formula {
+    margin: 3px 0 10px;
+    color: #777;
+    font: 700 8px/1.35 Arial, sans-serif;
+    letter-spacing: .2px;
 }
 
 .account-info button {
@@ -4935,3 +5010,357 @@ button {
 /* Three buttons in one row: let them wrap nicely */
 .voice-controls { flex-wrap: wrap; }
 .voice-control-button { min-width: 88px; }
+
+
+/* =========================================================
+   HOME TOP BUTTONS (Ask Question / Role Selection / Ranks)
+========================================================= */
+.home-top-actions {
+    position: fixed;
+    top: 18px;
+    right: 18px;
+    z-index: 50;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    max-width: calc(100vw - 36px);
+}
+
+.home-top-actions .ranks-top-button {
+    position: static;
+}
+
+/* =========================================================
+   BADGES + QUESTIONS
+========================================================= */
+.user-badge {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 7px;
+    border-radius: 3px;
+    font-family: Arial, sans-serif;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    vertical-align: middle;
+    border: 1px solid currentColor;
+}
+.user-badge.owner { color: #ff5b5b; background: rgba(255, 91, 91, 0.12); }
+.user-badge.admin { color: #f0a63c; background: rgba(240, 166, 60, 0.12); }
+.user-badge.member { color: #7fb0ff; background: rgba(127, 176, 255, 0.12); }
+
+.qa-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: none;
+    background: #1a1b1e;
+    color: #f2f3f5;
+    overflow-y: auto;
+    font-family: "Segoe UI", Arial, sans-serif;
+}
+.qa-overlay.qa-center {
+    background: rgba(0, 0, 0, 0.78);
+    align-items: center;
+    justify-content: center;
+}
+.qa-page { width: 100%; max-width: 720px; margin: 0 auto; padding: 16px; }
+.qa-top { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.qa-top h2 { margin: 0; font-size: 22px; }
+.qa-modal {
+    width: min(420px, 92vw);
+    background: #222327;
+    border: 1px solid #2f3035;
+    border-radius: 10px;
+    padding: 20px;
+}
+.qa-modal h2 { margin: 0 0 8px; }
+.qa-modal p { margin: 0 0 10px; color: #9a9ca3; }
+.qa-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
+.qa-overlay input,
+.qa-overlay textarea {
+    width: 100%;
+    box-sizing: border-box;
+    background: #1a1b1e;
+    color: #f2f3f5;
+    border: 1px solid #2f3035;
+    border-radius: 8px;
+    padding: 9px;
+    margin: 6px 0;
+    font: inherit;
+}
+.qa-overlay textarea { min-height: 90px; resize: vertical; }
+.qa-overlay button {
+    background: #5865f2;
+    color: #fff;
+    border: 0;
+    border-radius: 8px;
+    padding: 9px 16px;
+    font-weight: 700;
+    cursor: pointer;
+}
+.qa-overlay button#roleKeyCancel,
+.qa-overlay #qaBack,
+.qa-overlay .qa-small-button { background: #2f3035; }
+.qa-form { margin-bottom: 14px; }
+.qa-card {
+    background: #222327;
+    border: 1px solid #2f3035;
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin: 10px 0;
+    cursor: pointer;
+}
+.qa-card:hover { border-color: #9a9ca3; }
+.qa-card h3 { margin: 0 0 4px; font-size: 18px; }
+.qa-pin { font-size: 13px; margin-bottom: 4px; }
+.qa-line { color: #9a9ca3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.qa-meta, .qa-note, .qa-time { color: #9a9ca3; font-size: 13px; }
+.qa-meta { margin-top: 8px; }
+.qa-note { margin: 6px 0; }
+.qa-answered {
+    margin-left: 8px;
+    padding: 1px 8px;
+    border: 1px solid #3ba55d;
+    border-radius: 99px;
+    color: #3ba55d;
+    font-size: 12px;
+    font-weight: 600;
+}
+.qa-author { font-weight: 700; }
+.qa-author.owner { color: #ff5b5b; }
+.qa-author.admin { color: #f0a63c; }
+.qa-author.member { color: #7fb0ff; }
+.qa-thread-title { font-size: 20px; margin: 12px 0; }
+.qa-msg {
+    background: #222327;
+    border: 1px solid #2f3035;
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin: 10px 0;
+}
+.qa-msg p { margin: 6px 0 0; white-space: pre-wrap; word-break: break-word; }
+.qa-reply { border-left: 3px solid #ff5b5b; }
+
+
+/* =========================================================
+   RANKS: points guide, search box, points
+========================================================= */
+.ranks-guide {
+    margin: 0 0 16px;
+    padding: 14px 16px;
+    border: 1px solid #5a1313;
+    border-radius: 3px;
+    background: rgba(20, 8, 8, 0.7);
+    text-align: left;
+    font: 700 14px Arial, sans-serif;
+    color: #eee;
+}
+.ranks-guide > div { margin: 7px 0; }
+.ranks-guide .ranks-guide-title {
+    text-align: center;
+    color: #e6c25a;
+    letter-spacing: 3px;
+    margin: 0 0 10px;
+}
+.ranks-search {
+    width: 100%;
+    box-sizing: border-box;
+    margin: 0 0 14px;
+    padding: 14px 16px;
+    border: 1px solid #5a1313;
+    border-radius: 3px;
+    background: rgba(10, 10, 10, 0.85);
+    color: #eee;
+    font-size: 16px;
+}
+.ranks-search::placeholder { color: #888; }
+.rank-points {
+    color: #e6c25a;
+    font: 900 15px Arial, sans-serif;
+    white-space: nowrap;
+}
+
+/* =========================================================
+   ACCOUNT PASSWORD + PIN SECURITY
+========================================================= */
+
+.pin-wrap {
+    width: 100%;
+}
+
+#authScreen .pin-wrap input {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.account-password-label {
+    margin-top: 2px;
+}
+
+.account-password-row {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin: 0 0 10px;
+    min-width: 0;
+}
+
+.account-password-masked {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    padding: 0 10px;
+    box-sizing: border-box;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    border: 1px solid rgba(150, 30, 30, .45);
+    border-radius: 2px;
+    background: rgba(0,0,0,.38);
+    color: #fff;
+    font: 900 14px/1 Arial, sans-serif;
+    letter-spacing: 2px;
+}
+
+.account-password-revealed {
+    letter-spacing: 1px;
+    font-size: 12px;
+}
+
+.account-show-password {
+    flex: 0 0 auto;
+    width: auto !important;
+    min-width: 142px;
+    height: 36px;
+    padding: 7px 9px !important;
+    font-size: 9px !important;
+    letter-spacing: 1px !important;
+}
+
+.account-delete-button {
+    margin-top: 9px !important;
+    border-color: #8b2424 !important;
+    background: rgba(0,0,0,.35) !important;
+    color: #ff8f8f !important;
+}
+
+.account-delete-button:hover {
+    border-color: #e34a4a !important;
+    background: rgba(100,10,10,.55) !important;
+    color: #fff !important;
+}
+
+.account-security-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 18px;
+    box-sizing: border-box;
+    background: rgba(0,0,0,.76);
+    backdrop-filter: blur(4px);
+}
+
+.account-security-card {
+    width: min(390px, 94vw);
+    box-sizing: border-box;
+    padding: 18px;
+    border: 1px solid #8d2020;
+    border-radius: 3px;
+    background: linear-gradient(145deg, rgba(25,25,25,.99), rgba(8,8,8,.99));
+    box-shadow: 0 18px 60px rgba(0,0,0,.75), inset 0 1px rgba(255,255,255,.06);
+}
+
+.account-security-title {
+    color: #fff;
+    font: 900 15px "Arial Black", Arial, sans-serif;
+    letter-spacing: 1.5px;
+}
+
+.account-security-text {
+    margin: 8px 0 12px;
+    color: #aaa;
+    font: 700 11px/1.45 Arial, sans-serif;
+}
+
+.account-security-card input {
+    width: 100%;
+    height: 42px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border: 1px solid #4a4a4a;
+    border-radius: 2px;
+    outline: none;
+    background: #0d0d0d;
+    color: #fff;
+    font: 900 14px Arial, sans-serif;
+    letter-spacing: 3px;
+}
+
+.account-security-card input:focus {
+    border-color: #b52a2a;
+    box-shadow: 0 0 0 2px rgba(180,30,30,.14);
+}
+
+.account-security-message {
+    min-height: 17px;
+    margin-top: 7px;
+    color: #777;
+    font: 800 10px/1.3 Arial, sans-serif;
+}
+
+.account-security-message.error {
+    color: #ff7777;
+}
+
+.account-security-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+.account-security-actions button {
+    height: 38px;
+    border: 1px solid #8d2020;
+    border-radius: 2px;
+    background: linear-gradient(180deg, #771717, #300606);
+    color: #f4f4f0;
+    font: 900 10px "Arial Black", Arial, sans-serif;
+    letter-spacing: 1px;
+    cursor: pointer;
+}
+
+.account-security-actions button:hover {
+    border-color: #e13a3a;
+    background: linear-gradient(180deg, #a51f1f, #4b0808);
+}
+
+.account-security-actions button:first-child {
+    background: #111;
+    border-color: #3d3d3d;
+    color: #aaa;
+}
+
+.account-security-actions button:first-child:hover {
+    background: #1c1c1c;
+    border-color: #666;
+    color: #fff;
+}
+
+@media (max-width: 520px) {
+    .account-password-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .account-show-password {
+        width: 100% !important;
+    }
+}
