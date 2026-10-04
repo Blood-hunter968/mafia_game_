@@ -40,7 +40,7 @@
                 </button>
 
                 <button id="authLoginBtn" class="auth-btn">
-                    I ALREADY HAVE AN ACCOUNT
+                    SIGN IN
                 </button>
 
                 <button id="authSkipBtn" class="auth-btn auth-btn-dark">
@@ -252,19 +252,12 @@
         </div>
 
         <div class="home-top-actions">
-
-            <button id="askQuestionButton" class="ranks-top-button" type="button">
-                ❓ ASK QUESTION
+            <!-- Settings is the only top-level home control.
+                 Rank / Role Selection / Help are available from Settings
+                 or their dedicated in-game screens. -->
+            <button id="settingsButton" class="ranks-top-button settings-top-button" type="button">
+                ⚙️ SETTINGS
             </button>
-
-            <button id="roleSelectButton" class="ranks-top-button" type="button">
-                🎖 ROLE SELECTION <span id="roleSelectBadge" class="user-badge member">Member</span>
-            </button>
-
-            <button id="ranksButton" class="ranks-top-button" type="button">
-                🏆 RANKS
-            </button>
-
         </div>
 
         <div class="home-container">
@@ -471,6 +464,42 @@
             >
 
                 <h2>⚙️ Role Settings</h2>
+
+
+                <!-- ALLOW VOICE CHAT -->
+
+                <div id="voiceAllowSetting" class="grandma-setting voice-allow-setting">
+
+                    <p>🎙️ Allow Voice Chat</p>
+
+                    <label>
+
+                        <input
+                            id="voiceAllowYes"
+                            type="radio"
+                            name="voiceAllowChoice"
+                            checked
+                        >
+
+                        Yes
+
+                    </label>
+
+                    <label>
+
+                        <input
+                            id="voiceAllowNo"
+                            type="radio"
+                            name="voiceAllowChoice"
+                        >
+
+                        No
+
+                    </label>
+
+                    <small id="voiceAllowHint" class="voice-allow-hint"></small>
+
+                </div>
 
 
                 <!-- MAFIA -->
@@ -1431,6 +1460,16 @@
     </div>
 
 </section>
+
+    <!-- =====================================================
+         SETTINGS SYSTEM
+         Built on top of the existing Mafia Wars UI.
+    ====================================================== -->
+    <div id="settingsOverlay" class="settings-overlay" style="display:none;">
+        <div class="settings-shell">
+            <div id="settingsPage" class="settings-page"></div>
+        </div>
+    </div>
 
     <!-- =====================================================
          SOCKET.IO
