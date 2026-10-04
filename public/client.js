@@ -9,7 +9,8 @@ const gameSounds = {
     death: new Audio("/sounds/player-dead.mp3"),
     newRound: new Audio("/sounds/new-round.mp3"),
     last10: new Audio("/sounds/last-10-heartbeat.mp3"),
-    turnOver: new Audio("/sounds/turn-over.mp3")
+    turnOver: new Audio("/sounds/turn-over.mp3"),
+
 };
 
 Object.values(gameSounds).forEach(sound => {
@@ -61,43 +62,10 @@ function duckMicForSound(sound) {
     setTimeout(restore, fallbackMs);
 }
 
-/* Short UI click sound for the Home buttons.
-   This is generated in the browser, so no extra sound file is needed. */
-let uiAudioContext = null;
-
-function playHomeButtonSound() {
-    try {
-        const AudioCtx = window.AudioContext || window.webkitAudioContext;
-        if (!AudioCtx) return;
-
-        if (!uiAudioContext) uiAudioContext = new AudioCtx();
-        if (uiAudioContext.state === "suspended") uiAudioContext.resume();
-
-        const now = uiAudioContext.currentTime;
-        const oscillator = uiAudioContext.createOscillator();
-        const gain = uiAudioContext.createGain();
-
-        oscillator.type = "square";
-        oscillator.frequency.setValueAtTime(520, now);
-        oscillator.frequency.exponentialRampToValueAtTime(760, now + 0.055);
-
-        gain.gain.setValueAtTime(0.0001, now);
-        gain.gain.exponentialRampToValueAtTime(0.075, now + 0.008);
-        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.085);
-
-        oscillator.connect(gain);
-        gain.connect(uiAudioContext.destination);
-        oscillator.start(now);
-        oscillator.stop(now + 0.09);
-    } catch (error) {
-        console.warn("UI sound error:", error);
-    }
-}
-
 /*
    Browsers block sound until the user interacts with the page.
    A button click unlocks the audio system without making the
-   player hear all five sounds at once.
+   player hear the game sound effects at once.
 */
 let audioUnlocked = false;
 
@@ -142,7 +110,7 @@ document.addEventListener("click", event => {
     // Home navigation buttons get a guaranteed click sound even if
     // the optional /sounds/button-click.mp3 file is not present.
     if (["createRoom", "joinRoom", "quickStart"].includes(button.id)) {
-        playHomeButtonSound();
+        playGameSound(gameSounds.button);
         return;
     }
 
@@ -152,6 +120,12 @@ document.addEventListener("click", event => {
 let roomCode = "";
 let myRole = "";
 let players = [];
+
+/* Voice chat permission state (sent by the server). */
+let voiceChatAllowedSetting = true;
+let voicePlayerIds = [];
+let voicePermitted = true;
+let voiceAutoDisabled = false;
 let currentPhase = "";
 let isHost = false;
 let hasVoted = false;
@@ -263,7 +237,7 @@ function ensureRejoinUI() {
     }
 
     $("rejoinHomeButton")?.addEventListener("click", () => {
-        playHomeButtonSound();
+        playGameSound(gameSounds.button);
         if ($("rejoinPlayerName")) $("rejoinPlayerName").value = "";
         if ($("rejoinRoomCode")) $("rejoinRoomCode").value = "";
         setRejoinStatus("");
@@ -272,7 +246,7 @@ function ensureRejoinUI() {
     });
 
     $("backFromRejoin")?.addEventListener("click", () => {
-        playHomeButtonSound();
+        playGameSound(gameSounds.button);
         setScreen("homeScreen");
     });
 
@@ -574,11 +548,6 @@ socket.on("announcement", data => {
     if (!data) return;
 
     const message = String(data.message || "");
-
-    /* Sound #3 — a new night/round starts */
-    if (/Night\s+\d+\s+has begun/i.test(message) || /Night\s+1\s+begins/i.test(message)) {
-        playGameSound(gameSounds.newRound);
-    }
 
     /* Sound #5 — Mafia/Doctor/Detective/Cupid turn ends */
     if (/(MAFIA|DOCTOR|DETECTIVE|CUPID)\s+turn is over/i.test(message)) {
@@ -942,6 +911,9 @@ function getCurrentHostId() {
 
 function updateHostUI() {
 
+    ensureVoiceHostSetting();
+    updateVoiceHostButton();
+
     const hostSettings =
         $("hostSettings");
 
@@ -1265,6 +1237,8 @@ socket.on("playerJoined", data => {
         socket.id ===
         window.currentHostId;
 
+    readVoiceSettings(Array.isArray(data) ? null : data);
+
     updateHostUI();
     updateRoomHud();
 });
@@ -1435,8 +1409,7 @@ function setupStartGame() {
                 return;
             }
 
-            socket.emit(
-                "startGame",
+            const startPayload = (
                 {
                     roomCode,
 
@@ -1475,6 +1448,14 @@ function setupStartGame() {
                     }
                 }
             );
+
+            if (voiceChatAllowedSetting) {
+                // Allow Voice Chat = YES -> the host picks up to 5 voice players first.
+                openVoicePicker("start", startPayload);
+            } else {
+                startPayload.voice = { allowed: false, players: [] };
+                socket.emit("startGame", startPayload);
+            }
         }
     );
 }
@@ -2050,6 +2031,8 @@ socket.on(
         allowPeopleToJoin =
             data.allowPeopleToJoin !== false;
 
+        readVoiceSettings(data);
+
         isHost =
             data.hostId === socket.id;
 
@@ -2097,16 +2080,32 @@ socket.on(
            result. Clear the result only when a NEW night starts.
         */
         if (currentPhase === "night") {
+
             const newNightNumber = Number(data.nightNumber) || 0;
 
-            if (
-                newNightNumber !== currentNightNumber
-            ) {
+            /*
+               Sound #3 — NEW NIGHT / ROUND
+
+               Play only when the night number actually changes.
+               This prevents the sound from playing repeatedly
+               whenever gameInformation is refreshed.
+            */
+            if (newNightNumber !== currentNightNumber) {
+
                 currentNightNumber = newNightNumber;
+
+                // Play new-round sound when a new Night begins
+                if (newNightNumber > 0) {
+                    playGameSound(gameSounds.newRound);
+                }
+
                 detectiveResultMessage = "";
                 hideDetectiveResultPopup();
+                if (typeof hideNightActionPopup === "function") hideNightActionPopup();
             }
+
         } else {
+
             currentNightNumber = 0;
             detectiveResultMessage = "";
             hideDetectiveResultPopup();
@@ -3934,6 +3933,9 @@ document.addEventListener(
 let voiceEnabled = false;
 let voiceMuted = false;
 let voiceLocalStream = null;
+let voiceMicInputStream = null;
+let voiceAudioContext = null;
+let voiceMicGainNode = null;
 let voiceGroup = "none";
 let voicePeers = [];
 const voiceConnections = new Map();
@@ -4043,6 +4045,11 @@ async function enableVoice() {
     ensureVoicePanel();
     setVoiceError("");
 
+    if (!voicePermitted) {
+        setVoiceError("Voice chat is not available for you right now.");
+        return;
+    }
+
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         setVoiceError("Your browser does not support microphone voice chat.");
         return;
@@ -4055,7 +4062,7 @@ async function enableVoice() {
 
     try {
         if (!voiceLocalStream) {
-            voiceLocalStream = await navigator.mediaDevices.getUserMedia({
+            voiceMicInputStream = await navigator.mediaDevices.getUserMedia({
                 audio: {
                     echoCancellation: true,
                     noiseSuppression: true,
@@ -4063,11 +4070,36 @@ async function enableVoice() {
                 },
                 video: false
             });
+
+            // Route the microphone through a gain node so Microphone Volume
+            // changes the audio actually sent to the other players.
+            try {
+                const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+                if (AudioContextClass) {
+                    voiceAudioContext = new AudioContextClass();
+                    const source = voiceAudioContext.createMediaStreamSource(voiceMicInputStream);
+                    voiceMicGainNode = voiceAudioContext.createGain();
+                    voiceMicGainNode.gain.value = getAudioSettings().microphoneVolume;
+                    const destination = voiceAudioContext.createMediaStreamDestination();
+                    source.connect(voiceMicGainNode);
+                    voiceMicGainNode.connect(destination);
+                    voiceLocalStream = destination.stream;
+                } else {
+                    voiceLocalStream = voiceMicInputStream;
+                }
+            } catch (audioError) {
+                console.warn("Microphone gain setup failed; using direct microphone stream.", audioError);
+                voiceLocalStream = voiceMicInputStream;
+            }
         }
 
         voiceAudioUnlocked = true;
         voiceEnabled = true;
-        voiceMuted = false;
+        voiceMuted = !!getAudioSettings().microphoneMuted;
+        if (voiceLocalStream) {
+            voiceLocalStream.getAudioTracks().forEach(track => { track.enabled = !voiceMuted; });
+        }
+        applyAudioSettings();
         updateVoiceControls();
         setVoiceStatus("LIVE • waiting for players...", true);
         // Replay any offers a faster peer sent us before our mic was ready,
@@ -4090,7 +4122,7 @@ function updateVoiceControls() {
     const enable = $("voiceEnableButton");
     const mute = $("voiceMuteButton");
     if (enable) {
-        enable.disabled = voiceEnabled;
+        enable.disabled = voiceEnabled || !voicePermitted;
         enable.textContent = voiceEnabled ? "🎙️ VOICE ENABLED" : "🎙️ ENABLE VOICE";
     }
     if (mute) {
@@ -4151,6 +4183,15 @@ function disableVoice() {
         voiceLocalStream.getTracks().forEach(track => track.stop());
         voiceLocalStream = null;
     }
+    if (voiceMicInputStream && voiceMicInputStream !== voiceLocalStream) {
+        voiceMicInputStream.getTracks().forEach(track => track.stop());
+    }
+    voiceMicInputStream = null;
+    voiceMicGainNode = null;
+    if (voiceAudioContext) {
+        try { voiceAudioContext.close(); } catch (_) {}
+        voiceAudioContext = null;
+    }
     voiceEnabled = false;
     voiceMuted = false;
     voiceGroup = "none";
@@ -4181,7 +4222,9 @@ function createVoicePeer(peer) {
             document.body.appendChild(audio);
         }
         audio.srcObject = event.streams[0] || new MediaStream([event.track]);
-        audio.volume = voiceVolumes.has(peer.id) ? voiceVolumes.get(peer.id) : 1;
+        const audioSettings = getAudioSettings();
+        const individual = voiceVolumes.has(peer.id) ? voiceVolumes.get(peer.id) : 1;
+        audio.volume = audioSettings.masterVolume * audioSettings.speakerVolume * individual;
         audio.muted = voiceMutedPeers.has(peer.id);
         const play = () => audio.play().then(() => { voiceAudioUnlocked = true; }).catch(error => {
             console.warn(`[voice] audio.play() blocked for ${peer.name || peer.id}:`, error?.name || error);
@@ -4325,7 +4368,9 @@ function applyPeerAudio(peerId) {
     const audio = document.getElementById(`voice-audio-${CSS.escape(peerId)}`);
     if (!audio) return;
 
-    audio.volume = voiceVolumes.has(peerId) ? voiceVolumes.get(peerId) : 1;
+    const audioSettings = getAudioSettings();
+    const individual = voiceVolumes.has(peerId) ? voiceVolumes.get(peerId) : 1;
+    audio.volume = audioSettings.masterVolume * audioSettings.speakerVolume * individual;
     audio.muted = voiceMutedPeers.has(peerId);
 }
 
@@ -4431,6 +4476,46 @@ async function flushVoiceIceCandidates(peerId, pc) {
 socket.on("voiceState", async data => {
     if (!data) return;
 
+    /*
+       Voice permission from the server:
+       - the host turned Allow Voice Chat OFF, or
+       - this player was not one of the (max 5) players the host picked.
+       In both cases the mic is released and no voice connections exist.
+    */
+    voicePermitted = data.enabled !== false;
+
+    if (!voicePermitted) {
+        if (voiceEnabled) {
+            voiceAutoDisabled = true;
+            disableVoice();
+        }
+
+        voiceGroup = "none";
+        voicePeers = [];
+
+        ensureVoicePanel();
+        const lockedPanel = $("voiceChatPanel");
+        if (lockedPanel) lockedPanel.style.display = "block";
+
+        setVoiceStatus(
+            data.chatAllowed === false
+                ? "Voice chat is turned off by the host"
+                : "Voice chat is only for players picked by the host",
+            false
+        );
+        setVoiceError("");
+        renderVoiceParticipants();
+        updateVoiceControls();
+        updateVoiceHostButton();
+        return;
+    }
+
+    // Permission came back (or the host turned voice on): reconnect the mic.
+    if (voiceAutoDisabled && !voiceEnabled) {
+        voiceAutoDisabled = false;
+        setTimeout(() => enableVoice(), 250);
+    }
+
     voiceGroup = data.group || "none";
     voicePeers = Array.isArray(data.peers)
         ? data.peers.filter(peer => peer && peer.connected !== false)
@@ -4445,6 +4530,8 @@ socket.on("voiceState", async data => {
     ensureVoicePanel();
     const voicePanel = $("voiceChatPanel");
     if (voicePanel) voicePanel.style.display = "block";
+    updateVoiceHostButton();
+    updateVoiceControls();
 
     if (!voiceEnabled) {
         setVoiceStatus(
@@ -5183,11 +5270,14 @@ function openRoleSelection() {
 }
 
 /* =========================================================
-   QUESTIONS (everyone can ask, only the owner can reply)
+   HELP CENTER (Ask Question / Suggestion / Report Bug)
+   Players can only see their own requests. Admin/Owner can manage all.
 ========================================================= */
 
 let questionsData = [];
 let openQuestionId = null;
+let helpMode = "menu";
+let helpType = "question";
 
 function qaTimeAgo(t) {
     const minutes = Math.max(1, Math.round((Date.now() - t) / 60000));
@@ -5196,70 +5286,33 @@ function qaTimeAgo(t) {
     return `${Math.round(minutes / 1440)}d ago`;
 }
 
-function openQuestions() {
+function helpTypeLabel(type) {
+    return type === "suggestion" ? "💡 SUGGESTION" : type === "bug" ? "🐞 REPORT BUG" : "❓ ASK QUESTION";
+}
+
+function helpTypeTitle(type) {
+    return type === "suggestion" ? "Suggestion" : type === "bug" ? "Report Bug" : "Ask Question";
+}
+
+function canManageHelp() {
+    return myBadge === "admin" || myBadge === "owner";
+}
+
+function openQuestions(mode = "menu", type = "question") {
     let overlay = $("questionsOverlay");
 
     if (!overlay) {
         overlay = document.createElement("div");
         overlay.id = "questionsOverlay";
         overlay.className = "qa-overlay";
-        overlay.innerHTML = `
-            <div class="qa-page">
-                <div class="qa-top">
-                    <button id="qaBack" type="button">BACK</button>
-                    <h2>Questions</h2>
-                </div>
-                <div id="qaListView">
-                    <div class="qa-form">
-                        <input id="qaName" maxlength="20" placeholder="Your name">
-                        <input id="qaTitle" maxlength="80" placeholder="Question title">
-                        <textarea id="qaBody" maxlength="500" placeholder="Describe your question"></textarea>
-                        <div id="qaFormNote" class="qa-note"></div>
-                        <button id="qaPost" type="button">POST QUESTION</button>
-                    </div>
-                    <div id="qaList"></div>
-                </div>
-                <div id="qaThread" style="display:none;"></div>
-            </div>
-        `;
+        overlay.innerHTML = `<div class="qa-page" id="helpPage"></div>`;
         document.body.appendChild(overlay);
-
-        $("qaBack").addEventListener("click", () => {
-            overlay.style.display = "none";
-            socket.emit("questionsLeave");
-        });
-
-        $("qaList").addEventListener("click", event => {
-            const card = event.target.closest(".qa-card");
-            if (!card) return;
-            openQuestionId = Number(card.dataset.id);
-            renderQuestions();
-        });
-
-        $("qaPost").addEventListener("click", () => {
-            const name = $("qaName").value;
-            const title = $("qaTitle").value;
-            const body = $("qaBody").value;
-
-            socket.emit("questionsAsk", { name, title, body }, result => {
-                if (!result?.ok) {
-                    $("qaFormNote").textContent = result?.error || "Could not post your question.";
-                    return;
-                }
-                try { localStorage.setItem("mafiaWarsAskName", name.trim()); } catch (error) {}
-                $("qaTitle").value = "";
-                $("qaBody").value = "";
-                $("qaFormNote").textContent = "Question posted.";
-            });
-        });
     }
 
-    try { $("qaName").value = $("qaName").value || localStorage.getItem("mafiaWarsAskName") || ""; } catch (error) {}
-
+    helpMode = mode;
+    helpType = type;
     openQuestionId = null;
-    $("qaFormNote").textContent = "";
-    overlay.style.display = "flex";
-
+    overlay.style.display = "block";
     socket.emit("questionsGet", list => {
         questionsData = Array.isArray(list) ? list : [];
         renderQuestions();
@@ -5267,81 +5320,1018 @@ function openQuestions() {
 }
 
 function renderQuestions() {
-    if (!$("qaList")) return;
+    const page = $("helpPage");
+    if (!page) return;
 
-    const listView = $("qaListView");
-    const thread = $("qaThread");
     const question = questionsData.find(q => q.id === openQuestionId);
+    const canManage = canManageHelp();
 
-    if (!question) {
-        openQuestionId = null;
-        listView.style.display = "";
-        thread.style.display = "none";
+    if (openQuestionId !== null && !question) openQuestionId = null;
 
-        $("qaList").innerHTML = questionsData
-            .slice()
-            .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.t - a.t)
-            .map(q => `
-                <div class="qa-card" data-id="${q.id}">
-                    ${q.pinned ? '<div class="qa-pin">📌</div>' : ""}
-                    <h3>${escapeHtml(q.title)}${q.replies.length ? '<span class="qa-answered">Answered</span>' : ""}</h3>
-                    <div class="qa-line"><span class="qa-author ${normalizeBadge(q.badge)}">${escapeHtml(q.author)}</span>: ${escapeHtml(q.body)}</div>
-                    <div class="qa-meta">💬 ${q.replies.length} · ${qaTimeAgo(q.t)}</div>
-                </div>
-            `).join("");
+    if (openQuestionId !== null && question) {
+        renderHelpThread(page, question);
         return;
     }
 
-    const draft = $("qaReplyText")?.value || "";
-
-    listView.style.display = "none";
-    thread.style.display = "";
-
-    thread.innerHTML = `
-        <button id="qaThreadBack" type="button" class="qa-small-button">BACK</button>
-        <h3 class="qa-thread-title">${escapeHtml(question.title)}</h3>
-        <div class="qa-msg">
-            <span class="qa-author ${normalizeBadge(question.badge)}">${escapeHtml(question.author)}</span>
-            ${userBadgeHtml(question.badge)} <span class="qa-time">${qaTimeAgo(question.t)}</span>
-            <p>${escapeHtml(question.body)}</p>
-        </div>
-        ${question.replies.map(r => `
-            <div class="qa-msg qa-reply">
-                <span class="qa-author owner">Owner</span> <span class="qa-time">${qaTimeAgo(r.t)}</span>
-                <p>${escapeHtml(r.text)}</p>
+    if (helpMode === "menu") {
+        page.innerHTML = `
+            <div class="qa-top">
+                <button id="qaBack" type="button">BACK</button>
+                <h2>🆘 HELP</h2>
             </div>
-        `).join("")}
-        ${myBadge === "owner"
-            ? `<textarea id="qaReplyText" maxlength="500" placeholder="Write a reply"></textarea>
-               <div id="qaReplyNote" class="qa-note"></div>
-               <button id="qaReplySend" type="button">REPLY</button>`
-            : `<p class="qa-note">Only the owner can reply to questions.</p>`}
-    `;
+            <div class="qa-help-menu">
+                <button class="qa-help-choice" data-help-type="question">❓ ASK QUESTION</button>
+                <button class="qa-help-choice" data-help-type="suggestion">💡 SUGGESTION</button>
+                <button class="qa-help-choice" data-help-type="bug">🐞 REPORT BUG</button>
+                ${canManage ? '<button class="qa-help-choice qa-admin-choice" data-help-type="admin">👑 ADMIN / OWNER HELP CENTER</button>' : ""}
+            </div>
+            <div class="qa-note">Only the account that submitted a request can see its conversation. Only Admin and Owner can answer.</div>
+        `;
+        $("qaBack").addEventListener("click", closeQuestions);
+        page.querySelectorAll("[data-help-type]").forEach(button => {
+            button.addEventListener("click", () => {
+                const selected = button.dataset.helpType;
+                if (selected === "admin") helpMode = "list";
+                else { helpMode = "form"; helpType = selected; }
+                renderQuestions();
+            });
+        });
+        return;
+    }
 
-    $("qaThreadBack").addEventListener("click", () => {
-        openQuestionId = null;
-        renderQuestions();
-    });
-
-    if (myBadge === "owner") {
-        $("qaReplyText").value = draft;
-        $("qaReplySend").addEventListener("click", () => {
-            const text = $("qaReplyText").value;
-            socket.emit("questionsReply", { id: openQuestionId, text }, result => {
+    if (helpMode === "form") {
+        page.innerHTML = `
+            <div class="qa-top">
+                <button id="qaBack" type="button">BACK</button>
+                <h2>${helpTypeLabel(helpType)}</h2>
+            </div>
+            <div class="qa-form">
+                <div class="qa-note">Your account name will be used automatically.</div>
+                <input id="qaTitle" maxlength="80" placeholder="${helpTypeTitle(helpType)} title">
+                <textarea id="qaBody" maxlength="500" placeholder="Write your ${helpTypeTitle(helpType).toLowerCase()}..."></textarea>
+                <div id="qaFormNote" class="qa-note"></div>
+                <button id="qaPost" type="button">SEND</button>
+            </div>
+            <div class="qa-note">You can edit or delete your own request after sending it.</div>
+        `;
+        $("qaBack").addEventListener("click", () => { helpMode = "menu"; renderQuestions(); });
+        $("qaPost").addEventListener("click", () => {
+            if (!authState.username) {
+                $("qaFormNote").textContent = "Sign in to an account before using Help.";
+                return;
+            }
+            socket.emit("questionsAsk", { type: helpType, title: $("qaTitle").value, body: $("qaBody").value }, result => {
                 if (!result?.ok) {
-                    $("qaReplyNote").textContent = result?.error || "Could not send the reply.";
+                    $("qaFormNote").textContent = result?.error || "Could not send your request.";
                     return;
                 }
-                $("qaReplyText").value = "";
+                helpMode = "list";
+                socket.emit("questionsGet", list => {
+                    questionsData = Array.isArray(list) ? list : [];
+                    renderQuestions();
+                });
+            });
+        });
+        return;
+    }
+
+    const list = questionsData.slice().sort((a, b) => b.t - a.t);
+    page.innerHTML = `
+        <div class="qa-top">
+            <button id="qaBack" type="button">BACK</button>
+            <h2>${canManage ? "👑 HELP CENTER" : "🆘 MY HELP"}</h2>
+        </div>
+        ${canManage ? '<div class="qa-note">Admin and Owner can answer and manage requests. They can edit/delete their own answers.</div>' : ""}
+        <div id="qaList"></div>
+    `;
+    $("qaBack").addEventListener("click", () => { helpMode = "menu"; renderQuestions(); });
+
+    const box = $("qaList");
+    if (!list.length) {
+        box.innerHTML = '<div class="qa-note">No Help requests yet.</div>';
+        return;
+    }
+
+    box.innerHTML = list.map(q => `
+        <div class="qa-card" data-id="${q.id}">
+            <div class="qa-type">${helpTypeLabel(q.type)}</div>
+            <h3>${escapeHtml(q.title)}${q.replies?.length ? '<span class="qa-answered">Answered</span>' : ""}</h3>
+            <div class="qa-line"><span class="qa-author ${normalizeBadge(q.badge)}">${escapeHtml(q.author)}</span>: ${escapeHtml(q.body)}</div>
+            <div class="qa-meta">💬 ${q.replies?.length || 0} · ${qaTimeAgo(q.t)}</div>
+            ${canManage ? `<div class="qa-card-actions">
+                <button type="button" data-help-action="open" data-id="${q.id}">OPEN</button>
+                <button type="button" data-help-action="edit" data-id="${q.id}">✏️ EDIT</button>
+                <button type="button" data-help-action="delete" data-id="${q.id}">🗑️ DELETE</button>
+            </div>` : ""}
+        </div>
+    `).join("");
+
+    box.addEventListener("click", event => {
+        const action = event.target.closest("[data-help-action]");
+        const card = event.target.closest(".qa-card");
+        if (!card) return;
+        const id = Number(card.dataset.id);
+        if (action) {
+            const type = action.dataset.helpAction;
+            if (type === "open") { openQuestionId = id; renderQuestions(); }
+            if (type === "edit") editHelpRequest(id);
+            if (type === "delete") deleteHelpRequest(id);
+            return;
+        }
+        openQuestionId = id;
+        renderQuestions();
+    });
+}
+
+function editHelpRequest(id) {
+    const q = questionsData.find(item => item.id === id);
+    if (!q) return;
+    const title = prompt("Edit title:", q.title);
+    if (title === null) return;
+    const body = prompt("Edit message:", q.body);
+    if (body === null) return;
+    socket.emit("questionsEdit", { id, title, body }, result => {
+        if (!result?.ok) alert(result?.error || "Could not edit the request.");
+    });
+}
+
+function deleteHelpRequest(id) {
+    if (!confirm("Delete this Help request?")) return;
+    socket.emit("questionsDelete", { id }, result => {
+        if (!result?.ok) alert(result?.error || "Could not delete the request.");
+        else if (openQuestionId === id) { openQuestionId = null; renderQuestions(); }
+    });
+}
+
+function editHelpReply(questionId, replyId, currentText) {
+    const text = prompt("Edit your answer:", currentText);
+    if (text === null) return;
+    socket.emit("questionsReplyEdit", { id: questionId, replyId, text }, result => {
+        if (!result?.ok) alert(result?.error || "Could not edit the answer.");
+    });
+}
+
+function deleteHelpReply(questionId, replyId) {
+    if (!confirm("Delete your answer?")) return;
+    socket.emit("questionsReplyDelete", { id: questionId, replyId }, result => {
+        if (!result?.ok) alert(result?.error || "Could not delete the answer.");
+    });
+}
+
+function renderHelpThread(page, question) {
+    const canManage = canManageHelp();
+    page.innerHTML = `
+        <div class="qa-top">
+            <button id="qaThreadBack" type="button">BACK</button>
+            <h2>${helpTypeLabel(question.type)}</h2>
+        </div>
+        <h3 class="qa-thread-title">${escapeHtml(question.title)}</h3>
+        <div class="qa-msg">
+            <div><span class="qa-author ${normalizeBadge(question.badge)}">${escapeHtml(question.author)}</span> <span class="qa-time">${qaTimeAgo(question.t)}</span></div>
+            <p>${escapeHtml(question.body)}</p>
+            ${(question.canEdit || canManage) ? `<div class="qa-message-actions">
+                <button id="qaEditRequest" type="button">✏️ EDIT</button>
+                <button id="qaDeleteRequest" type="button">🗑️ DELETE</button>
+            </div>` : ""}
+        </div>
+        ${question.replies?.length ? question.replies.map(r => `
+            <div class="qa-msg qa-reply">
+                <div><span class="qa-author ${normalizeBadge(r.badge)}">${escapeHtml(r.author || (r.badge === "owner" ? "Owner" : "Admin"))}</span> <span class="qa-time">${qaTimeAgo(r.t)}</span></div>
+                <p>${escapeHtml(r.text)}</p>
+                ${(r.canEdit || r.canDelete) ? `<div class="qa-message-actions">
+                    ${r.canEdit ? `<button type="button" data-reply-action="edit" data-reply-id="${r.id}" data-reply-text="${escapeHtml(r.text).replace(/"/g, '&quot;')}">✏️ EDIT</button>` : ""}
+                    ${r.canDelete ? `<button type="button" data-reply-action="delete" data-reply-id="${r.id}">🗑️ DELETE</button>` : ""}
+                </div>` : ""}
+            </div>
+        `).join("") : '<div class="qa-note">Waiting for an Admin or Owner answer.</div>'}
+        ${canManage ? `<textarea id="qaReplyText" maxlength="500" placeholder="Write your answer"></textarea>
+            <div id="qaReplyNote" class="qa-note"></div>
+            <button id="qaReplySend" type="button">SEND ANSWER</button>` : ""}
+    `;
+
+    $("qaThreadBack").addEventListener("click", () => { openQuestionId = null; renderQuestions(); });
+    if (question.canEdit || canManage) {
+        $("qaEditRequest")?.addEventListener("click", () => editHelpRequest(question.id));
+        $("qaDeleteRequest")?.addEventListener("click", () => deleteHelpRequest(question.id));
+    }
+    page.querySelectorAll("[data-reply-action]").forEach(button => {
+        button.addEventListener("click", () => {
+            const action = button.dataset.replyAction;
+            const replyId = Number(button.dataset.replyId);
+            if (action === "edit") editHelpReply(question.id, replyId, button.dataset.replyText || "");
+            if (action === "delete") deleteHelpReply(question.id, replyId);
+        });
+    });
+    if (canManage) {
+        $("qaReplySend").addEventListener("click", () => {
+            socket.emit("questionsReply", { id: question.id, text: $("qaReplyText").value }, result => {
+                if (!result?.ok) $("qaReplyNote").textContent = result?.error || "Could not send the answer.";
+                else $("qaReplyText").value = "";
             });
         });
     }
 }
 
+function closeQuestions() {
+    const overlay = $("questionsOverlay");
+    if (overlay) overlay.style.display = "none";
+    socket.emit("questionsLeave");
+}
+
 socket.on("questionsUpdate", list => {
     questionsData = Array.isArray(list) ? list : [];
-    if ($("questionsOverlay")?.style.display === "flex") renderQuestions();
+    if ($("questionsOverlay")?.style.display === "block") renderQuestions();
 });
 
 $("roleSelectButton")?.addEventListener("click", openRoleSelection);
-$("askQuestionButton")?.addEventListener("click", openQuestions);
+$("askQuestionButton")?.addEventListener("click", () => openQuestions("menu"));
+
+
+/* =========================================================
+   SETTINGS / PREFERENCES
+   Saved locally per signed-in account (or guest profile).
+   Existing game systems are left untouched.
+========================================================= */
+const SETTINGS_STORAGE_KEY = "mafiaWarsSettingsV1";
+const defaultMafiaSettings = {
+    theme: "noir",
+    uiEffects: true,
+    animations: true,
+    reduceMotion: false,
+    gameNotifications: true,
+    questionNotifications: true,
+    rankNotifications: true,
+    matchNotifications: true,
+    masterVolume: 1,
+    speakerVolume: 1,
+    microphoneVolume: 1,
+    microphoneMuted: false,
+    soundEffectsVolume: 1,
+    notificationSoundsVolume: 1
+};
+
+function clampAudioSetting(value, fallback = 1) {
+    const n = Number(value);
+    return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : fallback;
+}
+
+function getAudioSettings() {
+    const st = loadMafiaSettings();
+    return {
+        masterVolume: clampAudioSetting(st.masterVolume),
+        speakerVolume: clampAudioSetting(st.speakerVolume),
+        microphoneVolume: clampAudioSetting(st.microphoneVolume),
+        microphoneMuted: !!st.microphoneMuted,
+        soundEffectsVolume: clampAudioSetting(st.soundEffectsVolume),
+        notificationSoundsVolume: clampAudioSetting(st.notificationSoundsVolume)
+    };
+}
+
+function applyAudioSettings() {
+    const audio = getAudioSettings();
+    const sfxVolume = audio.masterVolume * audio.soundEffectsVolume;
+
+    Object.values(gameSounds).forEach(sound => {
+        if (!sound) return;
+        sound.volume = sfxVolume;
+    });
+
+    document.querySelectorAll('audio[id^="voice-audio-"]').forEach(el => {
+        const peerId = el.id.replace(/^voice-audio-/, "");
+        const individual = voiceVolumes.has(peerId) ? voiceVolumes.get(peerId) : 1;
+        el.volume = audio.masterVolume * audio.speakerVolume * individual;
+    });
+
+    if (voiceMicGainNode) {
+        voiceMicGainNode.gain.value = audio.microphoneMuted ? 0 : audio.microphoneVolume;
+    }
+}
+
+function updateAudioSetting(key, value) {
+    const st = loadMafiaSettings();
+    st[key] = value;
+    saveMafiaSettings(st);
+    applyAudioSettings();
+    renderSettingsPage(settingsView);
+}
+
+// Notification sounds use the existing sound library only. No new sound file is added.
+function playNotificationSound(sound = gameSounds.button) {
+    if (!sound) return;
+    const audio = getAudioSettings();
+    const volume = audio.masterVolume * audio.notificationSoundsVolume;
+    try {
+        sound.currentTime = 0;
+        sound.volume = volume;
+        const promise = sound.play();
+        if (promise) promise.catch(() => {});
+    } catch (error) {
+        console.warn("Notification sound error:", error);
+    }
+}
+
+function getSettingsProfileKey() {
+    try {
+        return authState?.username ? `account:${String(authState.username).toLowerCase()}` : "guest";
+    } catch (e) {
+        return "guest";
+    }
+}
+function loadMafiaSettings() {
+    let all = {};
+    try { all = JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY) || "{}"); } catch (e) {}
+    const key = getSettingsProfileKey();
+    return { ...defaultMafiaSettings, ...(all[key] || {}) };
+}
+function saveMafiaSettings(next) {
+    let all = {};
+    try { all = JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY) || "{}"); } catch (e) {}
+    all[getSettingsProfileKey()] = { ...defaultMafiaSettings, ...next };
+    try { localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(all)); } catch (e) {}
+}
+function applyMafiaSettings() {
+    const st = loadMafiaSettings();
+    document.body.classList.toggle("settings-reduce-motion", !!st.reduceMotion);
+    document.body.classList.toggle("settings-no-effects", !st.uiEffects);
+    document.body.classList.toggle("settings-no-animations", !st.animations);
+    document.documentElement.dataset.mafiaTheme = st.theme;
+    applyAudioSettings();
+}
+function updateMafiaSetting(key, value) {
+    const st = loadMafiaSettings();
+    st[key] = value;
+    saveMafiaSettings(st);
+    applyMafiaSettings();
+    renderSettingsPage(settingsView);
+}
+function settingsHeader(title, back = true) {
+    return `<div class="settings-header">
+        ${back ? '<button class="settings-back" id="settingsBack" type="button">← BACK</button>' : ""}
+        <h2>${title}</h2>
+        <button class="settings-close" id="settingsClose" type="button">✕</button>
+    </div>`;
+}
+let settingsView = "main";
+
+function openSettings(view = "main") {
+    const overlay = $("settingsOverlay");
+    if (!overlay) return;
+    settingsView = view;
+    applyMafiaSettings();
+    overlay.style.display = "flex";
+    renderSettingsPage(view);
+}
+function closeSettings() {
+    const overlay = $("settingsOverlay");
+    if (overlay) overlay.style.display = "none";
+}
+function settingsNav(view) {
+    settingsView = view;
+    renderSettingsPage(view);
+}
+function renderSettingsPage(view) {
+    const page = $("settingsPage");
+    if (!page) return;
+
+    // The existing Account controls live in the home markup. When the Account
+    // settings page is closed/re-rendered, put those controls back in their
+    // original hidden container so the existing account logic remains intact.
+    const accountInfo = $("accountInfo");
+    const accountChip = $("accountChip");
+    if (accountInfo && accountChip && accountInfo.parentElement !== accountChip) {
+        accountChip.appendChild(accountInfo);
+        accountInfo.style.display = "none";
+    }
+
+    const st = loadMafiaSettings();
+    const admin = myBadge === "admin" || myBadge === "owner";
+
+    if (view === "main") {
+        page.innerHTML = settingsHeader("⚙️ SETTINGS", false) + `
+            <div class="settings-grid">
+                <button class="settings-option settings-category" data-settings-view="ranks">
+                    <span class="settings-icon">🏆</span><span class="settings-copy"><strong>Ranks & Progress</strong><span>Rank, points, statistics and leaderboard</span></span>
+                </button>
+                <button class="settings-option settings-category" data-settings-view="notifications">
+                    <span class="settings-icon">🔔</span><span class="settings-copy"><strong>Notifications</strong><span>Choose which game updates you receive</span></span>
+                </button>
+                <button class="settings-option settings-category" data-settings-view="sound">
+                    <span class="settings-icon">🔊</span><span class="settings-copy"><strong>Sound Settings</strong><span>Master, speaker, microphone and sound levels</span></span>
+                </button>
+                <button class="settings-option settings-category" id="settingsRanksOption" type="button">
+                    <span class="settings-icon">🏆</span><span class="settings-copy"><strong>Ranks</strong><span>Rank, points, statistics and leaderboard</span></span>
+                </button>
+                <button class="settings-option settings-category" id="settingsRoleOption" type="button">
+                    <span class="settings-icon">🎭</span><span class="settings-copy"><strong>Role Selection</strong><span>Choose and view available game roles</span></span>
+                </button>
+                <button class="settings-option settings-category" id="settingsHelpOption" type="button">
+                    <span class="settings-icon">🆘</span><span class="settings-copy"><strong>Help</strong><span>Ask questions, suggestions and report bugs</span></span>
+                </button>
+                <button class="settings-option settings-category" data-settings-view="account">
+                    <span class="settings-icon">👤</span><span class="settings-copy"><strong>Account</strong><span>Open your existing account controls</span></span>
+                </button>
+
+            </div>
+        `;
+    } else if (view === "ranks") {
+        page.innerHTML = settingsHeader("🏆 RANKS & PROGRESS") + `
+            <div class="settings-card">
+                <h3>🏆 My Rank</h3><p id="settingsMyRank">Loading your rank…</p>
+            </div>
+            <div class="settings-card">
+                <h3>📊 My Points</h3><p id="settingsMyPoints">Loading points…</p>
+            </div>
+            <div class="settings-card">
+                <h3>📈 Statistics</h3>
+                <div class="settings-stat-grid" id="settingsStatsGrid"><div class="settings-muted">Loading statistics…</div></div>
+            </div>
+            <div class="settings-card">
+                <h3>🥇 Leaderboard</h3>
+                <div id="settingsLeaderboard"><div class="settings-muted">Loading leaderboard…</div></div>
+            </div>
+        `;
+        socket.emit("getRanks");
+        if (authState?.username) socket.emit("getPlayerStats", { username: authState.username });
+    } else if (view === "appearance") {
+        page.innerHTML = settingsHeader("🎨 APPEARANCE") + `
+            <div class="settings-card">
+                <div class="settings-row"><div><strong>Theme</strong><small>Choose the Mafia Wars visual theme.</small></div>
+                    <select id="settingsTheme" class="settings-option" style="padding:10px 14px;">
+                        <option value="noir" ${st.theme === "noir" ? "selected" : ""}>Noir</option>
+                        <option value="blood" ${st.theme === "blood" ? "selected" : ""}>Blood Red</option>
+                    </select>
+                </div>
+                <div class="settings-row"><div><strong>UI Effects</strong><small>Enable hover, glow and interface effects.</small></div><input class="settings-switch" type="checkbox" data-setting="uiEffects" ${st.uiEffects ? "checked" : ""}></div>
+                <div class="settings-row"><div><strong>Animations</strong><small>Enable normal interface transitions.</small></div><input class="settings-switch" type="checkbox" data-setting="animations" ${st.animations ? "checked" : ""}></div>
+                <div class="settings-row"><div><strong>Reduce Motion</strong><small>Reduce interface movement and transitions.</small></div><input class="settings-switch" type="checkbox" data-setting="reduceMotion" ${st.reduceMotion ? "checked" : ""}></div>
+            </div>
+        `;
+    } else if (view === "notifications") {
+        page.innerHTML = settingsHeader("🔔 NOTIFICATIONS") + `
+            <div class="settings-card">
+                <div class="settings-row"><div><strong>Game Notifications</strong><small>General game events.</small></div><input class="settings-switch" type="checkbox" data-setting="gameNotifications" ${st.gameNotifications ? "checked" : ""}></div>
+                <div class="settings-row"><div><strong>Question Answer Notifications</strong><small>Notify when an Admin/Owner answers your question.</small></div><input class="settings-switch" type="checkbox" data-setting="questionNotifications" ${st.questionNotifications ? "checked" : ""}></div>
+                <div class="settings-row"><div><strong>Rank/Points Notifications</strong><small>Rank and points changes.</small></div><input class="settings-switch" type="checkbox" data-setting="rankNotifications" ${st.rankNotifications ? "checked" : ""}></div>
+                <div class="settings-row"><div><strong>Match Notifications</strong><small>Matchmaking and room events.</small></div><input class="settings-switch" type="checkbox" data-setting="matchNotifications" ${st.matchNotifications ? "checked" : ""}></div>
+            </div>
+        `;
+    } else if (view === "sound") {
+        const pct = value => Math.round(clampAudioSetting(value) * 100);
+        page.innerHTML = settingsHeader("🔊 SOUND SETTINGS") + `
+            <div class="settings-card sound-settings-card">
+                <div class="settings-row sound-setting-row">
+                    <div><strong>🔊 Master Volume</strong><small>Controls all game audio, notifications and other players' voices.</small></div>
+                    <div class="settings-slider-wrap"><input id="settingsMasterVolume" class="settings-range" type="range" min="0" max="100" step="1" value="${pct(st.masterVolume)}"><span id="settingsMasterVolumeValue" class="settings-value">${pct(st.masterVolume)}%</span></div>
+                </div>
+                <div class="settings-row sound-setting-row">
+                    <div><strong>🎧 Speaker Volume</strong><small>Controls the volume of other players' voices.</small></div>
+                    <div class="settings-slider-wrap"><input id="settingsSpeakerVolume" class="settings-range" type="range" min="0" max="100" step="1" value="${pct(st.speakerVolume)}"><span id="settingsSpeakerVolumeValue" class="settings-value">${pct(st.speakerVolume)}%</span></div>
+                </div>
+                <div class="settings-row sound-setting-row">
+                    <div><strong>🎤 Microphone Volume</strong><small>Controls how loud your voice is sent to other players.</small></div>
+                    <div class="settings-slider-wrap"><input id="settingsMicrophoneVolume" class="settings-range" type="range" min="0" max="100" step="1" value="${pct(st.microphoneVolume)}"><span id="settingsMicrophoneVolumeValue" class="settings-value">${pct(st.microphoneVolume)}%</span></div>
+                </div>
+                <div class="settings-row">
+                    <div><strong>🔇 Mute Microphone</strong><small>Other players will not hear you while muted.</small></div>
+                    <input id="settingsMicrophoneMuted" class="settings-switch" type="checkbox" ${st.microphoneMuted ? "checked" : ""}>
+                </div>
+                <div class="settings-row sound-setting-row">
+                    <div><strong>🔊 Sound Effects</strong><small>Controls the existing 4 game sound effects separately.</small></div>
+                    <div class="settings-slider-wrap"><input id="settingsSoundEffectsVolume" class="settings-range" type="range" min="0" max="100" step="1" value="${pct(st.soundEffectsVolume)}"><span id="settingsSoundEffectsVolumeValue" class="settings-value">${pct(st.soundEffectsVolume)}%</span></div>
+                </div>
+                <div class="settings-row sound-setting-row">
+                    <div><strong>🔔 Notification Sounds</strong><small>Controls notification sound volume separately. No new sound is added.</small></div>
+                    <div class="settings-slider-wrap"><input id="settingsNotificationSoundsVolume" class="settings-range" type="range" min="0" max="100" step="1" value="${pct(st.notificationSoundsVolume)}"><span id="settingsNotificationSoundsVolumeValue" class="settings-value">${pct(st.notificationSoundsVolume)}%</span></div>
+                </div>
+            </div>
+        `;
+        const bindAudioSlider = (id, valueId, key) => {
+            const input = $(id), value = $(valueId);
+            if (!input) return;
+            input.addEventListener("input", () => {
+                const n = Number(input.value) / 100;
+                if (value) value.textContent = `${Math.round(n * 100)}%`;
+                const current = loadMafiaSettings();
+                current[key] = n;
+                saveMafiaSettings(current);
+                applyAudioSettings();
+            });
+        };
+        bindAudioSlider("settingsMasterVolume", "settingsMasterVolumeValue", "masterVolume");
+        bindAudioSlider("settingsSpeakerVolume", "settingsSpeakerVolumeValue", "speakerVolume");
+        bindAudioSlider("settingsMicrophoneVolume", "settingsMicrophoneVolumeValue", "microphoneVolume");
+        bindAudioSlider("settingsSoundEffectsVolume", "settingsSoundEffectsVolumeValue", "soundEffectsVolume");
+        bindAudioSlider("settingsNotificationSoundsVolume", "settingsNotificationSoundsVolumeValue", "notificationSoundsVolume");
+        $("settingsMicrophoneMuted")?.addEventListener("change", event => {
+            const current = loadMafiaSettings();
+            current.microphoneMuted = !!event.target.checked;
+            saveMafiaSettings(current);
+            voiceMuted = current.microphoneMuted;
+            if (voiceLocalStream) {
+                voiceLocalStream.getAudioTracks().forEach(track => { track.enabled = !voiceMuted; });
+            }
+            applyAudioSettings();
+            updateVoiceControls();
+        });
+    } else if (view === "account") {
+        page.innerHTML = settingsHeader("👤 ACCOUNT") + `
+            <div class="settings-card settings-account-card">
+                <div id="settingsAccountMount"></div>
+            </div>
+        `;
+
+        const mount = $("settingsAccountMount");
+        const accountInfo = $("accountInfo");
+        if (mount && accountInfo && authState?.username) {
+            mount.appendChild(accountInfo);
+            accountInfo.style.display = "";
+            setAccountInfoOpen(true);
+        } else if (mount) {
+            mount.innerHTML = `
+                <h3>👻 Guest</h3>
+                <p>Sign in or create an account to use your existing Account controls.</p>
+                <div style="margin-top:13px">
+                    <button class="settings-action" id="settingsSignIn">🔐 SIGN IN / CREATE ACCOUNT</button>
+                </div>
+            `;
+            $("settingsSignIn")?.addEventListener("click", () => {
+                closeSettings();
+                showAuthMenu();
+                setScreen("authScreen");
+            });
+        }
+    } else if (view === "admin") {
+        if (!admin) { settingsNav("main"); return; }
+        page.innerHTML = settingsHeader("🛡️ ADMINISTRATION") + `
+            <div class="settings-admin-note">Server permission checks are still required. Changing the page in the browser does not grant Admin or Owner access.</div>
+            <div class="settings-list settings-admin-grid">
+                <button class="settings-option" data-admin-action="players">👥 Player Management</button>
+                <button class="settings-option" data-admin-action="reports">🚨 Reports</button>
+                <button class="settings-option" data-admin-action="questions">📋 Questions Management</button>
+                <button class="settings-option" data-admin-action="answer">💬 Answer Questions</button>
+                <button class="settings-option" data-admin-action="ranks">🏆 Rank Management</button>
+                <button class="settings-option" data-admin-action="roles">🎭 Role Management</button>
+                <button class="settings-option" data-admin-action="game">🎮 Game Management</button>
+                <button class="settings-option" data-admin-action="logs">📜 Admin Logs</button>
+            </div>
+        `;
+    }
+
+    page.querySelectorAll("[data-settings-view]").forEach(b => b.addEventListener("click", () => settingsNav(b.dataset.settingsView)));
+    page.querySelectorAll("[data-setting]").forEach(b => b.addEventListener("change", () => updateMafiaSetting(b.dataset.setting, b.checked)));
+    $("settingsTheme")?.addEventListener("change", e => updateMafiaSetting("theme", e.target.value));
+    $("settingsBack")?.addEventListener("click", () => settingsNav("main"));
+    $("settingsClose")?.addEventListener("click", closeSettings);
+
+    $("settingsRanksOption")?.addEventListener("click", () => {
+        closeSettings();
+        socket.emit("getRanks");
+        $("ranksDetailsOverlay").style.display = "none";
+        setScreen("ranksScreen");
+    });
+    $("settingsRoleOption")?.addEventListener("click", () => {
+        closeSettings();
+        openRoleSelection();
+    });
+    $("settingsHelpOption")?.addEventListener("click", () => {
+        closeSettings();
+        openQuestions("menu");
+    });
+    page.querySelectorAll("[data-admin-action]").forEach(b => b.addEventListener("click", () => {
+        const action = b.dataset.adminAction;
+        if (action === "questions" || action === "answer") {
+            closeSettings();
+            openQuestions("list");
+            return;
+        }
+        alert(`${b.textContent.trim()} is protected by the server and can be connected to your existing admin tools without changing player controls.`);
+    }));
+}
+applyMafiaSettings();
+applyAudioSettings();
+
+$("settingsButton")?.addEventListener("click", () => openSettings("main"));
+$("settingsOverlay")?.addEventListener("click", event => {
+    if (event.target.id === "settingsOverlay") closeSettings();
+});
+
+/* Public Questions List / My Questions enhancements */
+const originalRenderQuestions = renderQuestions;
+renderQuestions = function() {
+    const page = $("helpPage");
+    if (!page) return;
+    const canManage = canManageHelp();
+    const question = questionsData.find(q => q.id === openQuestionId);
+    if (openQuestionId !== null && question) {
+        renderHelpThread(page, question);
+        return;
+    }
+    if (helpMode === "menu") {
+        page.innerHTML = `
+            <div class="qa-top"><button id="qaBack" type="button">BACK</button><h2>🆘 HELP CENTER</h2></div>
+            <div class="qa-help-menu">
+                <button class="qa-help-choice" data-help-type="question">❓ ASK QUESTION</button>
+                <button class="qa-help-choice" data-help-type="suggestion">💡 SUGGESTION</button>
+                <button class="qa-help-choice" data-help-type="bug">🐞 REPORT BUG</button>
+                <button class="qa-help-choice" data-help-type="public">📋 QUESTIONS LIST</button>
+                <button class="qa-help-choice" data-help-type="mine">📋 MY QUESTIONS</button>
+                ${canManage ? '<button class="qa-help-choice qa-admin-choice" data-help-type="admin">🛡️ ADMIN / OWNER</button>' : ""}
+            </div>
+            <div class="qa-note">Questions List is readable by players. Only Admin/Owner can answer.</div>
+        `;
+        $("qaBack").addEventListener("click", closeQuestions);
+        page.querySelectorAll("[data-help-type]").forEach(button => button.addEventListener("click", () => {
+            const selected = button.dataset.helpType;
+            if (selected === "public" || selected === "mine" || selected === "admin") helpMode = selected;
+            else { helpMode = "form"; helpType = selected; }
+            renderQuestions();
+        }));
+        return;
+    }
+    if (helpMode === "public" || helpMode === "mine") {
+        const list = (helpMode === "mine" ? questionsData.filter(q => q.isMine) : questionsData)
+            .slice().sort((a,b) => b.t-a.t);
+        page.innerHTML = `
+            <div class="qa-top"><button id="qaBack" type="button">BACK</button><h2>${helpMode === "mine" ? "📋 MY QUESTIONS" : "📋 QUESTIONS LIST"}</h2></div>
+            <div class="qa-note">${helpMode === "mine" ? "Only questions submitted by your account are shown." : "Players can read submitted questions and Admin/Owner answers. Players cannot answer or edit other players' questions."}</div>
+            <div id="qaList"></div>
+        `;
+        $("qaBack").addEventListener("click", () => { helpMode = "menu"; renderQuestions(); });
+        const box = $("qaList");
+        if (!list.length) { box.innerHTML = '<div class="qa-note">No questions to show.</div>'; return; }
+        box.innerHTML = list.map(q => `
+            <div class="qa-card" data-id="${q.id}">
+                <div class="qa-type">${helpTypeLabel(q.type)}</div>
+                <h3>${escapeHtml(q.title)}${q.replies?.length ? '<span class="qa-answered">Answered</span>' : ""}</h3>
+                <div class="qa-line"><span class="qa-author ${normalizeBadge(q.badge)}">${escapeHtml(q.author)}</span>: ${escapeHtml(q.body)}</div>
+                ${(q.replies || []).map(r => `<div class="qa-line qa-reply"><span class="qa-author ${normalizeBadge(r.badge)}">${escapeHtml(r.author)}</span>: ${escapeHtml(r.text)}</div>`).join("")}
+            </div>
+        `).join("");
+        box.addEventListener("click", e => {
+            const card = e.target.closest(".qa-card");
+            if (card) { openQuestionId = Number(card.dataset.id); renderQuestions(); }
+        });
+        return;
+    }
+    // Admin view: use the original management list.
+    originalRenderQuestions();
+};
+
+/* Re-render settings after login/logout so account-scoped preferences remain correct. */
+socket.on("authResult", () => {
+    setTimeout(() => applyMafiaSettings(), 0);
+});
+
+/* Feed existing rank/stat responses into the Settings > Ranks & Progress page. */
+socket.on("ranksData", list => {
+    const rankEl = $("settingsMyRank");
+    const pointsEl = $("settingsMyPoints");
+    const board = $("settingsLeaderboard");
+    if (!rankEl && !pointsEl && !board) return;
+
+    const rows = Array.isArray(list) ? list : [];
+    const me = authState?.username ? rows.find(x => String(x.username).toLowerCase() === String(authState.username).toLowerCase()) : null;
+    if (rankEl) rankEl.textContent = me ? `#${me.rank} — ${me.username}` : "Guest players are not ranked.";
+    if (pointsEl) pointsEl.textContent = me ? `${Number(me.points) || 0} points` : "Sign in to see account points.";
+    if (board) {
+        board.innerHTML = rows.slice(0, 10).map(x =>
+            `<div class="settings-row"><div><strong>#${x.rank} ${escapeHtml(x.username)}</strong></div><div class="settings-value">${Number(x.points)||0} pts</div></div>`
+        ).join("") || '<div class="settings-muted">No ranked accounts yet.</div>';
+    }
+});
+socket.on("playerStatsData", data => {
+    const grid = $("settingsStatsGrid");
+    if (!grid || !data?.ok) return;
+    const st = data.stats || {};
+    grid.innerHTML = [
+        ["🔪 Kills", st.kills],
+        ["🛡️ Saves", st.saves],
+        ["🔎 Detects", st.detects],
+        ["🗳️ Correct Votes", st.civilianVotes],
+        ["🤡 Jester Wins", st.jesterWins]
+    ].map(([label,value]) => `<div class="settings-stat"><span>${label}</span><strong>${Number(value)||0}</strong></div>`).join("");
+});
+
+
+/* =========================================================
+   VOICE CHAT — HOST CONTROLS
+   - Allow Voice Chat: YES / NO (host settings)
+   - Host picks up to 5 voice-chat players (the server enforces the limit)
+========================================================= */
+
+const MAX_VOICE_PLAYERS_CLIENT = 5;
+
+/* Styles for the voice picker and night popups live in style.css. */
+function ensureMafiaVoiceUiStyles() {}
+
+function readVoiceSettings(data) {
+    if (!data) return;
+
+    if (data.voiceChatAllowed !== undefined) {
+        voiceChatAllowedSetting = data.voiceChatAllowed !== false;
+    }
+
+    if (Array.isArray(data.voicePlayerIds)) {
+        voicePlayerIds = data.voicePlayerIds.slice();
+    }
+}
+
+/* "Allow Voice Chat: YES / NO" inside the host's Role Settings (index.html). */
+function ensureVoiceHostSetting() {
+    if (!isHost) return;
+
+    let box = $("voiceAllowSetting");
+
+    if (!box) {
+        const hostSettings = $("hostSettings");
+        if (!hostSettings) return;
+
+        box = document.createElement("div");
+        box.id = "voiceAllowSetting";
+        box.className = "grandma-setting voice-allow-setting";
+        box.innerHTML = `
+            <p>🎙️ Allow Voice Chat</p>
+            <label><input type="radio" name="voiceAllowChoice" id="voiceAllowYes"> Yes</label>
+            <label><input type="radio" name="voiceAllowChoice" id="voiceAllowNo"> No</label>
+            <small id="voiceAllowHint" class="voice-allow-hint"></small>
+        `;
+
+        const heading = hostSettings.querySelector("h2");
+        if (heading && heading.nextSibling) {
+            hostSettings.insertBefore(box, heading.nextSibling);
+        } else {
+            hostSettings.insertBefore(box, hostSettings.firstChild);
+        }
+    }
+
+    if (!box.dataset.bound) {
+        box.dataset.bound = "1";
+
+        const send = allowed => {
+            voiceChatAllowedSetting = allowed;
+            socket.emit("setVoiceSettings", { roomCode, allowed });
+            ensureVoiceHostSetting();
+            updateVoiceHostButton();
+        };
+
+        $("voiceAllowYes")?.addEventListener("change", () => { if ($("voiceAllowYes").checked) send(true); });
+        $("voiceAllowNo")?.addEventListener("change", () => { if ($("voiceAllowNo").checked) send(false); });
+    }
+
+    const yes = $("voiceAllowYes");
+    const no = $("voiceAllowNo");
+    if (yes) yes.checked = voiceChatAllowedSetting;
+    if (no) no.checked = !voiceChatAllowedSetting;
+
+    const hint = $("voiceAllowHint");
+    if (hint) {
+        hint.textContent = voiceChatAllowedSetting
+            ? `You will pick up to ${MAX_VOICE_PLAYERS_CLIENT} voice-chat players when you press START GAME.`
+            : "Voice chat is disabled for everyone.";
+    }
+}
+
+/* Host-only button inside the voice panel to change the selected players. */
+function updateVoiceHostButton() {
+    const body = $("voiceBody");
+    if (!body) return;
+
+    const show = Boolean(isHost && voiceChatAllowedSetting);
+    let button = $("voicePlayersButton");
+
+    if (!button) {
+        if (!show) return;
+
+        button = document.createElement("button");
+        button.id = "voicePlayersButton";
+        button.type = "button";
+        button.className = "voice-control-button";
+        button.addEventListener("click", () => openVoicePicker("edit"));
+        body.insertBefore(button, $("voiceParticipants") || null);
+    }
+
+    button.style.display = show ? "" : "none";
+    button.textContent = `👥 VOICE PLAYERS (${voicePlayerIds.length}/${MAX_VOICE_PLAYERS_CLIENT})`;
+}
+
+/*
+   mode "start": shown after START GAME is pressed; confirming starts the game.
+   mode "edit":  host changes the selected players (lobby or during the game).
+*/
+function openVoicePicker(mode, startPayload) {
+    if (!isHost) return;
+
+    ensureMafiaVoiceUiStyles();
+
+    let overlay = $("voicePickerOverlay");
+    if (!overlay) {
+        overlay = document.createElement("div");
+        overlay.id = "voicePickerOverlay";
+        document.body.appendChild(overlay);
+    }
+
+    const list = players.filter(player => player && player.connected !== false);
+    const selected = new Set(voicePlayerIds.filter(id => list.some(player => player.id === id)));
+
+    const close = () => { overlay.style.display = "none"; };
+
+    const render = () => {
+        overlay.innerHTML = "";
+
+        const card = document.createElement("div");
+        card.className = "voice-picker-card";
+
+        const title = document.createElement("h2");
+        title.textContent = "🎙️ Choose Voice Chat Players";
+
+        const info = document.createElement("p");
+        info.textContent = `Pick up to ${MAX_VOICE_PLAYERS_CLIENT} players. Everyone else still plays normally but cannot use voice chat.`;
+
+        const count = document.createElement("div");
+        count.className = "voice-picker-count";
+        count.textContent = `${selected.size} / ${MAX_VOICE_PLAYERS_CLIENT} selected`;
+
+        card.append(title, info, count);
+
+        list.forEach(player => {
+            const row = document.createElement("label");
+            row.className = "voice-picker-row";
+
+            const checkbox = document.createElement("input");
+            checkbox.type = "checkbox";
+            checkbox.checked = selected.has(player.id);
+
+            const locked = !checkbox.checked && selected.size >= MAX_VOICE_PLAYERS_CLIENT;
+            checkbox.disabled = locked;
+            if (locked) row.classList.add("voice-picker-disabled");
+
+            checkbox.addEventListener("change", () => {
+                if (checkbox.checked) {
+                    if (selected.size >= MAX_VOICE_PLAYERS_CLIENT) { checkbox.checked = false; return; }
+                    selected.add(player.id);
+                } else {
+                    selected.delete(player.id);
+                }
+                render();
+            });
+
+            const name = document.createElement("span");
+            name.textContent = player.name + (player.id === socket.id ? " (you)" : "");
+
+            row.append(checkbox, name);
+            card.appendChild(row);
+        });
+
+        const actions = document.createElement("div");
+        actions.className = "voice-picker-actions";
+
+        const confirm = document.createElement("button");
+        confirm.type = "button";
+        confirm.textContent = mode === "start" ? "▶ START GAME" : "✅ SAVE";
+        confirm.addEventListener("click", () => {
+            const chosen = Array.from(selected);
+
+            if (mode === "start" && startPayload) {
+                startPayload.voice = { allowed: true, players: chosen };
+                socket.emit("startGame", startPayload);
+            } else {
+                socket.emit("setVoiceSettings", { roomCode, allowed: true, players: chosen });
+            }
+
+            close();
+        });
+
+        const cancel = document.createElement("button");
+        cancel.type = "button";
+        cancel.textContent = "CANCEL";
+        cancel.addEventListener("click", close);
+
+        actions.append(confirm, cancel);
+        card.appendChild(actions);
+        overlay.appendChild(card);
+    };
+
+    render();
+    overlay.style.display = "flex";
+}
+
+/* =========================================================
+   NIGHT ACTION POPUPS — Mafia / Doctor / Cupid
+   Small private popup after the action is completed (the existing
+   Detective Yes/No popup is not touched). Only the actor receives it.
+========================================================= */
+
+let nightActionPopupTimer = null;
+
+function ensureNightActionPopup() {
+    let overlay = $("nightActionPopup");
+    if (overlay) return overlay;
+
+    overlay = document.createElement("div");
+    overlay.id = "nightActionPopup";
+    overlay.setAttribute("aria-live", "polite");
+    overlay.innerHTML = `
+        <div class="detective-result-card night-action-card">
+            <div class="detective-result-scan"></div>
+
+            <div class="detective-result-badge" id="nightActionIcon"></div>
+
+            <div class="detective-result-kicker" id="nightActionKicker"></div>
+
+            <div class="detective-result-title" id="nightActionTitle"></div>
+
+            <div class="detective-result-divider"></div>
+
+            <div class="detective-result-label" id="nightActionLabel"></div>
+
+            <div class="detective-result-player" id="nightActionValue"></div>
+
+            <div class="detective-result-footer">
+                <span class="detective-result-dot"></span>
+                <span id="nightActionFooter"></span>
+            </div>
+
+            <div class="detective-result-progress">
+                <div class="detective-result-progress-bar night-action-progress-bar"></div>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+    return overlay;
+}
+
+function hideNightActionPopup() {
+    clearTimeout(nightActionPopupTimer);
+    nightActionPopupTimer = null;
+
+    const overlay = $("nightActionPopup");
+    if (overlay) overlay.style.display = "none";
+}
+
+function showNightActionPopup(data) {
+    const views = {
+        mafia: {
+            icon: "🔫",
+            kicker: "MAFIA • NIGHT ORDER",
+            title: "TARGET LOCKED",
+            label: "TARGET",
+            value: data?.targetName || "Unknown",
+            footer: "PRIVATE MAFIA REPORT"
+        },
+        doctor: {
+            icon: "🩺",
+            kicker: "DOCTOR • NIGHT DUTY",
+            title: "PATIENT PROTECTED",
+            label: "PROTECTING",
+            value: data?.targetName || "Unknown",
+            footer: "PRIVATE DOCTOR REPORT"
+        },
+        cupid: {
+            icon: "💘",
+            kicker: "CUPID • NIGHT MATCH",
+            title: "LOVERS LINKED",
+            label: "COUPLE",
+            value: `${data?.firstName || "?"} ❤️ ${data?.secondName || "?"}`,
+            footer: "PRIVATE CUPID REPORT"
+        }
+    };
+
+    const view = views[data?.kind];
+    if (!view) return;
+
+    const overlay = ensureNightActionPopup();
+
+    $("nightActionIcon").textContent = view.icon;
+    $("nightActionKicker").textContent = view.kicker;
+    $("nightActionTitle").textContent = view.title;
+    $("nightActionLabel").textContent = view.label;
+    $("nightActionValue").textContent = view.value;
+    $("nightActionFooter").textContent = view.footer;
+
+    overlay.dataset.kind = data.kind;
+    overlay.style.display = "flex";
+
+    // Restart the entrance + progress animation every time.
+    const card = overlay.querySelector(".night-action-card");
+    const progress = overlay.querySelector(".night-action-progress-bar");
+
+    if (card) {
+        card.classList.remove("detective-result-visible");
+        void card.offsetWidth;
+        card.classList.add("detective-result-visible");
+    }
+
+    if (progress) {
+        progress.classList.remove("night-action-progress-running");
+        void progress.offsetWidth;
+        progress.classList.add("night-action-progress-running");
+    }
+
+    clearTimeout(nightActionPopupTimer);
+    nightActionPopupTimer = setTimeout(hideNightActionPopup, 2800);
+}
+
+socket.on("nightActionPopup", data => {
+    stopLast10Sound();
+    showNightActionPopup(data);
+});
