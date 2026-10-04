@@ -253,6 +253,15 @@ function emitPublicMatches() {
 const PHASE_TIME_LIMIT = 2 * 60 * 1000;
 const NIGHT_TURN_TIME_LIMIT = 30 * 1000;
 
+// After the LAST night turn is over, the server waits this long (the
+// turn-over sound plays during it) and only THEN checks who died.
+const DEATH_CHECK_DELAY_MS = 3000;
+
+// A dead Doctor/Detective still gets a hidden night turn. It ends after a
+// random time inside this range so nobody can time it to spot the dead role.
+const HIDDEN_TURN_MIN_MS = 4000;
+const HIDDEN_TURN_MAX_MS = 27000;
+
 function clearPhaseTimer(room) {
     if (!room) return;
 
@@ -309,6 +318,11 @@ function clearNightTurnTimer(room) {
         room.nightTurnTimer = null;
     }
 
+    if (room.nightEndTimer) {
+        clearTimeout(room.nightEndTimer);
+        room.nightEndTimer = null;
+    }
+
     room.nightTurnEndsAt = null;
 }
 
@@ -342,6 +356,35 @@ function hasLivingRoleForTurn(room, turn) {
     return false;
 }
 
+/*
+   Hidden turns: if the Doctor / Detective exists in this game but is dead
+   (or disconnected), their turn STILL happens so the turn order never
+   changes. Nobody is told, and the length is random.
+*/
+function hasHiddenTurn(room, turn) {
+    if (!room) return false;
+
+    if (turn === "doctor") {
+        return room.players.some(p => p.role === "Doctor");
+    }
+
+    if (turn === "detective") {
+        return room.players.some(p => p.role === "Detective");
+    }
+
+    return false;
+}
+
+function randomHiddenTurnMs() {
+    // Sometimes run the full length, like a living player who is slow.
+    if (Math.random() < 0.15) return NIGHT_TURN_TIME_LIMIT;
+
+    return Math.round(
+        HIDDEN_TURN_MIN_MS +
+        Math.random() * (HIDDEN_TURN_MAX_MS - HIDDEN_TURN_MIN_MS)
+    );
+}
+
 function nightTurnName(turn) {
     return {
         mafia: "MAFIA",
@@ -360,7 +403,8 @@ function startNightTurn(roomCode, requestedIndex = 0) {
     let index = requestedIndex;
     while (
         index < NIGHT_TURN_ORDER.length &&
-        !hasLivingRoleForTurn(room, NIGHT_TURN_ORDER[index])
+        !hasLivingRoleForTurn(room, NIGHT_TURN_ORDER[index]) &&
+        !hasHiddenTurn(room, NIGHT_TURN_ORDER[index])
     ) {
         index += 1;
     }
@@ -369,13 +413,43 @@ function startNightTurn(roomCode, requestedIndex = 0) {
         room.nightTurn = null;
         room.nightTurnIndex = NIGHT_TURN_ORDER.length;
         room.nightTurnEndsAt = null;
-        endNight(roomCode);
+        room.hiddenNightTurn = false;
+
+        broadcastVoiceState(roomCode);
+        sendGameInformation(roomCode);
+
+        /*
+           Last night turn finished -> turn-over sound (played by every
+           client) -> wait 3 seconds -> THEN check whether someone died.
+           endNight() sends the morning result, and the death sound is only
+           played by the clients when that result contains a death.
+        */
+        room.nightEndTimer = setTimeout(() => {
+            const currentRoom = rooms[roomCode];
+            if (!currentRoom) return;
+
+            currentRoom.nightEndTimer = null;
+
+            if (currentRoom.phase !== "night") return;
+
+            endNight(roomCode);
+        }, DEATH_CHECK_DELAY_MS);
+
         return;
     }
 
     room.nightTurnIndex = index;
     room.nightTurn = NIGHT_TURN_ORDER[index];
+
+    // Everybody always SEES the normal 30-second turn timer. A hidden
+    // (dead Doctor/Detective) turn simply ends early at a random moment,
+    // exactly like a living player who finished quickly.
+    room.hiddenNightTurn = !hasLivingRoleForTurn(room, room.nightTurn);
     room.nightTurnEndsAt = Date.now() + NIGHT_TURN_TIME_LIMIT;
+
+    const turnLengthMs = room.hiddenNightTurn
+        ? randomHiddenTurnMs()
+        : NIGHT_TURN_TIME_LIMIT;
 
     room.nightTurnTimer = setTimeout(() => {
         const currentRoom = rooms[roomCode];
@@ -394,7 +468,7 @@ function startNightTurn(roomCode, requestedIndex = 0) {
             roomCode,
             currentRoom.nightTurnIndex + 1
         );
-    }, NIGHT_TURN_TIME_LIMIT);
+    }, turnLengthMs);
 
     announce(
         roomCode,
@@ -411,6 +485,9 @@ function startNightTurn(roomCode, requestedIndex = 0) {
 
 function currentTurnActionsDone(room) {
     if (!room || room.phase !== "night") return false;
+
+    // A hidden (dead Doctor/Detective) turn only ends on its random timer.
+    if (room.hiddenNightTurn) return false;
 
     const turn = room.nightTurn;
 
@@ -678,12 +755,16 @@ function resetGameState(room) {
     clearNightTurnTimer(room);
     room.nightTurn = null;
     room.nightTurnIndex = 0;
+    room.hiddenNightTurn = false;
 
     resetNightActions(room);
 
     room.players.forEach(player => {
         player.role = null;
         player.alive = true;
+
+        // The host picks the voice-chat players again for the next game.
+        player.voiceAllowed = false;
     });
 }
 /* =========================================================
@@ -738,6 +819,12 @@ function emitLobby(roomCode) {
 
             allowPeopleToJoin:
                 room.allowPeopleToJoin !== false,
+
+            voiceChatAllowed:
+                room.voiceChatAllowed !== false,
+
+            voicePlayerIds:
+                getVoicePlayerIds(room),
 
             roomCode
         }
@@ -1050,6 +1137,12 @@ function sendGameInformation(roomCode) {
 
                 allowPeopleToJoin:
                     room.allowPeopleToJoin !== false,
+
+                voiceChatAllowed:
+                    room.voiceChatAllowed !== false,
+
+                voicePlayerIds:
+                    getVoicePlayerIds(room),
 
                 stats:
                     room.stats || {
@@ -2063,8 +2156,72 @@ function endVoting(roomCode) {
    Raw audio never passes through this server.
 ========================================================= */
 
+const MAX_VOICE_PLAYERS = 5;
+
+function getVoicePlayerIds(room) {
+    if (!room) return [];
+
+    return room.players
+        .filter(p => p.voiceAllowed && p.connected !== false)
+        .map(p => p.id);
+}
+
+/*
+   Validates the host's voice-player selection.
+   Returns { ids } or { error }. The 5-player limit is enforced HERE, on
+   the server, so a modified browser cannot go over it.
+*/
+function cleanVoiceSelection(room, ids) {
+    const raw = Array.isArray(ids) ? ids.map(id => String(id)) : [];
+    const unique = Array.from(new Set(raw));
+
+    if (unique.length > MAX_VOICE_PLAYERS) {
+        return { error: `You can select at most ${MAX_VOICE_PLAYERS} voice-chat players.` };
+    }
+
+    const valid = unique.filter(id =>
+        room.players.some(p => p.id === id && p.connected !== false)
+    );
+
+    return { ids: valid };
+}
+
+/*
+   allowed: true / false / undefined (undefined = leave unchanged)
+   ids:     array of player ids / undefined (undefined = leave unchanged)
+   Returns an error string, or null when everything was applied.
+*/
+function setRoomVoiceSettings(room, allowed, ids) {
+    let selection = null;
+
+    if (ids !== undefined) {
+        const cleaned = cleanVoiceSelection(room, ids);
+        if (cleaned.error) return cleaned.error;
+        selection = cleaned.ids;
+    }
+
+    if (typeof allowed === "boolean") {
+        room.voiceChatAllowed = allowed;
+    }
+
+    if (selection) {
+        room.players.forEach(p => {
+            p.voiceAllowed = selection.includes(p.id);
+        });
+    }
+
+    return null;
+}
+
 function getVoiceGroup(room, player) {
     if (!room || !player || player.connected === false) return "none";
+
+    // Host turned voice chat OFF -> nobody has voice.
+    if (room.voiceChatAllowed === false) return "none";
+
+    // Once the game has started, only the players the host selected
+    // (maximum 5) can use voice chat. Everyone else plays normally.
+    if (room.phase !== "lobby" && !player.voiceAllowed) return "none";
 
     if (room.phase === "lobby") return "lobby";
     if (room.phase === "gameover") return "gameover";
@@ -2106,8 +2263,13 @@ function broadcastVoiceState(roomCode) {
     if (!room) return;
 
     room.players.forEach(player => {
+        const chatAllowed = room.voiceChatAllowed !== false;
+        const selected = room.phase === "lobby" || Boolean(player.voiceAllowed);
+
         io.to(player.id).emit("voiceState", {
-            enabled: true,
+            enabled: chatAllowed && selected,
+            chatAllowed,
+            selected,
             group: getVoiceGroup(room, player),
             peers: getVoicePeers(room, player)
         });
@@ -2251,8 +2413,41 @@ function saveQuestions() {
     }, 300);
 }
 
+function sanitizeQuestionForSocket(question, socket) {
+    const accountKey = socketAccounts.get(socket.id) || null;
+    const canManage = socket.badge === "admin" || socket.badge === "owner";
+    const ownRequest = Boolean(accountKey && question.authorAccountKey === accountKey);
+    return {
+        id: question.id,
+        pinned: Boolean(question.pinned),
+        type: question.type || "question",
+        title: question.title,
+        author: question.author,
+        badge: question.badge || "member",
+        body: question.body,
+        t: question.t,
+        isMine: ownRequest,
+        replies: (Array.isArray(question.replies) ? question.replies : []).map(r => ({
+            id: r.id || 0,
+            text: r.text,
+            t: r.t,
+            badge: r.badge || "owner",
+            author: r.author || (r.badge === "owner" ? "Owner" : "Admin"),
+            canEdit: canManage && r.badge === socket.badge && (r.authorAccountKey ? r.authorAccountKey === accountKey : r.authorSocketId === socket.id),
+            canDelete: canManage && r.badge === socket.badge && (r.authorAccountKey ? r.authorAccountKey === accountKey : r.authorSocketId === socket.id)
+        })),
+        canEdit: canManage || ownRequest,
+        canDelete: canManage || ownRequest
+    };
+}
+
 function emitQuestionsUpdate() {
-    io.to(QUESTIONS_WATCHERS).emit("questionsUpdate", questionsDb);
+    for (const [socketId, client] of io.sockets.sockets) {
+        if (!client.rooms.has(QUESTIONS_WATCHERS)) continue;
+        const visible = questionsDb
+            .map(q => sanitizeQuestionForSocket(q, client));
+        client.emit("questionsUpdate", visible);
+    }
 }
 
 /* =========================================================
@@ -2269,29 +2464,33 @@ io.on(
         );
 
         /* =================================================
-           BADGES + QUESTIONS
+           BADGES + HELP CENTER
         ================================================= */
 
         socket.badge = "member";
 
         socket.on("badgeApply", (data, callback) => {
             const key = String(data?.key ?? "");
-
             socket.badge =
                 key === OWNER_BADGE_KEY ? "owner" :
                 key === ADMIN_BADGE_KEY ? "admin" :
                 "member";
 
             syncAccountBadge(socket, true);
-
-            if (typeof callback === "function") {
-                callback({ badge: socket.badge });
-            }
+            if (typeof callback === "function") callback({ badge: socket.badge });
         });
 
         socket.on("questionsGet", callback => {
             socket.join(QUESTIONS_WATCHERS);
-            if (typeof callback === "function") callback(questionsDb);
+            const accountKey = socketAccounts.get(socket.id) || null;
+            const canManage = socket.badge === "admin" || socket.badge === "owner";
+
+            // Questions List is public to signed-in players; the server still
+            // marks ownership so the client can provide a separate My Questions view.
+            const visible = questionsDb
+                .map(q => sanitizeQuestionForSocket(q, socket));
+
+            if (typeof callback === "function") callback(visible);
         });
 
         socket.on("questionsLeave", () => {
@@ -2303,25 +2502,29 @@ io.on(
                 if (typeof callback === "function") callback(result);
             };
 
-            const name = String(data?.name || "").trim().slice(0, 20);
+            const accountKey = socketAccounts.get(socket.id) || null;
+            if (!accountKey || !accountsDb.users[accountKey]) {
+                return reply({ ok: false, error: "Sign in to an account before using Help." });
+            }
+
+            const type = ["question", "suggestion", "bug"].includes(String(data?.type)) ? String(data.type) : "question";
             const title = String(data?.title || "").trim().slice(0, 80);
             const body = String(data?.body || "").trim().slice(0, 500);
 
-            if (!name || !title || !body) {
-                return reply({ ok: false, error: "Fill in your name, title and details." });
-            }
-
+            if (!title || !body) return reply({ ok: false, error: "Fill in the title and details." });
             if (Date.now() - (socket.lastQuestionAt || 0) < 5000) {
-                return reply({ ok: false, error: "Please wait a few seconds before asking again." });
+                return reply({ ok: false, error: "Please wait a few seconds before sending again." });
             }
-
             socket.lastQuestionAt = Date.now();
 
+            const user = accountsDb.users[accountKey];
             questionsDb.push({
                 id: Date.now() + Math.floor(Math.random() * 1000),
                 pinned: false,
+                type,
                 title,
-                author: name,
+                author: user.username,
+                authorAccountKey: accountKey,
                 badge: socket.badge || "member",
                 body,
                 t: Date.now(),
@@ -2338,25 +2541,109 @@ io.on(
             reply({ ok: true });
         });
 
+        socket.on("questionsEdit", (data, callback) => {
+            const reply = result => { if (typeof callback === "function") callback(result); };
+            const question = questionsDb.find(q => q.id === Number(data?.id));
+            if (!question) return reply({ ok: false, error: "Request not found." });
+
+            const accountKey = socketAccounts.get(socket.id) || null;
+            const canManage = socket.badge === "admin" || socket.badge === "owner";
+            const isOwner = accountKey && question.authorAccountKey === accountKey;
+            if (!canManage && !isOwner) return reply({ ok: false, error: "You can only edit your own request." });
+            if (question.pinned) return reply({ ok: false, error: "This Help item cannot be edited." });
+
+            const title = String(data?.title || "").trim().slice(0, 80);
+            const body = String(data?.body || "").trim().slice(0, 500);
+            if (!title || !body) return reply({ ok: false, error: "Fill in the title and details." });
+
+            question.title = title;
+            question.body = body;
+            question.editedAt = Date.now();
+            saveQuestions();
+            emitQuestionsUpdate();
+            reply({ ok: true });
+        });
+
+        socket.on("questionsDelete", (data, callback) => {
+            const reply = result => { if (typeof callback === "function") callback(result); };
+            const index = questionsDb.findIndex(q => q.id === Number(data?.id));
+            if (index === -1) return reply({ ok: false, error: "Request not found." });
+
+            const question = questionsDb[index];
+            const accountKey = socketAccounts.get(socket.id) || null;
+            const canManage = socket.badge === "admin" || socket.badge === "owner";
+            const isOwner = accountKey && question.authorAccountKey === accountKey;
+            if (!canManage && !isOwner) return reply({ ok: false, error: "You can only delete your own request." });
+            if (question.pinned) return reply({ ok: false, error: "This Help item cannot be deleted." });
+
+            questionsDb.splice(index, 1);
+            saveQuestions();
+            emitQuestionsUpdate();
+            reply({ ok: true });
+        });
+
         socket.on("questionsReply", (data, callback) => {
-            const reply = result => {
-                if (typeof callback === "function") callback(result);
-            };
-
-            // Only the owner can reply.
-            if (socket.badge !== "owner") {
-                return reply({ ok: false, error: "Only the owner can reply." });
+            const reply = result => { if (typeof callback === "function") callback(result); };
+            if (socket.badge !== "admin" && socket.badge !== "owner") {
+                return reply({ ok: false, error: "Only Admin and Owner can answer." });
             }
 
-            const question = questionsDb.find(q => q.id === data?.id);
+            const question = questionsDb.find(q => q.id === Number(data?.id));
             const text = String(data?.text || "").trim().slice(0, 500);
+            if (!question || !text) return reply({ ok: false, error: "Write an answer first." });
 
-            if (!question || !text) {
-                return reply({ ok: false, error: "Write a reply first." });
+            const accountKey = socketAccounts.get(socket.id) || null;
+            question.replies = Array.isArray(question.replies) ? question.replies : [];
+            question.replies.push({
+                id: Date.now() + Math.floor(Math.random() * 1000),
+                text,
+                t: Date.now(),
+                badge: socket.badge,
+                author: accountKey && accountsDb.users[accountKey] ? accountsDb.users[accountKey].username : (socket.badge === "owner" ? "Owner" : "Admin"),
+                authorAccountKey: accountKey,
+                authorSocketId: socket.id
+            });
+
+            saveQuestions();
+            emitQuestionsUpdate();
+            reply({ ok: true });
+        });
+
+        socket.on("questionsReplyEdit", (data, callback) => {
+            const reply = result => { if (typeof callback === "function") callback(result); };
+            const question = questionsDb.find(q => q.id === Number(data?.id));
+            const replyId = Number(data?.replyId);
+            const item = question?.replies?.find(r => r.id === replyId);
+            const text = String(data?.text || "").trim().slice(0, 500);
+            if (!question || !item || !text) return reply({ ok: false, error: "Answer not found." });
+            if (socket.badge !== item.badge || (item.authorAccountKey && item.authorAccountKey !== (socketAccounts.get(socket.id) || null))) {
+                return reply({ ok: false, error: "You can only edit your own answer." });
             }
+            if (!item.authorAccountKey && item.authorSocketId !== socket.id) {
+                return reply({ ok: false, error: "You can only edit your own answer." });
+            }
+            item.text = text;
+            item.editedAt = Date.now();
+            saveQuestions();
+            emitQuestionsUpdate();
+            reply({ ok: true });
+        });
 
-            question.replies.push({ text, t: Date.now() });
-
+        socket.on("questionsReplyDelete", (data, callback) => {
+            const reply = result => { if (typeof callback === "function") callback(result); };
+            const question = questionsDb.find(q => q.id === Number(data?.id));
+            const replyId = Number(data?.replyId);
+            if (!question || !Array.isArray(question.replies)) return reply({ ok: false, error: "Answer not found." });
+            const index = question.replies.findIndex(r => r.id === replyId);
+            if (index === -1) return reply({ ok: false, error: "Answer not found." });
+            const item = question.replies[index];
+            if (socket.badge !== item.badge || (item.authorAccountKey && item.authorAccountKey !== (socketAccounts.get(socket.id) || null))) {
+                return reply({ ok: false, error: "You can only delete your own answer." });
+            }
+            if (!item.authorAccountKey && item.authorSocketId !== socket.id) {
+                return reply({ ok: false, error: "You can only delete your own answer." });
+            }
+            question.replies.splice(index, 1);
             saveQuestions();
             emitQuestionsUpdate();
             reply({ ok: true });
@@ -2725,6 +3012,36 @@ io.on(
 
 
         /* =================================================
+           HOST VOICE SETTINGS
+           Allow Voice Chat YES/NO + choose up to 5 voice players.
+        ================================================= */
+
+        socket.on("setVoiceSettings", data => {
+            const roomCode = String(data?.roomCode || "").trim().toUpperCase();
+            const room = rooms[roomCode];
+
+            if (!room || room.host !== socket.id) return;
+
+            const error = setRoomVoiceSettings(
+                room,
+                typeof data?.allowed === "boolean" ? data.allowed : undefined,
+                Array.isArray(data?.players) ? data.players : undefined
+            );
+
+            if (error) {
+                return socket.emit("gameError", error);
+            }
+
+            if (room.phase === "lobby") {
+                emitLobby(roomCode);
+            } else {
+                sendGameInformation(roomCode);
+            }
+
+            broadcastVoiceState(roomCode);
+        });
+
+        /* =================================================
            CREATE ROOM
         ================================================= */
 
@@ -2769,6 +3086,11 @@ io.on(
                     // Rejoin / host approval controls.
                     allowPeopleToJoin: true,
                     pendingJoinRequests: {},
+
+                    // Voice chat: host can turn it off; maximum 5 voice players.
+                    voiceChatAllowed: true,
+                    hiddenNightTurn: false,
+                    nightEndTimer: null,
 
                     // Live game statistics.
                     stats: {
@@ -3338,6 +3660,30 @@ io.on(
                         "You need at least one Mafia, Godfather, or Grandmafia!"
                     );
                 }
+
+                /* =========================
+                   VOICE CHAT SELECTION
+                   (validated before anything starts)
+                ========================= */
+
+                const voiceInput =
+                    data.voice && typeof data.voice === "object"
+                        ? data.voice
+                        : null;
+
+                if (voiceInput) {
+                    const voiceCheck = cleanVoiceSelection(
+                        room,
+                        voiceInput.players
+                    );
+
+                    if (voiceCheck.error) {
+                        return socket.emit(
+                            "gameError",
+                            voiceCheck.error
+                        );
+                    }
+                }
 /* =========================
    START COMPLETELY NEW GAME
 ========================= */
@@ -3378,6 +3724,14 @@ room.players.forEach(player => {
     player.role = null;
     player.alive = true;
 });
+
+if (voiceInput) {
+    setRoomVoiceSettings(
+        room,
+        typeof voiceInput.allowed === "boolean" ? voiceInput.allowed : undefined,
+        Array.isArray(voiceInput.players) ? voiceInput.players : []
+    );
+}
 
 /* =========================
    ASSIGN NEW ROLES
@@ -3479,6 +3833,15 @@ assignRoles(
                 socket.emit(
                     "actionConfirmed",
                     target.name
+                );
+
+                // Small private popup for the Mafia member who just chose.
+                socket.emit(
+                    "nightActionPopup",
+                    {
+                        kind: "mafia",
+                        targetName: target.name
+                    }
                 );
 
                 checkNightActions(
@@ -3722,6 +4085,16 @@ assignRoles(
                     `${first.name} ❤️ ${second.name}`
                 );
 
+                // Small private popup for the Cupid/Lover.
+                socket.emit(
+                    "nightActionPopup",
+                    {
+                        kind: "cupid",
+                        firstName: first.name,
+                        secondName: second.name
+                    }
+                );
+
                 checkNightActions(
                     data.roomCode
                 );
@@ -3801,6 +4174,15 @@ assignRoles(
                 socket.emit(
                     "actionConfirmed",
                     target.name
+                );
+
+                // Small private popup for the Doctor.
+                socket.emit(
+                    "nightActionPopup",
+                    {
+                        kind: "doctor",
+                        targetName: target.name
+                    }
                 );
 
                 checkNightActions(
