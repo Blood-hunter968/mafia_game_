@@ -24,7 +24,7 @@ const path = require("path");
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 const ACCOUNTS_FILE = path.join(DATA_DIR, "accounts.json");
 
-const STAT_KEYS = ["kills", "saves", "detects", "civilianVotes", "jesterWins"];
+const STAT_KEYS = ["kills", "saves", "detects", "civilianVotes", "jesterWins", "mafiaWins", "civilianWins"];
 
 let accountsDb = { users: {} };
 
@@ -133,12 +133,13 @@ function isValidUsername(name) {
 }
 
 function emptyStats() {
-    return { kills: 0, saves: 0, detects: 0, civilianVotes: 0, jesterWins: 0 };
+    return { kills: 0, saves: 0, detects: 0, civilianVotes: 0, jesterWins: 0, mafiaWins: 0, civilianWins: 0 };
 }
 
-/* Points per action: 1 kill = 3, 1 save = 1, 1 detective check = 2,
-   1 Jester win = 4, 1 civilian correct Mafia vote = 1. */
-const POINT_VALUES = { kills: 3, saves: 1, detects: 2, jesterWins: 4, civilianVotes: 1 };
+/* Points per action: 1 kill = 3, 1 save = 2, 1 detective check = 2,
+   1 Jester win = 4, 1 civilian correct Mafia vote = 1,
+   1 Mafia team win = 5, 1 Civilian team win = 4. */
+const POINT_VALUES = { kills: 3, saves: 2, detects: 2, jesterWins: 4, civilianVotes: 1, mafiaWins: 5, civilianWins: 4 };
 
 function totalStats(stats) {
     return STAT_KEYS.reduce(
@@ -323,6 +324,11 @@ function clearNightTurnTimer(room) {
         room.nightEndTimer = null;
     }
 
+    if (room.nightTransitionTimer) {
+        clearTimeout(room.nightTransitionTimer);
+        room.nightTransitionTimer = null;
+    }
+
     room.nightTurnEndsAt = null;
 }
 
@@ -394,6 +400,68 @@ function nightTurnName(turn) {
     }[turn] || "NIGHT";
 }
 
+/* =========================================================
+   TURN-OVER TRANSITION
+   "<ROLE> turn is over" popup -> wait 3 seconds -> next turn.
+   (Mafia -> Doctor, Doctor -> Detective, Detective -> next.)
+   For the LAST turn, startNightTurn() already waits 3 seconds
+   before checking who died, so no extra wait is added there.
+========================================================= */
+
+const TURN_TRANSITION_DELAY_MS = 3000;
+
+function finishNightTurnThenAdvance(roomCode) {
+    const room = rooms[roomCode];
+    if (!room || room.phase !== "night") return;
+
+    // Already waiting between two turns - never run twice.
+    if (room.nightTransitionTimer) return;
+
+    const finishedTurn = room.nightTurn;
+    const nextIndex = room.nightTurnIndex + 1;
+
+    // Stops the finished turn's timer and its countdown.
+    clearNightTurnTimer(room);
+
+    announce(
+        roomCode,
+        `⏰ ${nightTurnName(finishedTurn)} turn is over.`,
+        "info"
+    );
+
+    // Is there another turn after this one?
+    let upcoming = nextIndex;
+    while (
+        upcoming < NIGHT_TURN_ORDER.length &&
+        !hasLivingRoleForTurn(room, NIGHT_TURN_ORDER[upcoming]) &&
+        !hasHiddenTurn(room, NIGHT_TURN_ORDER[upcoming])
+    ) {
+        upcoming += 1;
+    }
+
+    // That was the last turn: startNightTurn() adds its own 3-second wait.
+    if (upcoming >= NIGHT_TURN_ORDER.length) {
+        startNightTurn(roomCode, nextIndex);
+        return;
+    }
+
+    // Between turns nobody can act, and the turn overlay is hidden.
+    room.nightTurn = null;
+    room.hiddenNightTurn = false;
+    sendGameInformation(roomCode);
+
+    room.nightTransitionTimer = setTimeout(() => {
+        const currentRoom = rooms[roomCode];
+        if (!currentRoom) return;
+
+        currentRoom.nightTransitionTimer = null;
+
+        if (currentRoom.phase !== "night") return;
+
+        startNightTurn(roomCode, nextIndex);
+    }, TURN_TRANSITION_DELAY_MS);
+}
+
 function startNightTurn(roomCode, requestedIndex = 0) {
     const room = rooms[roomCode];
     if (!room || room.phase !== "night") return;
@@ -415,7 +483,6 @@ function startNightTurn(roomCode, requestedIndex = 0) {
         room.nightTurnEndsAt = null;
         room.hiddenNightTurn = false;
 
-        broadcastVoiceState(roomCode);
         sendGameInformation(roomCode);
 
         /*
@@ -458,16 +525,7 @@ function startNightTurn(roomCode, requestedIndex = 0) {
         currentRoom.nightTurnTimer = null;
         currentRoom.nightTurnEndsAt = null;
 
-        announce(
-            roomCode,
-            `⏰ ${nightTurnName(currentRoom.nightTurn)} turn is over.`,
-            "info"
-        );
-
-        startNightTurn(
-            roomCode,
-            currentRoom.nightTurnIndex + 1
-        );
+        finishNightTurnThenAdvance(roomCode);
     }, turnLengthMs);
 
     announce(
@@ -476,10 +534,6 @@ function startNightTurn(roomCode, requestedIndex = 0) {
         "night"
     );
 
-    // The voice channel changes whenever the active night role changes.
-    // Broadcast it immediately so every browser closes the old peer group
-    // and connects to the correct group without waiting for another event.
-    broadcastVoiceState(roomCode);
     sendGameInformation(roomCode);
 }
 
@@ -560,16 +614,10 @@ function checkNightTurnActions(roomCode) {
     */
     if (!currentTurnActionsDone(room)) return;
 
-    announce(
-        roomCode,
-        `⏰ ${nightTurnName(room.nightTurn)} turn is over.`,
-        "info"
-    );
+    // Already in the 3-second wait between two turns.
+    if (room.nightTransitionTimer) return;
 
-    startNightTurn(
-        roomCode,
-        room.nightTurnIndex + 1
-    );
+    finishNightTurnThenAdvance(roomCode);
 }
 
 /* =========================================================
@@ -762,9 +810,6 @@ function resetGameState(room) {
     room.players.forEach(player => {
         player.role = null;
         player.alive = true;
-
-        // The host picks the voice-chat players again for the next game.
-        player.voiceAllowed = false;
     });
 }
 /* =========================================================
@@ -819,12 +864,6 @@ function emitLobby(roomCode) {
 
             allowPeopleToJoin:
                 room.allowPeopleToJoin !== false,
-
-            voiceChatAllowed:
-                room.voiceChatAllowed !== false,
-
-            voicePlayerIds:
-                getVoicePlayerIds(room),
 
             roomCode
         }
@@ -1138,12 +1177,6 @@ function sendGameInformation(roomCode) {
                 allowPeopleToJoin:
                     room.allowPeopleToJoin !== false,
 
-                voiceChatAllowed:
-                    room.voiceChatAllowed !== false,
-
-                voicePlayerIds:
-                    getVoicePlayerIds(room),
-
                 stats:
                     room.stats || {
                         totalRounds: 0,
@@ -1232,6 +1265,21 @@ function isCountedAlive(player) {
     );
 }
 
+/* Team-win points (account players only, alive or dead).
+   "mafia"     -> every Mafia-team member (Mafia, Godfather, Grandmafia, Baby Mafia)
+   "civilians" -> everyone NOT on the Mafia team and NOT the Jester
+   Called once per game (checkWinner sets phase = "gameover" first). */
+function awardTeamWin(room, team) {
+    room.players.forEach(p => {
+        if (!p || !p.role) return;
+        if (team === "mafia" && isMafiaTeam(p.role)) {
+            recordStat(p, "mafiaWins");
+        } else if (team === "civilians" && !isMafiaTeam(p.role) && p.role !== "Jester") {
+            recordStat(p, "civilianWins");
+        }
+    });
+}
+
 function checkWinner(roomCode) {
 
     const room = rooms[roomCode];
@@ -1308,6 +1356,9 @@ function checkWinner(roomCode) {
 
         room.phase = "gameover";
 
+        // Permanent stat: Civilian team win (everyone except Mafia team + Jester).
+        awardTeamWin(room, "civilians");
+
         announce(
             roomCode,
             "🎉 The Mafia team has been eliminated!",
@@ -1337,6 +1388,9 @@ function checkWinner(roomCode) {
     ) {
 
         room.phase = "gameover";
+
+        // Permanent stat: Mafia team win (every Mafia-team member).
+        awardTeamWin(room, "mafia");
 
         announce(
             roomCode,
@@ -1788,9 +1842,6 @@ function endNight(roomCode) {
 
     room.phase = "day";
 
-    // Day voice is a shared channel for all living players.
-    broadcastVoiceState(roomCode);
-
     room.votes = {};
 
     resetNightActions(room);
@@ -2148,133 +2199,6 @@ function endVoting(roomCode) {
     startNextNight(roomCode);
 }
 
-
-
-/* =========================================================
-   WEBRTC VOICE CHAT
-   Server-side permissions + Socket.IO signaling only.
-   Raw audio never passes through this server.
-========================================================= */
-
-const MAX_VOICE_PLAYERS = 5;
-
-function getVoicePlayerIds(room) {
-    if (!room) return [];
-
-    return room.players
-        .filter(p => p.voiceAllowed && p.connected !== false)
-        .map(p => p.id);
-}
-
-/*
-   Validates the host's voice-player selection.
-   Returns { ids } or { error }. The 5-player limit is enforced HERE, on
-   the server, so a modified browser cannot go over it.
-*/
-function cleanVoiceSelection(room, ids) {
-    const raw = Array.isArray(ids) ? ids.map(id => String(id)) : [];
-    const unique = Array.from(new Set(raw));
-
-    if (unique.length > MAX_VOICE_PLAYERS) {
-        return { error: `You can select at most ${MAX_VOICE_PLAYERS} voice-chat players.` };
-    }
-
-    const valid = unique.filter(id =>
-        room.players.some(p => p.id === id && p.connected !== false)
-    );
-
-    return { ids: valid };
-}
-
-/*
-   allowed: true / false / undefined (undefined = leave unchanged)
-   ids:     array of player ids / undefined (undefined = leave unchanged)
-   Returns an error string, or null when everything was applied.
-*/
-function setRoomVoiceSettings(room, allowed, ids) {
-    let selection = null;
-
-    if (ids !== undefined) {
-        const cleaned = cleanVoiceSelection(room, ids);
-        if (cleaned.error) return cleaned.error;
-        selection = cleaned.ids;
-    }
-
-    if (typeof allowed === "boolean") {
-        room.voiceChatAllowed = allowed;
-    }
-
-    if (selection) {
-        room.players.forEach(p => {
-            p.voiceAllowed = selection.includes(p.id);
-        });
-    }
-
-    return null;
-}
-
-function getVoiceGroup(room, player) {
-    if (!room || !player || player.connected === false) return "none";
-
-    // Host turned voice chat OFF -> nobody has voice.
-    if (room.voiceChatAllowed === false) return "none";
-
-    // Once the game has started, only the players the host selected
-    // (maximum 5) can use voice chat. Everyone else plays normally.
-    if (room.phase !== "lobby" && !player.voiceAllowed) return "none";
-
-    if (room.phase === "lobby") return "lobby";
-    if (room.phase === "gameover") return "gameover";
-    if (!player.alive) return "dead";
-    if (room.phase === "day") return "alive";
-
-    if (room.phase === "night") {
-        if (room.nightTurn === "mafia" && isMafiaTeam(player.role)) return "mafia";
-        if (room.nightTurn === "doctor" && player.role === "Doctor") return "doctor";
-        if (room.nightTurn === "detective" && player.role === "Detective") return "detective";
-        if (room.nightTurn === "cupid" && player.role === "Cupid") return "cupid";
-        return "silent";
-    }
-
-    return "none";
-}
-
-function getVoicePeers(room, player) {
-    const group = getVoiceGroup(room, player);
-    if (group === "none" || group === "silent") return [];
-
-    return room.players
-        .filter(other =>
-            other.id !== player.id &&
-            other.connected !== false &&
-            getVoiceGroup(room, other) === group
-        )
-        .map(other => ({
-            id: other.id,
-            name: other.name,
-            badge: getBadgeOf(other.id),
-            alive: other.alive,
-            role: group === "mafia" && isMafiaTeam(other.role) ? other.role : null
-        }));
-}
-
-function broadcastVoiceState(roomCode) {
-    const room = rooms[roomCode];
-    if (!room) return;
-
-    room.players.forEach(player => {
-        const chatAllowed = room.voiceChatAllowed !== false;
-        const selected = room.phase === "lobby" || Boolean(player.voiceAllowed);
-
-        io.to(player.id).emit("voiceState", {
-            enabled: chatAllowed && selected,
-            chatAllowed,
-            selected,
-            group: getVoiceGroup(room, player),
-            peers: getVoicePeers(room, player)
-        });
-    });
-}
 
 
 /* =========================================================
@@ -2970,78 +2894,6 @@ io.on(
 
 
         /* =================================================
-           WEBRTC VOICE SIGNALING
-        ================================================= */
-
-        socket.on("voiceRequestState", () => {
-            for (const roomCode of Object.keys(rooms)) {
-                const room = rooms[roomCode];
-                if (room?.players?.some(p => p.id === socket.id)) {
-                    broadcastVoiceState(roomCode);
-                    break;
-                }
-            }
-        });
-
-        function relayVoiceSignal(eventName, data) {
-            const roomCode = String(data?.roomCode || "").trim().toUpperCase();
-            const targetId = String(data?.targetId || "");
-            const room = rooms[roomCode];
-            if (!room || !targetId || targetId === socket.id) return;
-
-            const sender = room.players.find(p => p.id === socket.id);
-            const target = room.players.find(p => p.id === targetId);
-            if (!sender || !target) return;
-
-            const senderGroup = getVoiceGroup(room, sender);
-            const targetGroup = getVoiceGroup(room, target);
-            if (senderGroup === "none" || senderGroup === "silent" || senderGroup !== targetGroup) {
-                return;
-            }
-
-            io.to(targetId).emit(eventName, {
-                fromId: socket.id,
-                fromName: sender.name,
-                ...data
-            });
-        }
-
-        socket.on("voiceOffer", data => relayVoiceSignal("voiceOffer", data));
-        socket.on("voiceAnswer", data => relayVoiceSignal("voiceAnswer", data));
-        socket.on("voiceIceCandidate", data => relayVoiceSignal("voiceIceCandidate", data));
-
-
-        /* =================================================
-           HOST VOICE SETTINGS
-           Allow Voice Chat YES/NO + choose up to 5 voice players.
-        ================================================= */
-
-        socket.on("setVoiceSettings", data => {
-            const roomCode = String(data?.roomCode || "").trim().toUpperCase();
-            const room = rooms[roomCode];
-
-            if (!room || room.host !== socket.id) return;
-
-            const error = setRoomVoiceSettings(
-                room,
-                typeof data?.allowed === "boolean" ? data.allowed : undefined,
-                Array.isArray(data?.players) ? data.players : undefined
-            );
-
-            if (error) {
-                return socket.emit("gameError", error);
-            }
-
-            if (room.phase === "lobby") {
-                emitLobby(roomCode);
-            } else {
-                sendGameInformation(roomCode);
-            }
-
-            broadcastVoiceState(roomCode);
-        });
-
-        /* =================================================
            CREATE ROOM
         ================================================= */
 
@@ -3087,8 +2939,6 @@ io.on(
                     allowPeopleToJoin: true,
                     pendingJoinRequests: {},
 
-                    // Voice chat: host can turn it off; maximum 5 voice players.
-                    voiceChatAllowed: true,
                     hiddenNightTurn: false,
                     nightEndTimer: null,
 
@@ -3185,7 +3035,6 @@ io.on(
                 );
 
                 emitLobby(roomCode);
-                broadcastVoiceState(roomCode);
 
                 announce(
                     roomCode,
@@ -3291,7 +3140,6 @@ io.on(
                 );
 
                 emitLobby(roomCode);
-                broadcastVoiceState(roomCode);
 
                 announce(
                     roomCode,
@@ -3429,7 +3277,6 @@ io.on(
                 sendGameInformation(roomCode);
             }
 
-            broadcastVoiceState(roomCode);
             emitPublicMatches();
         });
 
@@ -3511,7 +3358,6 @@ io.on(
             }
 
             emitLobby(code);
-            broadcastVoiceState(code);
             announce(
                 code,
                 `🚪 ${leavingPlayer.name} left the room.`,
@@ -3661,29 +3507,6 @@ io.on(
                     );
                 }
 
-                /* =========================
-                   VOICE CHAT SELECTION
-                   (validated before anything starts)
-                ========================= */
-
-                const voiceInput =
-                    data.voice && typeof data.voice === "object"
-                        ? data.voice
-                        : null;
-
-                if (voiceInput) {
-                    const voiceCheck = cleanVoiceSelection(
-                        room,
-                        voiceInput.players
-                    );
-
-                    if (voiceCheck.error) {
-                        return socket.emit(
-                            "gameError",
-                            voiceCheck.error
-                        );
-                    }
-                }
 /* =========================
    START COMPLETELY NEW GAME
 ========================= */
@@ -3724,14 +3547,6 @@ room.players.forEach(player => {
     player.role = null;
     player.alive = true;
 });
-
-if (voiceInput) {
-    setRoomVoiceSettings(
-        room,
-        typeof voiceInput.allowed === "boolean" ? voiceInput.allowed : undefined,
-        Array.isArray(voiceInput.players) ? voiceInput.players : []
-    );
-}
 
 /* =========================
    ASSIGN NEW ROLES
@@ -4594,7 +4409,6 @@ assignRoles(
                 ========================= */
 
                 emitLobby(roomCode);
-                broadcastVoiceState(roomCode);
 
                 /* =========================
                    TELL EVERYONE
@@ -4699,7 +4513,6 @@ assignRoles(
                         "danger"
                     );
 
-                    broadcastVoiceState(roomCode);
 
                     /* =========================
                        CHECK WINNER AFTER DISCONNECT
