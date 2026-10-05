@@ -125,11 +125,13 @@
 
             <div class="ranks-guide">
                 <div class="ranks-guide-title">🏆 RANKING</div>
-                <div>🔪 1 Kill = 3 Points</div>
-                <div>🛡️ 1 Save = 1 Point</div>
-                <div>🔎 Detective Check = 2 Points</div>
-                <div>🤡 Jester Win = 4 Points</div>
+                <div>🔪 Kill = 3 Points</div>
+                <div>🛡️ Correct Save = 2 Points</div>
+                <div>🔎 Correct Detective Check = 2 Points</div>
                 <div>📦 Civilian Correct Mafia Vote = 1 Point</div>
+                <div>🤡 Jester Win = 4 Points</div>
+                <div>☠️ Mafia Team Win = 5 Points</div>
+                <div>🎉 Civilian Team Win = 4 Points (everyone not on the Mafia team, except the Jester)</div>
             </div>
 
             <input id="ranksSearch" class="ranks-search" type="text" placeholder="🔍 Search players..." autocomplete="off">
@@ -175,6 +177,16 @@
                 <div class="ranks-stat-row">
                     <span>🃏 Jester Wins</span>
                     <strong id="statJesterWins">0</strong>
+                </div>
+
+                <div class="ranks-stat-row">
+                    <span>☠️ Mafia Wins</span>
+                    <strong id="statMafiaWins">0</strong>
+                </div>
+
+                <div class="ranks-stat-row">
+                    <span>🎉 Civilian Wins</span>
+                    <strong id="statCivilianWins">0</strong>
                 </div>
 
                 <button id="closeRanksDetails" class="secondary-screen-button">
@@ -225,10 +237,12 @@
                     <div class="account-point-stat"><span>🔎 Correct Detects</span><strong id="accountStatDetects">0</strong></div>
                     <div class="account-point-stat"><span>🗳️ Correct Votes</span><strong id="accountStatCivilianVotes">0</strong></div>
                     <div class="account-point-stat"><span>🤡 Jester Wins</span><strong id="accountStatJesterWins">0</strong></div>
+                    <div class="account-point-stat"><span>☠️ Mafia Wins</span><strong id="accountStatMafiaWins">0</strong></div>
+                    <div class="account-point-stat"><span>🎉 Civilian Wins</span><strong id="accountStatCivilianWins">0</strong></div>
                 </div>
 
                 <div id="accountPointsFormula" class="account-points-formula">
-                    3 per kill · 1 per save · 2 per correct detect · 4 per Jester win · 1 per correct Mafia vote
+                    3 per kill · 2 per save · 2 per correct detect · 4 per Jester win · 1 per correct Mafia vote · 5 per Mafia team win · 4 per Civilian team win
                 </div>
 
                 <button id="accountLogoutButton" type="button">LOG OUT</button>
@@ -464,42 +478,6 @@
             >
 
                 <h2>⚙️ Role Settings</h2>
-
-
-                <!-- ALLOW VOICE CHAT -->
-
-                <div id="voiceAllowSetting" class="grandma-setting voice-allow-setting">
-
-                    <p>🎙️ Allow Voice Chat</p>
-
-                    <label>
-
-                        <input
-                            id="voiceAllowYes"
-                            type="radio"
-                            name="voiceAllowChoice"
-                            checked
-                        >
-
-                        Yes
-
-                    </label>
-
-                    <label>
-
-                        <input
-                            id="voiceAllowNo"
-                            type="radio"
-                            name="voiceAllowChoice"
-                        >
-
-                        No
-
-                    </label>
-
-                    <small id="voiceAllowHint" class="voice-allow-hint"></small>
-
-                </div>
 
 
                 <!-- MAFIA -->
