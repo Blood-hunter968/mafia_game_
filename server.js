@@ -4,7 +4,10 @@ const { Server } = require("socket.io");
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+const io = new Server(server, {
+    // Room for custom wallpaper / sound uploads (max 4 MB file + overhead).
+    maxHttpBufferSize: 6 * 1024 * 1024
+});
 
 app.use(express.static("public"));
 
@@ -23,6 +26,19 @@ const path = require("path");
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 const ACCOUNTS_FILE = path.join(DATA_DIR, "accounts.json");
+const UPLOADS_DIR = path.join(DATA_DIR, "uploads");
+
+try { fs.mkdirSync(UPLOADS_DIR, { recursive: true }); } catch (error) { console.error("Could not create uploads folder:", error); }
+
+/* Custom sounds / wallpapers uploaded by players (random, unguessable file names). */
+app.use("/uploads", express.static(UPLOADS_DIR, {
+    index: false,
+    dotfiles: "deny",
+    setHeaders: res => {
+        res.setHeader("X-Content-Type-Options", "nosniff");
+        res.setHeader("Cache-Control", "public, max-age=86400");
+    }
+}));
 
 const STAT_KEYS = ["kills", "saves", "detects", "civilianVotes", "jesterWins", "mafiaWins", "civilianWins"];
 
@@ -158,6 +174,7 @@ function recordStat(player, stat) {
 
     user.stats = user.stats || emptyStats();
     user.stats[stat] = (Number(user.stats[stat]) || 0) + 1;
+    awardXp(user, stat);
     saveAccounts();
 }
 
@@ -182,6 +199,7 @@ function getRanksList() {
         .map(user => ({
             username: user.username,
             badge: user.badge || "member",
+            tier: getEquippedTierKey(user),
             total: totalStats(user.stats)
         }))
         .sort((a, b) =>
@@ -193,6 +211,7 @@ function getRanksList() {
             rank: index + 1,
             username: user.username,
             badge: user.badge,
+            tier: user.tier,
             points: user.total
         }));
 }
@@ -219,6 +238,206 @@ function loginSocket(socket, accountKey, silent) {
 }
 
 /* =========================================================
+   PROGRESSION: RANK TIERS, LEVELS / XP, INVENTORY
+   - Rank tier comes ONLY from points (150 / 200 / 300 / 400 / 500).
+   - Levels use their own XP and are separate from points.
+   - 600 pts unlocks custom sounds, 1000 pts unlocks custom wallpapers.
+   - Everything is checked on the server; the browser cannot fake it.
+========================================================= */
+
+const TIERS = [
+    { key: "red",     min: 150 },
+    { key: "gold",    min: 200 },
+    { key: "diamond", min: 300 },
+    { key: "elite",   min: 400 },
+    { key: "legend",  min: 500 }
+];
+
+const SOUND_UNLOCK_POINTS = 600;
+const WALLPAPER_UNLOCK_POINTS = 1000;
+const SOUND_EVENTS = ["roundStart", "turnStart", "turnOver", "votingStart", "gameEnd", "playerDeath"];
+const MAX_CUSTOM_SOUNDS = 12;
+const MAX_CUSTOM_WALLPAPERS = 12;
+const MAX_SOUND_BYTES = 1200 * 1024;
+const MAX_WALLPAPER_BYTES = 4 * 1024 * 1024;
+
+/* XP is separate from points. Edit these numbers freely. */
+const XP_VALUES = { kills: 15, saves: 12, detects: 12, civilianVotes: 6, jesterWins: 30, mafiaWins: 40, civilianWins: 30 };
+const MAX_LEVEL = 100;
+
+/* XP needed to go from level N to level N+1. */
+function xpForNextLevel(level) {
+    return 100 * level;
+}
+
+/* Reward collectibles granted when a level is reached. Edit / add freely. */
+const LEVEL_REWARDS = {
+    5:  { icon: "🎖️", name: "Rookie Medal" },
+    10: { icon: "🥉", name: "Street Soldier Medal" },
+    15: { icon: "🥈", name: "Enforcer Medal" },
+    20: { icon: "🥇", name: "Underboss Medal" },
+    30: { icon: "🏅", name: "Boss Medal" },
+    40: { icon: "🏆", name: "Godfather Trophy" },
+    50: { icon: "👑", name: "Crime Lord Crown" }
+};
+
+function levelInfo(xp) {
+    let level = 1;
+    let left = Math.max(0, Math.floor(Number(xp) || 0));
+
+    while (level < MAX_LEVEL && left >= xpForNextLevel(level)) {
+        left -= xpForNextLevel(level);
+        level++;
+    }
+
+    return {
+        level,
+        xpIntoLevel: left,
+        xpNeeded: level >= MAX_LEVEL ? 0 : xpForNextLevel(level)
+    };
+}
+
+function ensureProgress(user) {
+    if (!user.progress || typeof user.progress !== "object") user.progress = {};
+    const p = user.progress;
+
+    p.xp = Math.max(0, Number(p.xp) || 0);
+    if (!Array.isArray(p.rewards)) p.rewards = [];
+    if (!Array.isArray(p.pendingLevelUps)) p.pendingLevelUps = [];
+    if (!Array.isArray(p.sounds)) p.sounds = [];
+    if (!Array.isArray(p.wallpapers)) p.wallpapers = [];
+    if (!p.equipped || typeof p.equipped !== "object") p.equipped = {};
+    if (typeof p.equipped.tier !== "string") p.equipped.tier = "auto";
+    if (!p.equipped.sounds || typeof p.equipped.sounds !== "object") p.equipped.sounds = {};
+    if (typeof p.equipped.wallpaper !== "string") p.equipped.wallpaper = null;
+
+    return p;
+}
+
+function awardXp(user, stat) {
+    const gain = XP_VALUES[stat] || 0;
+    if (!gain) return;
+
+    const p = ensureProgress(user);
+    const before = levelInfo(p.xp).level;
+    p.xp += gain;
+    const after = levelInfo(p.xp).level;
+
+    for (let level = before + 1; level <= after; level++) {
+        p.pendingLevelUps.push(level);
+        if (LEVEL_REWARDS[level] && !p.rewards.includes(level)) p.rewards.push(level);
+    }
+}
+
+function getUnlockedTiers(points) {
+    return TIERS.filter(tier => points >= tier.min);
+}
+
+/* The tier that is actually SHOWN next to the player's name. */
+function getEquippedTierKey(user) {
+    if (!user) return null;
+
+    const points = totalStats(user.stats);
+    const unlocked = getUnlockedTiers(points);
+    const chosen = ensureProgress(user).equipped.tier;
+
+    if (chosen === "none") return null;
+    if (chosen !== "auto" && unlocked.some(tier => tier.key === chosen)) return chosen;
+
+    return unlocked.length ? unlocked[unlocked.length - 1].key : null;
+}
+
+function getTierOfPlayer(player) {
+    const user = player && player.account ? accountsDb.users[player.account] : null;
+    return getEquippedTierKey(user);
+}
+
+function sniffAudioExt(buf) {
+    if (!Buffer.isBuffer(buf) || buf.length < 12) return null;
+    if (buf.slice(0, 3).toString("latin1") === "ID3") return "mp3";
+    if (buf[0] === 0xFF && (buf[1] & 0xE0) === 0xE0) return "mp3";
+    if (buf.slice(0, 4).toString("latin1") === "RIFF" && buf.slice(8, 12).toString("latin1") === "WAVE") return "wav";
+    if (buf.slice(0, 4).toString("latin1") === "OggS") return "ogg";
+    if (buf.slice(4, 8).toString("latin1") === "ftyp") return "m4a";
+    if (buf[0] === 0x1A && buf[1] === 0x45 && buf[2] === 0xDF && buf[3] === 0xA3) return "webm";
+    return null;
+}
+
+function sniffImageExt(buf) {
+    if (!Buffer.isBuffer(buf) || buf.length < 12) return null;
+    if (buf[0] === 0x89 && buf.slice(1, 4).toString("latin1") === "PNG") return "png";
+    if (buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) return "jpg";
+    if (buf.slice(0, 4).toString("latin1") === "RIFF" && buf.slice(8, 12).toString("latin1") === "WEBP") return "webp";
+    return null;
+}
+
+function cleanUploadName(value, fallback) {
+    const name = String(value || "").replace(/[^\w .\-()]/g, "").trim().slice(0, 24);
+    return name || fallback;
+}
+
+function userUploadDir(accountKey) {
+    return path.join(UPLOADS_DIR, accountKey);
+}
+
+function uploadUrl(accountKey, file) {
+    return `/uploads/${encodeURIComponent(accountKey)}/${encodeURIComponent(file)}`;
+}
+
+function removeUploadedFile(accountKey, file) {
+    try {
+        const safe = path.basename(String(file || ""));
+        if (safe) fs.unlinkSync(path.join(userUploadDir(accountKey), safe));
+    } catch (_) { /* already gone */ }
+}
+
+function buildProgressPayload(accountKey, user) {
+    const p = ensureProgress(user);
+    const points = totalStats(user.stats);
+    const info = levelInfo(p.xp);
+    const unlocked = getUnlockedTiers(points).map(tier => tier.key);
+
+    const rewardOwned = p.rewards
+        .filter(level => LEVEL_REWARDS[level])
+        .map(level => ({ level, icon: LEVEL_REWARDS[level].icon, name: LEVEL_REWARDS[level].name }));
+
+    const upcoming = Object.keys(LEVEL_REWARDS)
+        .map(Number)
+        .filter(level => level > info.level)
+        .sort((a, b) => a - b)
+        .slice(0, 3)
+        .map(level => ({ level, icon: LEVEL_REWARDS[level].icon, name: LEVEL_REWARDS[level].name }));
+
+    return {
+        ok: true,
+        username: user.username,
+        points,
+        tiers: TIERS,
+        unlockedTiers: unlocked,
+        equippedTier: p.equipped.tier,
+        shownTier: getEquippedTierKey(user),
+        level: info.level,
+        xp: Math.floor(p.xp),
+        xpIntoLevel: info.xpIntoLevel,
+        xpNeeded: info.xpNeeded,
+        nextLevel: info.level >= MAX_LEVEL ? null : info.level + 1,
+        upcomingRewards: upcoming,
+        rewards: rewardOwned,
+        soundUnlockPoints: SOUND_UNLOCK_POINTS,
+        wallpaperUnlockPoints: WALLPAPER_UNLOCK_POINTS,
+        soundsUnlocked: points >= SOUND_UNLOCK_POINTS,
+        wallpapersUnlocked: points >= WALLPAPER_UNLOCK_POINTS,
+        soundEvents: SOUND_EVENTS,
+        sounds: p.sounds.map(item => ({ id: item.id, name: item.name, event: item.event, url: uploadUrl(accountKey, item.file) })),
+        wallpapers: p.wallpapers.map(item => ({ id: item.id, name: item.name, url: uploadUrl(accountKey, item.file) })),
+        equipped: {
+            sounds: { ...p.equipped.sounds },
+            wallpaper: p.equipped.wallpaper
+        }
+    };
+}
+
+/* =========================================================
    PUBLIC MATCHMAKING
 ========================================================= */
 
@@ -237,7 +456,8 @@ function getPublicMatches() {
                 roomCode,
                 playerCount: connectedPlayers.length,
                 hostName: connectedPlayers.find(player => player.id === room.host)?.name || connectedPlayers[0]?.name || "Host",
-                hostBadge: getBadgeOf(connectedPlayers.find(player => player.id === room.host)?.id || connectedPlayers[0]?.id)
+                hostBadge: getBadgeOf(connectedPlayers.find(player => player.id === room.host)?.id || connectedPlayers[0]?.id),
+                hostTier: getTierOfPlayer(connectedPlayers.find(player => player.id === room.host) || connectedPlayers[0])
             };
         })
         .sort((a, b) => b.playerCount - a.playerCount);
@@ -836,6 +1056,7 @@ function getPublicPlayers(room, viewer) {
                 id: player.id,
                 name: player.name,
                 badge: getBadgeOf(player.id),
+                tier: getTierOfPlayer(player),
                 alive: player.alive,
                 role: visibleRole,
                 connected: true
@@ -2271,6 +2492,10 @@ function emitHostJoinRequest(roomCode, request) {
         requestId: request.requestId,
         playerName: request.playerName,
         badge: getBadgeOf(request.socketId),
+        tier: (() => {
+            const key = socketAccounts.get(request.socketId);
+            return key ? getEquippedTierKey(accountsDb.users[key]) : null;
+        })(),
         roomCode,
         reconnecting: Boolean(request.oldPlayerId),
         message: `${request.playerName} wants to join`
@@ -2783,6 +3008,8 @@ io.on(
                 ok: true,
                 username: user.username,
                 badge: user.badge || "member",
+                tier: getEquippedTierKey(user),
+                level: levelInfo(ensureProgress(user).xp).level,
                 points: totalStats(user.stats),
                 stats: { ...emptyStats(), ...(user.stats || {}) }
             });
@@ -2802,6 +3029,205 @@ io.on(
                 points: totalStats(user.stats),
                 stats: { ...emptyStats(), ...(user.stats || {}) }
             });
+        });
+
+        /* =================================================
+           PROGRESSION: rank tag, level, inventory
+        ================================================= */
+
+        function progressionUser() {
+            const key = getSocketAccountKey(socket);
+            const user = key ? accountsDb.users[key] : null;
+            return user ? { key, user } : null;
+        }
+
+        function sendProgress(ctx, includeLevelUps) {
+            const payload = buildProgressPayload(ctx.key, ctx.user);
+
+            if (includeLevelUps) {
+                const p = ensureProgress(ctx.user);
+                payload.levelUps = p.pendingLevelUps.map(level => ({
+                    level,
+                    reward: LEVEL_REWARDS[level] ? { icon: LEVEL_REWARDS[level].icon, name: LEVEL_REWARDS[level].name } : null
+                }));
+                if (p.pendingLevelUps.length) {
+                    p.pendingLevelUps = [];
+                    saveAccounts();
+                }
+            }
+
+            socket.emit("myProgressData", payload);
+        }
+
+        socket.on("getMyProgress", () => {
+            const ctx = progressionUser();
+            if (!ctx) return socket.emit("myProgressData", { ok: false });
+            sendProgress(ctx, true);
+        });
+
+        socket.on("equipTier", (data, callback) => {
+            const ctx = progressionUser();
+            const reply = typeof callback === "function" ? callback : () => {};
+            if (!ctx) return reply({ ok: false, error: "Sign in first." });
+
+            const choice = String(data?.tier || "");
+            const points = totalStats(ctx.user.stats);
+            const allowed = choice === "auto" || choice === "none" ||
+                getUnlockedTiers(points).some(tier => tier.key === choice);
+
+            if (!allowed) return reply({ ok: false, error: "That rank is not unlocked yet." });
+
+            ensureProgress(ctx.user).equipped.tier = choice;
+            saveAccounts();
+            sendProgress(ctx, false);
+            reply({ ok: true });
+        });
+
+        socket.on("uploadSound", (data, callback) => {
+            const ctx = progressionUser();
+            const reply = typeof callback === "function" ? callback : () => {};
+            if (!ctx) return reply({ ok: false, error: "Sign in first." });
+
+            const p = ensureProgress(ctx.user);
+            if (totalStats(ctx.user.stats) < SOUND_UNLOCK_POINTS) {
+                return reply({ ok: false, error: `Custom sounds unlock at ${SOUND_UNLOCK_POINTS} points.` });
+            }
+
+            const event = String(data?.event || "");
+            if (!SOUND_EVENTS.includes(event)) return reply({ ok: false, error: "Choose a game event." });
+            if (p.sounds.length >= MAX_CUSTOM_SOUNDS) return reply({ ok: false, error: `You can keep up to ${MAX_CUSTOM_SOUNDS} sounds. Delete one first.` });
+
+            const bytes = Buffer.isBuffer(data?.bytes) ? data.bytes : (data?.bytes ? Buffer.from(data.bytes) : null);
+            if (!bytes || !bytes.length) return reply({ ok: false, error: "No sound file received." });
+            if (bytes.length > MAX_SOUND_BYTES) return reply({ ok: false, error: "Sound file is too large. Use a short clip (5 seconds max)." });
+
+            const ext = sniffAudioExt(bytes);
+            if (!ext) return reply({ ok: false, error: "Unsupported sound file. Use MP3, WAV, OGG, M4A or WEBM." });
+
+            try {
+                fs.mkdirSync(userUploadDir(ctx.key), { recursive: true });
+                const id = crypto.randomBytes(8).toString("hex");
+                const file = `${crypto.randomBytes(16).toString("hex")}.${ext}`;
+                fs.writeFileSync(path.join(userUploadDir(ctx.key), file), bytes);
+
+                p.sounds.push({ id, name: cleanUploadName(data?.name, "My sound"), event, file });
+                if (!p.equipped.sounds[event]) p.equipped.sounds[event] = id;
+
+                saveAccounts();
+                sendProgress(ctx, false);
+                reply({ ok: true });
+            } catch (error) {
+                console.error("uploadSound error:", error);
+                reply({ ok: false, error: "Could not save the sound." });
+            }
+        });
+
+        socket.on("equipSound", (data, callback) => {
+            const ctx = progressionUser();
+            const reply = typeof callback === "function" ? callback : () => {};
+            if (!ctx) return reply({ ok: false, error: "Sign in first." });
+
+            const p = ensureProgress(ctx.user);
+            const item = p.sounds.find(s => s.id === String(data?.id || ""));
+            if (!item) return reply({ ok: false, error: "Sound not found." });
+
+            if (data?.equip === false) {
+                if (p.equipped.sounds[item.event] === item.id) delete p.equipped.sounds[item.event];
+            } else {
+                p.equipped.sounds[item.event] = item.id;
+            }
+
+            saveAccounts();
+            sendProgress(ctx, false);
+            reply({ ok: true });
+        });
+
+        socket.on("deleteSound", (data, callback) => {
+            const ctx = progressionUser();
+            const reply = typeof callback === "function" ? callback : () => {};
+            if (!ctx) return reply({ ok: false, error: "Sign in first." });
+
+            const p = ensureProgress(ctx.user);
+            const index = p.sounds.findIndex(s => s.id === String(data?.id || ""));
+            if (index < 0) return reply({ ok: false, error: "Sound not found." });
+
+            const [item] = p.sounds.splice(index, 1);
+            removeUploadedFile(ctx.key, item.file);
+            if (p.equipped.sounds[item.event] === item.id) delete p.equipped.sounds[item.event];
+
+            saveAccounts();
+            sendProgress(ctx, false);
+            reply({ ok: true });
+        });
+
+        socket.on("uploadWallpaper", (data, callback) => {
+            const ctx = progressionUser();
+            const reply = typeof callback === "function" ? callback : () => {};
+            if (!ctx) return reply({ ok: false, error: "Sign in first." });
+
+            const p = ensureProgress(ctx.user);
+            if (totalStats(ctx.user.stats) < WALLPAPER_UNLOCK_POINTS) {
+                return reply({ ok: false, error: `Custom wallpapers unlock at ${WALLPAPER_UNLOCK_POINTS} points.` });
+            }
+            if (p.wallpapers.length >= MAX_CUSTOM_WALLPAPERS) return reply({ ok: false, error: `You can keep up to ${MAX_CUSTOM_WALLPAPERS} wallpapers. Delete one first.` });
+
+            const bytes = Buffer.isBuffer(data?.bytes) ? data.bytes : (data?.bytes ? Buffer.from(data.bytes) : null);
+            if (!bytes || !bytes.length) return reply({ ok: false, error: "No image received." });
+            if (bytes.length > MAX_WALLPAPER_BYTES) return reply({ ok: false, error: "Image is too large (4 MB max)." });
+
+            const ext = sniffImageExt(bytes);
+            if (!ext) return reply({ ok: false, error: "Unsupported image. Use PNG, JPG or WEBP." });
+
+            try {
+                fs.mkdirSync(userUploadDir(ctx.key), { recursive: true });
+                const id = crypto.randomBytes(8).toString("hex");
+                const file = `${crypto.randomBytes(16).toString("hex")}.${ext}`;
+                fs.writeFileSync(path.join(userUploadDir(ctx.key), file), bytes);
+
+                p.wallpapers.push({ id, name: cleanUploadName(data?.name, "My wallpaper"), file });
+                if (!p.equipped.wallpaper) p.equipped.wallpaper = id;
+
+                saveAccounts();
+                sendProgress(ctx, false);
+                reply({ ok: true });
+            } catch (error) {
+                console.error("uploadWallpaper error:", error);
+                reply({ ok: false, error: "Could not save the wallpaper." });
+            }
+        });
+
+        socket.on("equipWallpaper", (data, callback) => {
+            const ctx = progressionUser();
+            const reply = typeof callback === "function" ? callback : () => {};
+            if (!ctx) return reply({ ok: false, error: "Sign in first." });
+
+            const p = ensureProgress(ctx.user);
+            const id = data?.id ? String(data.id) : null;
+
+            if (id && !p.wallpapers.some(w => w.id === id)) return reply({ ok: false, error: "Wallpaper not found." });
+
+            p.equipped.wallpaper = id;
+            saveAccounts();
+            sendProgress(ctx, false);
+            reply({ ok: true });
+        });
+
+        socket.on("deleteWallpaper", (data, callback) => {
+            const ctx = progressionUser();
+            const reply = typeof callback === "function" ? callback : () => {};
+            if (!ctx) return reply({ ok: false, error: "Sign in first." });
+
+            const p = ensureProgress(ctx.user);
+            const index = p.wallpapers.findIndex(w => w.id === String(data?.id || ""));
+            if (index < 0) return reply({ ok: false, error: "Wallpaper not found." });
+
+            const [item] = p.wallpapers.splice(index, 1);
+            removeUploadedFile(ctx.key, item.file);
+            if (p.equipped.wallpaper === item.id) p.equipped.wallpaper = null;
+
+            saveAccounts();
+            sendProgress(ctx, false);
+            reply({ ok: true });
         });
 
         /* Password reveal: the PIN is checked server-side before the password is decrypted. */
@@ -2876,6 +3302,10 @@ io.on(
                 for (const [token, accountKey] of accountSessions.entries()) {
                     if (accountKey === key) accountSessions.delete(token);
                 }
+
+                try {
+                    fs.rmSync(userUploadDir(key), { recursive: true, force: true });
+                } catch (_) { /* nothing to remove */ }
 
                 delete accountsDb.users[key];
                 socketAccounts.delete(socket.id);
