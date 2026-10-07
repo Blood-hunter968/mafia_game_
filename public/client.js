@@ -313,7 +313,7 @@ function showJoinRequestPopup(data) {
         <div class="join-request-card">
             <div class="request-icon">↻</div>
             <div class="request-kicker">JOIN REQUEST</div>
-            <h2>${escapeHtml(data.playerName || "Player")} ${userBadgeHtml(data.badge)} wants to join</h2>
+            <h2>${tierNameHtml(data.playerName || "Player", data.tier)} ${userBadgeHtml(data.badge)} wants to join</h2>
             <p>${data.reconnecting ? "They are requesting to reconnect to their old slot." : "They are requesting access to the room."}</p>
             <div class="request-code">ROOM ${escapeHtml(data.roomCode || roomCode)}</div>
             <div class="request-actions">
@@ -513,7 +513,7 @@ socket.on("announcement", data => {
 
     /* Sound #5 — Mafia/Doctor/Detective/Cupid turn ends */
     if (/(MAFIA|DOCTOR|DETECTIVE|CUPID)\s+turn is over/i.test(message)) {
-        playGameSound(gameSounds.turnOver);
+        playEventSound("turnOver", gameSounds.turnOver);
     }
 
     announcement(
@@ -757,7 +757,8 @@ function renderPublicMatches(matches) {
 
         const host = document.createElement("div");
         host.className = "public-match-host";
-        host.textContent = `👑 Host: ${match.hostName || "Host"}`;
+        host.textContent = "👑 Host: ";
+        host.appendChild(tierNameNode(match.hostName || "Host", match.hostTier));
         appendUserBadge(host, match.hostBadge);
 
         const joinButton = document.createElement("button");
@@ -940,8 +941,7 @@ function renderLobbyPlayers() {
         const name =
             document.createElement("span");
 
-        name.textContent =
-            player.name;
+        setTierName(name, player.name, player.tier);
 
         appendUserBadge(name, player.badge);
 
@@ -2033,7 +2033,7 @@ socket.on(
 
                 // Play new-round sound when a new Night begins
                 if (newNightNumber > 0) {
-                    playGameSound(gameSounds.newRound);
+                    playEventSound("roundStart", gameSounds.newRound);
                 }
 
                 detectiveResultMessage = "";
@@ -2123,7 +2123,7 @@ function renderGamePlayers() {
             document.createElement("li");
 
         const name = document.createElement("span");
-        name.textContent = player.name;
+        setTierName(name, player.name, player.tier);
 
         if (player.role) {
             const role = document.createElement("span");
@@ -2185,7 +2185,7 @@ function addOption(select, id) {
         id;
 
     option.textContent =
-        player.name;
+        tierPrefix(player.tier) + player.name;
 
     select.appendChild(option);
 }
@@ -3012,7 +3012,7 @@ function keepDeadPlayerOnDeathScreen(data) {
     }
 
     if (nameBox) {
-        nameBox.textContent = me.name || "You";
+        setTierName(nameBox, me.name || "You", me.tier);
     }
 
     overlay.style.display = "flex";
@@ -3039,7 +3039,7 @@ socket.on(
 
         /* Sound #2 — everyone hears that someone died */
         if (names.length) {
-            playGameSound(gameSounds.death);
+            playEventSound("playerDeath", gameSounds.death);
         }
 
         /* Death screen — ONLY the eliminated player sees it */
@@ -3119,7 +3119,7 @@ socket.on(
 
         /* Sound #2 — everyone hears that someone died */
         if (eliminated.length) {
-            playGameSound(gameSounds.death);
+            playEventSound("playerDeath", gameSounds.death);
         }
 
         /* Death screen — ONLY the eliminated player sees it */
@@ -3932,7 +3932,7 @@ function updateAccountChip() {
     if (authState.username) {
         text.textContent = "👤 Account";
         if (name) {
-            name.textContent = authState.username;
+            setTierName(name, authState.username, myTierKey);
             appendUserBadge(name, myBadge);
         }
     } else {
@@ -4121,7 +4121,7 @@ function renderRanks(list) {
 
         const name = document.createElement("span");
         name.className = "rank-name";
-        name.textContent = entry.username;
+        setTierName(name, entry.username, entry.tier);
         appendUserBadge(name, entry.badge);
 
         const details = document.createElement("button");
@@ -4147,7 +4147,7 @@ $("ranksSearch")?.addEventListener("input", () => renderRanks());
 socket.on("playerStatsData", data => {
     if (!data || !data.ok) return;
 
-    $("ranksDetailsName").textContent = data.username;
+    setTierName($("ranksDetailsName"), data.username, data.tier);
     appendUserBadge($("ranksDetailsName"), data.badge);
     $("statKills").textContent = data.stats.kills || 0;
     $("statSaves").textContent = data.stats.saves || 0;
@@ -4411,7 +4411,7 @@ function setMyBadge(badge) {
     // Keep the account box name in sync (without closing the box).
     const accountName = $("accountInfoName");
     if (accountName && typeof authState !== "undefined" && authState.username) {
-        accountName.textContent = authState.username;
+        setTierName(accountName, authState.username, myTierKey);
         appendUserBadge(accountName, myBadge);
     }
 }
@@ -4843,12 +4843,27 @@ function saveMafiaSettings(next) {
     all[getSettingsProfileKey()] = { ...defaultMafiaSettings, ...next };
     try { localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(all)); } catch (e) {}
 }
+/* ---------- Theme logo swap (White theme uses its own logo) ---------- */
+const MAIN_LOGO_FILE = "mafia-wars-main-logo.png";
+const WHITE_LOGO_FILE = "mafia-wars-white-logo.png";
+function applyThemeLogos(theme) {
+    const useWhite = theme === "white";
+    document.querySelectorAll('img[src$="' + MAIN_LOGO_FILE + '"], img[src$="' + WHITE_LOGO_FILE + '"]').forEach(img => {
+        const wanted = useWhite ? WHITE_LOGO_FILE : MAIN_LOGO_FILE;
+        if (img.getAttribute("src") === wanted) return;
+        // if the white logo file is missing, quietly fall back to the original logo
+        img.onerror = () => { img.onerror = null; img.setAttribute("src", MAIN_LOGO_FILE); };
+        img.setAttribute("src", wanted);
+    });
+}
+
 function applyMafiaSettings() {
     const st = loadMafiaSettings();
     document.body.classList.toggle("settings-reduce-motion", !!st.reduceMotion);
     document.body.classList.toggle("settings-no-effects", !st.uiEffects);
     document.body.classList.toggle("settings-no-animations", !st.animations);
     document.documentElement.dataset.mafiaTheme = st.theme;
+    applyThemeLogos(st.theme);
     applyAudioSettings();
 }
 function updateMafiaSetting(key, value) {
@@ -5164,7 +5179,7 @@ socket.on("ranksData", list => {
     if (pointsEl) pointsEl.textContent = me ? `${Number(me.points) || 0} points` : "Sign in to see account points.";
     if (board) {
         board.innerHTML = rows.slice(0, 10).map(x =>
-            `<div class="settings-row"><div><strong>#${x.rank} ${escapeHtml(x.username)}</strong></div><div class="settings-value">${Number(x.points)||0} pts</div></div>`
+            `<div class="settings-row"><div><strong>#${x.rank} ${tierNameHtml(x.username, x.tier)}</strong></div><div class="settings-value">${Number(x.points)||0} pts</div></div>`
         ).join("") || '<div class="settings-muted">No ranked accounts yet.</div>';
     }
 });
@@ -5304,3 +5319,706 @@ socket.on("nightActionPopup", data => {
     stopLast10Sound();
     showNightActionPopup(data);
 });
+
+
+/* =========================================================
+   PROGRESSION: RANK TAGS, DETAILS, INVENTORY, LEVEL UP,
+   CUSTOM SOUNDS, CUSTOM WALLPAPERS, APPEARANCE
+   Added as a separate block so the existing game code is untouched.
+   Rank / level / unlock checks are done by the SERVER; this block
+   only displays them and sends the player's choices.
+========================================================= */
+
+/* Name colors + symbols for each point rank (edit colors here). */
+const TIER_INFO = {
+    red:     { name: "Red",     symbol: "🔴", color: "#ff4d4d", min: 150 },
+    gold:    { name: "Gold",    symbol: "🟡", color: "#ffd23f", min: 200 },
+    diamond: { name: "Diamond", symbol: "💎", color: "#4fd8ff", min: 300 },
+    elite:   { name: "Elite",   symbol: "⚔️", color: "#c3cde0", min: 400 },
+    legend:  { name: "Legend",  symbol: "👑", color: "#c77dff", min: 500 }
+};
+const TIER_ORDER = ["red", "gold", "diamond", "elite", "legend"];
+
+const SOUND_EVENT_LABELS = {
+    roundStart: "Round Start",
+    turnStart: "Turn Start",
+    turnOver: "Turn Over",
+    votingStart: "Voting Start",
+    gameEnd: "Game End",
+    playerDeath: "Player Death"
+};
+
+var myProgress = null;      // latest progress sent by the server
+var myTierKey = null;       // rank tag currently shown next to my name
+var pendingLevelUps = [];
+var inventoryTab = "tags";
+var inventoryMessage = "";
+
+function getTierInfo(key) {
+    return TIER_INFO[key] || null;
+}
+
+function tierPrefix(key) {
+    const tier = getTierInfo(key);
+    return tier ? `${tier.symbol} ` : "";
+}
+
+/* Colored username with the rank symbol beside it. No [RED] / [GOLD] text. */
+function tierNameNode(name, key) {
+    const span = document.createElement("span");
+    span.className = "tier-name";
+    const tier = getTierInfo(key);
+
+    if (tier) {
+        span.style.color = tier.color;
+        span.textContent = `${tier.symbol} ${name}`;
+    } else {
+        span.textContent = name;
+    }
+
+    return span;
+}
+
+function setTierName(element, name, key) {
+    if (!element) return;
+    element.textContent = "";
+    element.appendChild(tierNameNode(name, key));
+}
+
+function tierNameHtml(name, key) {
+    const tier = getTierInfo(key);
+    if (!tier) return escapeHtml(name);
+    return `<span class="tier-name" style="color:${tier.color}">${tier.symbol} ${escapeHtml(name)}</span>`;
+}
+
+/* ---------- CSS for everything in this block ---------- */
+
+(function injectProgressionCss() {
+    if (document.getElementById("progressionCss")) return;
+    const style = document.createElement("style");
+    style.id = "progressionCss";
+    style.textContent = `
+        .tier-name { font-weight: 700; }
+        body.has-custom-wallpaper {
+            background-image: var(--custom-wallpaper) !important;
+            background-size: cover !important;
+            background-position: center !important;
+            background-attachment: fixed !important;
+        }
+        .inv-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 14px; }
+        .inv-tab { padding: 9px 14px; border-radius: 10px; border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.06); color: inherit; cursor: pointer; font: inherit; }
+        .inv-tab.active { background: rgba(255,255,255,.2); border-color: rgba(255,255,255,.5); font-weight: 700; }
+        .inv-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,.08); }
+        .inv-row:last-child { border-bottom: 0; }
+        .inv-row small { display: block; opacity: .7; margin-top: 2px; }
+        .inv-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+        .inv-btn { padding: 7px 12px; border-radius: 9px; border: 1px solid rgba(255,255,255,.25); background: rgba(255,255,255,.08); color: inherit; cursor: pointer; font: inherit; font-size: .9em; }
+        .inv-btn.primary { background: rgba(255,255,255,.22); font-weight: 700; }
+        .inv-btn.danger { border-color: rgba(255,90,90,.6); }
+        .inv-btn:disabled { opacity: .5; cursor: default; }
+        .inv-locked { opacity: .55; }
+        .inv-message { margin-top: 10px; min-height: 1.2em; font-size: .92em; }
+        .inv-form { display: grid; gap: 8px; margin-bottom: 12px; }
+        .inv-form input, .inv-form select { padding: 9px 10px; border-radius: 9px; border: 1px solid rgba(255,255,255,.25); background: rgba(0,0,0,.25); color: inherit; font: inherit; }
+        .inv-thumb { width: 84px; height: 52px; border-radius: 8px; background-size: cover; background-position: center; border: 1px solid rgba(255,255,255,.25); flex: none; }
+        .level-bar { height: 14px; border-radius: 8px; background: rgba(255,255,255,.12); overflow: hidden; margin: 8px 0; }
+        .level-bar-fill { height: 100%; background: linear-gradient(90deg, #ffb300, #ff5a36); border-radius: 8px; transition: width .4s; }
+        .tier-overlay, .levelup-overlay { position: fixed; inset: 0; z-index: 100000; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.72); padding: 16px; }
+        .tier-card, .levelup-card { width: min(440px, 100%); max-height: 90vh; overflow: auto; border-radius: 16px; padding: 22px; background: rgba(18,18,24,.98); color: #fff; border: 1px solid rgba(255,255,255,.18); box-shadow: 0 20px 60px rgba(0,0,0,.6); }
+        .tier-card h2, .levelup-card h2 { margin: 0 0 12px; }
+        .tier-fact { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid rgba(255,255,255,.08); }
+        .tier-preview { font-size: 1.6em; text-align: center; padding: 14px 0; }
+        .tier-mock { margin: 6px 0; padding: 8px 12px; border-radius: 9px; background: rgba(255,255,255,.07); display: flex; justify-content: space-between; gap: 10px; }
+        .tier-mock-label { opacity: .6; font-size: .8em; margin-top: 10px; }
+        .tier-swatch { display: inline-block; width: 14px; height: 14px; border-radius: 50%; vertical-align: middle; margin-right: 6px; border: 1px solid rgba(255,255,255,.4); }
+        .levelup-card { text-align: center; }
+        .levelup-title { font-size: 2em; font-weight: 800; margin: 6px 0; }
+        .levelup-reward { margin-top: 14px; padding: 12px; border-radius: 12px; background: rgba(255,255,255,.08); }
+        .theme-choice { display: flex; gap: 10px; flex-wrap: wrap; }
+        .theme-choice .inv-btn.active { background: rgba(255,255,255,.28); border-color: #fff; font-weight: 700; }
+    `;
+    document.head.appendChild(style);
+})();
+
+/* ---------- Load / refresh my progress from the server ---------- */
+
+function requestMyProgress() {
+    if (authState?.username) socket.emit("getMyProgress");
+}
+
+function refreshOwnTierName() {
+    const name = $("accountInfoName");
+    if (name && authState?.username) {
+        setTierName(name, authState.username, myTierKey);
+        appendUserBadge(name, myBadge);
+    }
+}
+
+socket.on("myProgressData", data => {
+    if (!data || !data.ok) {
+        myProgress = null;
+        myTierKey = null;
+        applyWallpaper();
+        return;
+    }
+
+    myProgress = data;
+    myTierKey = data.shownTier || null;
+
+    if (Array.isArray(data.levelUps) && data.levelUps.length) {
+        pendingLevelUps.push(...data.levelUps);
+    }
+
+    applyWallpaper();
+    refreshOwnTierName();
+
+    if (progressSettingsOpen && ["inventory", "levelup", "ranks"].includes(settingsView)) {
+        renderSettingsPage(settingsView);
+    }
+
+    maybeShowLevelUps();
+});
+
+socket.on("authResult", data => {
+    if (data?.ok && !data.guest) {
+        setTimeout(requestMyProgress, 300);
+    } else {
+        myProgress = null;
+        myTierKey = null;
+        applyWallpaper();
+    }
+});
+
+/* Points / XP change when a game ends, so refresh then. */
+socket.on("gameOver", () => {
+    setTimeout(requestMyProgress, 1500);
+    playEventSound("gameEnd");
+});
+
+/* ---------- Details popup for a rank tag ---------- */
+
+function openTierDetails(key) {
+    const tier = getTierInfo(key);
+    if (!tier) return;
+
+    const username = authState?.username || "Blood_Hunter";
+    const preview = tierNameHtml(username, key);
+
+    let overlay = $("tierDetailsOverlay");
+    if (!overlay) {
+        overlay = document.createElement("div");
+        overlay.id = "tierDetailsOverlay";
+        overlay.className = "tier-overlay";
+        document.body.appendChild(overlay);
+        overlay.addEventListener("click", event => {
+            if (event.target === overlay || event.target.closest("[data-tier-close]")) overlay.style.display = "none";
+        });
+    }
+
+    overlay.innerHTML = `
+        <div class="tier-card">
+            <h2>📋 ${tier.symbol} ${escapeHtml(tier.name)} Rank</h2>
+            <div class="tier-fact"><span>Rank name</span><strong>${escapeHtml(tier.name)}</strong></div>
+            <div class="tier-fact"><span>Points required</span><strong>${tier.min}</strong></div>
+            <div class="tier-fact"><span>Rank symbol</span><strong>${tier.symbol}</strong></div>
+            <div class="tier-fact"><span>Name color</span><strong><span class="tier-swatch" style="background:${tier.color}"></span>${tier.color.toUpperCase()}</strong></div>
+            <div class="tier-preview">${preview}</div>
+            <div class="tier-mock-label">How it looks in the game</div>
+            <div class="tier-mock"><span>Lobby / player list</span><span>${preview}</span></div>
+            <div class="tier-mock"><span>Leaderboard</span><span>#1 ${preview} · ${tier.min} points</span></div>
+            <div class="tier-mock"><span>Game screen</span><span>${preview}</span></div>
+            <div style="margin-top:14px;text-align:right"><button class="inv-btn primary" type="button" data-tier-close="1">CLOSE</button></div>
+        </div>
+    `;
+    overlay.style.display = "flex";
+}
+
+/* ---------- Level-up popup ---------- */
+
+function maybeShowLevelUps() {
+    if (!pendingLevelUps.length) return;
+    if (currentPhase === "night" || currentPhase === "day") return;   // never interrupt a running game
+    if ($("levelUpOverlay")?.style.display === "flex") return;
+
+    const item = pendingLevelUps.shift();
+    let overlay = $("levelUpOverlay");
+
+    if (!overlay) {
+        overlay = document.createElement("div");
+        overlay.id = "levelUpOverlay";
+        overlay.className = "levelup-overlay";
+        document.body.appendChild(overlay);
+        overlay.addEventListener("click", event => {
+            if (event.target === overlay || event.target.closest("[data-levelup-close]")) {
+                overlay.style.display = "none";
+                setTimeout(maybeShowLevelUps, 200);
+            }
+        });
+    }
+
+    overlay.innerHTML = `
+        <div class="levelup-card">
+            <div class="levelup-title">🎉 LEVEL UP!</div>
+            <p>You reached Level ${Number(item.level) || 0}!</p>
+            ${item.reward ? `<div class="levelup-reward">🔓 New reward unlocked!<br><strong>${escapeHtml(item.reward.icon)} ${escapeHtml(item.reward.name)}</strong></div>` : ""}
+            <div style="margin-top:16px"><button class="inv-btn primary" type="button" data-levelup-close="1">AWESOME</button></div>
+        </div>
+    `;
+    overlay.style.display = "flex";
+}
+setInterval(maybeShowLevelUps, 3000);
+
+/* ---------- Custom sounds (played only on the owner's device) ---------- */
+
+function getEquippedSoundUrl(event) {
+    const p = myProgress;
+    if (!p || !p.equipped || !authState?.username) return null;
+    const id = p.equipped.sounds?.[event];
+    const item = id ? (p.sounds || []).find(s => s.id === id) : null;
+    return item ? item.url : null;
+}
+
+function playCustomSound(url) {
+    try {
+        const audio = new Audio(url);
+        const settings = getAudioSettings();
+        audio.volume = settings.masterVolume * settings.soundEffectsVolume;
+        const promise = audio.play();
+        if (promise) promise.catch(() => {});
+        // Hard 5-second limit, even if a longer file somehow got through.
+        setTimeout(() => { try { audio.pause(); } catch (_) {} }, 5000);
+    } catch (error) {
+        console.warn("Custom sound error:", error);
+    }
+}
+
+/* Plays the player's chosen sound for this event, otherwise the normal game sound. */
+function playEventSound(event, fallback) {
+    const url = getEquippedSoundUrl(event);
+    if (url) {
+        playCustomSound(url);
+        return;
+    }
+    if (fallback) playGameSound(fallback);
+}
+
+function isMyRoleTurn(turn) {
+    const role = String(myRole || "").trim().toLowerCase();
+    if (turn === "mafia") return isMafiaTeamClient(myRole);
+    if (turn === "doctor") return role === "doctor";
+    if (turn === "detective") return role === "detective";
+    if (turn === "cupid") return role === "cupid";
+    return false;
+}
+
+let soundWatchPhase = "";
+let soundWatchTurnKey = "";
+
+socket.on("gameInformation", data => {
+    if (!data) return;
+
+    const phase = data.phase || "";
+
+    if (phase === "day" && soundWatchPhase && soundWatchPhase !== "day") {
+        playEventSound("votingStart");
+    }
+
+    if (phase === "night" && data.nightTurn) {
+        const key = `${data.nightNumber}:${data.nightTurn}`;
+        if (key !== soundWatchTurnKey) {
+            soundWatchTurnKey = key;
+            if (isMyRoleTurn(data.nightTurn)) playEventSound("turnStart");
+        }
+    } else if (phase !== "night") {
+        soundWatchTurnKey = "";
+    }
+
+    soundWatchPhase = phase;
+});
+
+/* ---------- Custom wallpaper ---------- */
+
+function getEquippedWallpaperUrl() {
+    const p = myProgress;
+    if (!p || !p.equipped || !authState?.username) return null;
+    const item = p.equipped.wallpaper ? (p.wallpapers || []).find(w => w.id === p.equipped.wallpaper) : null;
+    return item ? item.url : null;
+}
+
+function applyWallpaper() {
+    const url = getEquippedWallpaperUrl();
+    document.body.classList.toggle("has-custom-wallpaper", Boolean(url));
+    if (url) document.body.style.setProperty("--custom-wallpaper", `url("${url}")`);
+    else document.body.style.removeProperty("--custom-wallpaper");
+}
+
+/* ---------- Settings pages: Inventory, Level Up, Appearance ---------- */
+
+var progressSettingsOpen = false;
+let progressDelegationInstalled = false;
+
+const originalOpenSettings = openSettings;
+openSettings = function(view = "main") {
+    progressSettingsOpen = true;
+    requestMyProgress();
+    originalOpenSettings(view);
+};
+
+const originalCloseSettings = closeSettings;
+closeSettings = function() {
+    progressSettingsOpen = false;
+    originalCloseSettings();
+};
+
+function inventoryGuestHtml() {
+    return `<div class="settings-card"><h3>👻 Guest</h3><p>Sign in or create an account to earn points, ranks and unlock your Inventory.</p></div>`;
+}
+
+function renderTagsTab(p) {
+    const username = authState.username;
+    const auto = p.equippedTier === "auto";
+    const none = p.equippedTier === "none";
+
+    const rows = TIER_ORDER.map(key => {
+        const tier = TIER_INFO[key];
+        const unlocked = (p.unlockedTiers || []).includes(key);
+        const equipped = p.equippedTier === key;
+        return `
+            <div class="inv-row ${unlocked ? "" : "inv-locked"}">
+                <div>${tierNameHtml(username, key)}<small>${tier.name} · ${tier.min} points ${unlocked ? "" : `· 🔒 ${Math.max(0, tier.min - p.points)} more needed`}</small></div>
+                <div class="inv-actions">
+                    <button class="inv-btn" type="button" data-inv="tier-details" data-key="${key}">Details</button>
+                    ${unlocked ? `<button class="inv-btn ${equipped ? "" : "primary"}" type="button" data-inv="equip-tier" data-key="${key}" ${equipped ? "disabled" : ""}>${equipped ? "Equipped" : "Equip"}</button>` : ""}
+                </div>
+            </div>`;
+    }).join("");
+
+    return `
+        <div class="settings-card">
+            <h3>🏷️ Tags / Ranks</h3>
+            <div class="inv-row">
+                <div><strong>Automatic</strong><small>Always show my highest unlocked rank</small></div>
+                <div class="inv-actions"><button class="inv-btn ${auto ? "" : "primary"}" type="button" data-inv="equip-tier" data-key="auto" ${auto ? "disabled" : ""}>${auto ? "Equipped" : "Equip"}</button></div>
+            </div>
+            ${rows}
+            <div class="inv-row">
+                <div><strong>No tag</strong><small>Show my plain username</small></div>
+                <div class="inv-actions"><button class="inv-btn ${none ? "" : "primary"}" type="button" data-inv="equip-tier" data-key="none" ${none ? "disabled" : ""}>${none ? "Equipped" : "Equip"}</button></div>
+            </div>
+        </div>`;
+}
+
+function renderSoundsTab(p) {
+    if (!p.soundsUnlocked) {
+        return `<div class="settings-card inv-locked"><h3>🔊 Custom Sounds</h3><p>🔒 Unlocks at ${p.soundUnlockPoints} points. You have ${p.points}.</p></div>`;
+    }
+
+    const eventOptions = (p.soundEvents || []).map(key => `<option value="${key}">${SOUND_EVENT_LABELS[key] || key}</option>`).join("");
+    const list = (p.sounds || []).map(item => {
+        const equipped = p.equipped?.sounds?.[item.event] === item.id;
+        return `
+            <div class="inv-row">
+                <div><strong>${escapeHtml(item.name)}</strong><small>${SOUND_EVENT_LABELS[item.event] || item.event}${equipped ? " · ✅ active" : ""}</small></div>
+                <div class="inv-actions">
+                    <button class="inv-btn" type="button" data-inv="play-sound" data-url="${escapeHtml(item.url)}">▶ Play</button>
+                    <button class="inv-btn ${equipped ? "" : "primary"}" type="button" data-inv="equip-sound" data-id="${item.id}" data-equip="${equipped ? "0" : "1"}">${equipped ? "Unequip" : "Equip"}</button>
+                    <button class="inv-btn danger" type="button" data-inv="delete-sound" data-id="${item.id}">Delete</button>
+                </div>
+            </div>`;
+    }).join("") || `<div class="settings-muted">No custom sounds yet.</div>`;
+
+    return `
+        <div class="settings-card">
+            <h3>🔊 Add a Custom Sound</h3>
+            <div class="inv-form">
+                <input id="invSoundName" type="text" maxlength="24" placeholder="Sound name (optional)">
+                <select id="invSoundEvent">${eventOptions}</select>
+                <input id="invSoundFile" type="file" accept="audio/*">
+                <button class="inv-btn primary" type="button" data-inv="upload-sound">Add sound (max 5 seconds)</button>
+            </div>
+        </div>
+        <div class="settings-card"><h3>🎧 My Sounds</h3>${list}</div>`;
+}
+
+function renderWallpapersTab(p) {
+    if (!p.wallpapersUnlocked) {
+        return `<div class="settings-card inv-locked"><h3>🖼️ Custom Wallpapers</h3><p>🔒 Unlocks at ${p.wallpaperUnlockPoints} points. You have ${p.points}.</p></div>`;
+    }
+
+    const activeId = p.equipped?.wallpaper || null;
+    const list = (p.wallpapers || []).map(item => {
+        const equipped = activeId === item.id;
+        return `
+            <div class="inv-row">
+                <div style="display:flex;gap:10px;align-items:center"><div class="inv-thumb" style="background-image:url('${escapeHtml(item.url)}')"></div><div><strong>${escapeHtml(item.name)}</strong><small>${equipped ? "✅ active" : "Unlocked"}</small></div></div>
+                <div class="inv-actions">
+                    <button class="inv-btn ${equipped ? "" : "primary"}" type="button" data-inv="equip-wallpaper" data-id="${equipped ? "" : item.id}">${equipped ? "Use default" : "Equip"}</button>
+                    <button class="inv-btn danger" type="button" data-inv="delete-wallpaper" data-id="${item.id}">Delete</button>
+                </div>
+            </div>`;
+    }).join("") || `<div class="settings-muted">No wallpapers yet.</div>`;
+
+    return `
+        <div class="settings-card">
+            <h3>🖼️ Add a Wallpaper</h3>
+            <div class="inv-form">
+                <input id="invWallpaperName" type="text" maxlength="24" placeholder="Wallpaper name (optional)">
+                <input id="invWallpaperFile" type="file" accept="image/png,image/jpeg,image/webp">
+                <button class="inv-btn primary" type="button" data-inv="upload-wallpaper">Add wallpaper (max 4 MB)</button>
+            </div>
+        </div>
+        <div class="settings-card"><h3>🖼️ My Wallpapers</h3>${list}</div>`;
+}
+
+function renderRewardsTab(p) {
+    const rows = (p.rewards || []).map(r => `<div class="inv-row"><div><strong>${escapeHtml(r.icon)} ${escapeHtml(r.name)}</strong><small>Level ${r.level} reward</small></div></div>`).join("")
+        || `<div class="settings-muted">Level rewards you unlock will appear here.</div>`;
+    return `<div class="settings-card"><h3>✨ Rewards & Future Unlocks</h3>${rows}</div>`;
+}
+
+function renderInventoryPage(page) {
+    const tabs = [["tags", "🏷️ Tags"], ["sounds", "🔊 Sounds"], ["wallpapers", "🖼️ Wallpapers"], ["rewards", "✨ Rewards"]];
+    let body;
+
+    if (!authState?.username) {
+        body = inventoryGuestHtml();
+    } else if (!myProgress) {
+        body = `<div class="settings-card"><p class="settings-muted">Loading your inventory…</p></div>`;
+    } else if (inventoryTab === "sounds") {
+        body = renderSoundsTab(myProgress);
+    } else if (inventoryTab === "wallpapers") {
+        body = renderWallpapersTab(myProgress);
+    } else if (inventoryTab === "rewards") {
+        body = renderRewardsTab(myProgress);
+    } else {
+        body = renderTagsTab(myProgress);
+    }
+
+    page.innerHTML = settingsHeader("🎒 INVENTORY") + `
+        <div class="inv-tabs">${tabs.map(([key, label]) => `<button class="inv-tab ${inventoryTab === key ? "active" : ""}" type="button" data-inv="tab" data-key="${key}">${label}</button>`).join("")}</div>
+        ${body}
+        <div class="inv-message" id="invMessage">${escapeHtml(inventoryMessage)}</div>
+    `;
+}
+
+function renderLevelUpPage(page) {
+    let body;
+
+    if (!authState?.username) {
+        body = inventoryGuestHtml();
+    } else if (!myProgress) {
+        body = `<div class="settings-card"><p class="settings-muted">Loading your level…</p></div>`;
+    } else {
+        const p = myProgress;
+        const percent = p.xpNeeded ? Math.min(100, Math.round((p.xpIntoLevel / p.xpNeeded) * 100)) : 100;
+        const tierInfo = getTierInfo(p.shownTier);
+        const upcoming = (p.upcomingRewards || []).map(r => `<div class="inv-row"><div><strong>${escapeHtml(r.icon)} ${escapeHtml(r.name)}</strong><small>Reaches at Level ${r.level}</small></div></div>`).join("")
+            || `<div class="settings-muted">No more rewards planned yet.</div>`;
+
+        body = `
+            <div class="settings-card">
+                <h3>⬆️ Level ${p.level}</h3>
+                <div class="level-bar"><div class="level-bar-fill" style="width:${percent}%"></div></div>
+                <div class="settings-row"><div><strong>XP</strong></div><div class="settings-value">${p.xpIntoLevel} / ${p.xpNeeded || "MAX"}</div></div>
+                <div class="settings-row"><div><strong>XP needed for next level</strong></div><div class="settings-value">${p.xpNeeded ? p.xpNeeded - p.xpIntoLevel : 0}</div></div>
+                <div class="settings-row"><div><strong>Next level</strong></div><div class="settings-value">${p.nextLevel ? "Level " + p.nextLevel : "Max level"}</div></div>
+            </div>
+            <div class="settings-card"><h3>🎁 Upcoming Rewards</h3>${upcoming}</div>
+            <div class="settings-card">
+                <div class="settings-row"><div><strong>Current points</strong></div><div class="settings-value">${p.points}</div></div>
+                <div class="settings-row"><div><strong>Current rank</strong></div><div class="settings-value">${tierInfo ? tierNameHtml(p.username, p.shownTier) : "No rank yet"}</div></div>
+                <small class="settings-muted">Levels use XP and are separate from your point rank.</small>
+            </div>`;
+    }
+
+    page.innerHTML = settingsHeader("⬆️ LEVEL UP") + body;
+}
+
+function renderAppearancePage(page) {
+    const st = loadMafiaSettings();
+    const white = st.theme === "white";
+
+    page.innerHTML = settingsHeader("🎨 APPEARANCE") + `
+        <div class="settings-card">
+            <h3>Theme</h3>
+            <div class="theme-choice">
+                <button class="inv-btn ${white ? "" : "active"}" type="button" data-theme-pick="noir">🌙 Dark Theme</button>
+                <button class="inv-btn ${white ? "active" : ""}" type="button" data-theme-pick="white">☀️ White Theme</button>
+            </div>
+            <small class="settings-muted">Dark keeps the current Mafia Wars look. White uses the blue / white UI.</small>
+        </div>
+        <div class="settings-card">
+            <div class="settings-row"><div><strong>UI Effects</strong><small>Enable hover, glow and interface effects.</small></div><input class="settings-switch" type="checkbox" data-setting="uiEffects" ${st.uiEffects ? "checked" : ""}></div>
+            <div class="settings-row"><div><strong>Animations</strong><small>Enable normal interface transitions.</small></div><input class="settings-switch" type="checkbox" data-setting="animations" ${st.animations ? "checked" : ""}></div>
+            <div class="settings-row"><div><strong>Reduce Motion</strong><small>Reduce interface movement and transitions.</small></div><input class="settings-switch" type="checkbox" data-setting="reduceMotion" ${st.reduceMotion ? "checked" : ""}></div>
+        </div>
+    `;
+
+    page.querySelectorAll("[data-theme-pick]").forEach(button =>
+        button.addEventListener("click", () => updateMafiaSetting("theme", button.dataset.themePick))
+    );
+    page.querySelectorAll("[data-setting]").forEach(input =>
+        input.addEventListener("change", () => updateMafiaSetting(input.dataset.setting, input.checked))
+    );
+}
+
+/* Extra cards inside Ranks & Progress: Level Up button + rank list with Details. */
+function addRankProgressCards(page) {
+    const anchor = $("settingsMyPoints")?.closest(".settings-card");
+    if (!anchor) return;
+
+    const username = authState?.username || "Blood_Hunter";
+    const tierRows = TIER_ORDER.map(key => {
+        const tier = TIER_INFO[key];
+        const reached = myProgress ? (myProgress.unlockedTiers || []).includes(key) : false;
+        return `<div class="inv-row ${reached ? "" : "inv-locked"}">
+            <div>${tierNameHtml(username, key)}<small>${tier.min} points${reached ? " · ✅ unlocked" : ""}</small></div>
+            <div class="inv-actions"><button class="inv-btn" type="button" data-inv="tier-details" data-key="${key}">Details</button></div>
+        </div>`;
+    }).join("");
+
+    anchor.insertAdjacentHTML("afterend", `
+        <div class="settings-card">
+            <button class="settings-option settings-category" type="button" data-inv="open-levelup" style="width:100%">
+                <span class="settings-icon">⬆️</span><span class="settings-copy"><strong>Level Up</strong><span>${myProgress ? "Level " + myProgress.level : "Level, XP and rewards"}</span></span>
+            </button>
+        </div>
+        <div class="settings-card"><h3>🏅 Rank Tags</h3>${tierRows}</div>
+    `);
+}
+
+const originalRenderSettingsPage = renderSettingsPage;
+renderSettingsPage = function(view) {
+    const page = $("settingsPage");
+    if (!page) return originalRenderSettingsPage(view);
+
+    if (!progressDelegationInstalled) {
+        progressDelegationInstalled = true;
+        page.addEventListener("click", handleProgressClick);
+    }
+
+    if (view === "inventory" || view === "levelup" || view === "appearance") {
+        // Keep the existing Account controls safe (same rule the original page follows).
+        const accountInfo = $("accountInfo");
+        const accountChip = $("accountChip");
+        if (accountInfo && accountChip && accountInfo.parentElement !== accountChip) {
+            accountChip.appendChild(accountInfo);
+            accountInfo.style.display = "none";
+        }
+
+        if (view === "inventory") renderInventoryPage(page);
+        else if (view === "levelup") renderLevelUpPage(page);
+        else renderAppearancePage(page);
+
+        $("settingsBack")?.addEventListener("click", () => settingsNav(view === "levelup" ? "ranks" : "main"));
+        $("settingsClose")?.addEventListener("click", closeSettings);
+        return;
+    }
+
+    originalRenderSettingsPage(view);
+
+    if (view === "main") {
+        const grid = page.querySelector(".settings-grid");
+        if (grid) {
+            const add = (icon, title, text, target) => {
+                const button = document.createElement("button");
+                button.type = "button";
+                button.className = "settings-option settings-category";
+                button.innerHTML = `<span class="settings-icon">${icon}</span><span class="settings-copy"><strong>${title}</strong><span>${text}</span></span>`;
+                button.addEventListener("click", () => settingsNav(target));
+                grid.appendChild(button);
+            };
+            add("🎒", "Inventory", "Rank tags, sounds, wallpapers and rewards", "inventory");
+            add("🎨", "Appearance", "Dark or White theme", "appearance");
+        }
+    } else if (view === "ranks") {
+        addRankProgressCards(page);
+    }
+};
+
+function inventoryNotice(text) {
+    inventoryMessage = text || "";
+    const box = $("invMessage");
+    if (box) box.textContent = inventoryMessage;
+}
+
+function getAudioDuration(file) {
+    return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const audio = new Audio();
+        audio.preload = "metadata";
+        const finish = (fn, value) => { URL.revokeObjectURL(url); fn(value); };
+        audio.onloadedmetadata = () => {
+            if (Number.isFinite(audio.duration)) finish(resolve, audio.duration);
+            else finish(reject, new Error("Could not read the sound length."));
+        };
+        audio.onerror = () => finish(reject, new Error("Your browser can't play this file."));
+        audio.src = url;
+    });
+}
+
+function inventoryEmit(eventName, payload, successText) {
+    socket.emit(eventName, payload, result => {
+        inventoryNotice(result?.ok ? (successText || "Done.") : (result?.error || "Something went wrong."));
+    });
+}
+
+async function handleProgressClick(event) {
+    const target = event.target.closest("[data-inv]");
+    if (!target) return;
+
+    const action = target.dataset.inv;
+
+    if (action === "tab") {
+        inventoryTab = target.dataset.key;
+        inventoryMessage = "";
+        renderSettingsPage("inventory");
+    } else if (action === "tier-details") {
+        openTierDetails(target.dataset.key);
+    } else if (action === "open-levelup") {
+        settingsNav("levelup");
+    } else if (action === "equip-tier") {
+        inventoryEmit("equipTier", { tier: target.dataset.key }, "Rank tag updated.");
+    } else if (action === "play-sound") {
+        playCustomSound(target.dataset.url);
+    } else if (action === "equip-sound") {
+        inventoryEmit("equipSound", { id: target.dataset.id, equip: target.dataset.equip === "1" }, "Sound updated.");
+    } else if (action === "delete-sound") {
+        inventoryEmit("deleteSound", { id: target.dataset.id }, "Sound deleted.");
+    } else if (action === "equip-wallpaper") {
+        inventoryEmit("equipWallpaper", { id: target.dataset.id || null }, "Wallpaper updated.");
+    } else if (action === "delete-wallpaper") {
+        inventoryEmit("deleteWallpaper", { id: target.dataset.id }, "Wallpaper deleted.");
+    } else if (action === "upload-sound") {
+        const file = $("invSoundFile")?.files?.[0];
+        if (!file) return inventoryNotice("Choose a sound file first.");
+        if (file.size > 1200 * 1024) return inventoryNotice("That file is too large. Use a short clip.");
+
+        try {
+            const duration = await getAudioDuration(file);
+            if (duration > 5.05) return inventoryNotice(`Sound is ${duration.toFixed(1)}s. Maximum is 5 seconds.`);
+        } catch (error) {
+            return inventoryNotice(error.message || "Could not read this sound.");
+        }
+
+        inventoryNotice("Uploading…");
+        inventoryEmit("uploadSound", {
+            name: $("invSoundName")?.value || "",
+            event: $("invSoundEvent")?.value || "",
+            bytes: await file.arrayBuffer()
+        }, "Sound added.");
+    } else if (action === "upload-wallpaper") {
+        const file = $("invWallpaperFile")?.files?.[0];
+        if (!file) return inventoryNotice("Choose an image first.");
+        if (file.size > 4 * 1024 * 1024) return inventoryNotice("Image is too large (4 MB max).");
+
+        inventoryNotice("Uploading…");
+        inventoryEmit("uploadWallpaper", {
+            name: $("invWallpaperName")?.value || "",
+            bytes: await file.arrayBuffer()
+        }, "Wallpaper added.");
+    }
+}
+
+/* If the page was reloaded while signed in, authResult will load progress. */
+if (authState?.username) setTimeout(requestMyProgress, 500);
