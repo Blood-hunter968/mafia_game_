@@ -5643,3 +5643,892 @@ html[data-mafia-theme="blood"] body {
         padding: 24px 16px 18px;
     }
 }
+
+
+/* =========================================================
+   PROGRESSION UPDATE — Ranks, Inventory, Level Up, Stats
+   (matches the new server.js + client.js)
+   Rules use a "body" prefix so they win over the small
+   fallback CSS that client.js injects at runtime.
+========================================================= */
+
+/* ---------- Rank tag in names ---------- */
+.tier-name {
+    font-weight: 700;
+    letter-spacing: .3px;
+    text-shadow: 0 0 10px rgba(0, 0, 0, .55);
+}
+
+/* ---------- Lobby players, host crown, YOU label ---------- */
+#playerList li.lobby-player,
+.lobby-player {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    transition: border-color .18s, transform .18s;
+}
+.lobby-player:hover {
+    border-color: rgba(180, 30, 30, .7);
+    transform: translateY(-1px);
+}
+.host-crown {
+    filter: drop-shadow(0 0 5px rgba(230, 190, 60, .7));
+}
+.you-label {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 7px;
+    border: 1px solid rgba(180, 30, 30, .7);
+    background: rgba(110, 18, 18, .55);
+    border-radius: 3px;
+    color: #f2d0d0;
+    font-family: "Arial Black", Arial, sans-serif;
+    font-size: 10px;
+    letter-spacing: 1px;
+    vertical-align: middle;
+}
+
+/* ---------- Custom wallpaper (from Inventory) ---------- */
+body.has-custom-wallpaper {
+    background-image:
+        linear-gradient(180deg, rgba(0, 0, 0, .35), rgba(0, 0, 0, .7)),
+        var(--custom-wallpaper) !important;
+    background-size: cover !important;
+    background-position: center !important;
+    background-attachment: fixed !important;
+}
+
+/* ---------- Inventory tabs ---------- */
+body .inv-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 4px 0 16px;
+}
+body .inv-tab {
+    padding: 10px 16px;
+    border: 1px solid #5a1818;
+    border-radius: 3px;
+    background: rgba(0, 0, 0, .35);
+    color: #cfcfcf;
+    font: inherit;
+    font-weight: 700;
+    letter-spacing: .5px;
+    cursor: pointer;
+    transition: background .18s, border-color .18s, transform .18s;
+}
+body .inv-tab:hover {
+    border-color: #d33;
+    transform: translateY(-1px);
+}
+body .inv-tab.active {
+    border-color: #d33;
+    background: linear-gradient(180deg, rgba(120, 20, 20, .95), rgba(40, 6, 6, .98));
+    color: #fff;
+    box-shadow: 0 0 16px rgba(180, 20, 20, .25);
+}
+
+/* ---------- Inventory rows / buttons ---------- */
+body .inv-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 12px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, .07);
+}
+body .inv-row:last-child { border-bottom: 0; }
+body .inv-row small {
+    display: block;
+    margin-top: 3px;
+    color: #999;
+    opacity: 1;
+}
+body .inv-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+body .inv-btn {
+    padding: 8px 14px;
+    border: 1px solid #5a1818;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, .05);
+    color: #e6e6e6;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: .5px;
+    cursor: pointer;
+    transition: transform .18s, box-shadow .18s, border-color .18s, background .18s;
+}
+body .inv-btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+    border-color: #d33;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, .5), 0 0 12px rgba(180, 20, 20, .2);
+}
+body .inv-btn.primary {
+    border-color: #762020;
+    background: linear-gradient(180deg, rgba(120, 20, 20, .96), rgba(40, 6, 6, .98));
+    color: #fff;
+}
+body .inv-btn.danger {
+    border-color: rgba(230, 70, 70, .7);
+    color: #ff9c9c;
+}
+body .inv-btn:disabled {
+    opacity: .5;
+    cursor: default;
+}
+body .inv-locked { opacity: .5; }
+body .inv-message {
+    min-height: 1.3em;
+    margin-top: 12px;
+    color: #d8b4b4;
+    font-size: 13px;
+}
+body .inv-form {
+    display: grid;
+    gap: 9px;
+    margin-bottom: 8px;
+}
+body .inv-form input,
+body .inv-form select {
+    padding: 10px 12px;
+    border: 1px solid #4a1515;
+    border-radius: 3px;
+    background: rgba(0, 0, 0, .45);
+    color: #eee;
+    font: inherit;
+}
+body .inv-form input:focus,
+body .inv-form select:focus {
+    outline: none;
+    border-color: #d33;
+    box-shadow: 0 0 12px rgba(180, 20, 20, .25);
+}
+body .inv-thumb {
+    width: 88px;
+    height: 54px;
+    flex: none;
+    border: 1px solid #5a1818;
+    border-radius: 3px;
+    background-size: cover;
+    background-position: center;
+}
+
+/* ---------- Level bar ---------- */
+body .level-bar {
+    height: 14px;
+    margin: 10px 0 14px;
+    overflow: hidden;
+    border: 1px solid rgba(180, 30, 30, .45);
+    border-radius: 8px;
+    background: rgba(0, 0, 0, .5);
+}
+body .level-bar-fill {
+    height: 100%;
+    border-radius: 8px;
+    background: linear-gradient(90deg, #7e0c0c, #d62a2a, #ff8a3a);
+    box-shadow: 0 0 12px rgba(220, 50, 40, .55);
+    transition: width .5s ease;
+}
+
+/* ---------- Theme switch buttons ---------- */
+body .theme-choice {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+body .theme-choice .inv-btn { padding: 11px 18px; }
+body .theme-choice .inv-btn.active {
+    border-color: #d33;
+    background: linear-gradient(180deg, rgba(120, 20, 20, .96), rgba(40, 6, 6, .98));
+    color: #fff;
+    box-shadow: 0 0 16px rgba(180, 20, 20, .3);
+}
+
+/* ---------- Rank details popup + Level Up popup ---------- */
+body .tier-overlay,
+body .levelup-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 2147483000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 18px;
+    background: rgba(0, 0, 0, .8);
+    backdrop-filter: blur(6px);
+    animation: settingsFadeIn .18s ease;
+}
+body .tier-card,
+body .levelup-card {
+    position: relative;
+    width: min(460px, 100%);
+    max-height: 90vh;
+    overflow: auto;
+    padding: 24px;
+    border: 1px solid rgba(180, 30, 30, .75);
+    border-radius: 6px;
+    background: linear-gradient(180deg, rgba(26, 7, 7, .99), rgba(6, 6, 6, .99));
+    color: #eee;
+    box-shadow: 0 24px 80px rgba(0, 0, 0, .9), 0 0 35px rgba(160, 20, 20, .2);
+}
+body .tier-card::before,
+body .levelup-card::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 10%;
+    right: 10%;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, #b51f1f, #ff4a4a, #b51f1f, transparent);
+    box-shadow: 0 0 14px rgba(255, 60, 60, .6);
+}
+body .tier-card h2 {
+    margin-bottom: 14px;
+    font-family: "Arial Black", Arial, sans-serif;
+    font-size: 20px;
+    letter-spacing: 1px;
+}
+body .tier-fact {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 9px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, .07);
+    font-size: 14px;
+}
+body .tier-fact span { color: #aaa; }
+body .tier-preview {
+    margin: 10px 0;
+    padding: 16px 0;
+    border: 1px solid rgba(180, 30, 30, .3);
+    border-radius: 4px;
+    background: rgba(0, 0, 0, .35);
+    text-align: center;
+    font-size: 1.7em;
+}
+body .tier-mock-label {
+    margin-top: 12px;
+    color: #999;
+    font-size: 12px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+}
+body .tier-mock {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    margin: 6px 0;
+    padding: 9px 12px;
+    border: 1px solid #2c2c2c;
+    border-radius: 3px;
+    background: #171717;
+    font-size: 13px;
+}
+body .tier-swatch {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    margin-right: 7px;
+    border: 1px solid rgba(255, 255, 255, .45);
+    border-radius: 50%;
+    vertical-align: middle;
+}
+body .levelup-card {
+    text-align: center;
+    animation: levelUpPop .5s cubic-bezier(.2, 1.4, .4, 1);
+}
+body .levelup-title {
+    margin: 6px 0 10px;
+    font-family: "Arial Black", Arial, sans-serif;
+    font-size: clamp(26px, 7vw, 38px);
+    letter-spacing: 2px;
+    color: #ffd25a;
+    text-shadow: 0 0 22px rgba(255, 170, 40, .55);
+}
+body .levelup-reward {
+    margin-top: 16px;
+    padding: 14px;
+    border: 1px solid rgba(230, 190, 60, .5);
+    border-radius: 4px;
+    background: rgba(120, 90, 10, .15);
+}
+@keyframes levelUpPop {
+    from { transform: scale(.7); opacity: 0; }
+    to   { transform: scale(1);  opacity: 1; }
+}
+
+/* ---------- Game over statistics ---------- */
+#gameOverStats {
+    width: 100%;
+    margin: 18px 0 8px;
+}
+.game-over-stats-title {
+    margin-bottom: 12px;
+    text-align: center;
+    font-family: "Arial Black", Arial, sans-serif;
+    font-size: 14px;
+    letter-spacing: 3px;
+    color: #d8b4b4;
+}
+.game-over-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 10px;
+}
+.game-stat-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 14px 8px;
+    border: 1px solid rgba(180, 30, 30, .4);
+    border-radius: 4px;
+    background: linear-gradient(180deg, rgba(40, 8, 8, .75), rgba(8, 8, 8, .9));
+    box-shadow: 0 8px 22px rgba(0, 0, 0, .45);
+}
+.game-stat-card span { font-size: 22px; }
+.game-stat-card strong {
+    font-family: "Arial Black", Arial, sans-serif;
+    font-size: 26px;
+    color: #fff;
+}
+.game-stat-card small {
+    color: #aaa;
+    font-size: 11px;
+    letter-spacing: .6px;
+    text-align: center;
+}
+
+/* ---------- Last-10-seconds heartbeat on the night timer ---------- */
+.night-turn-heartbeat {
+    animation: nightHeartbeat 1s ease-in-out infinite;
+}
+@keyframes nightHeartbeat {
+    0%, 100% { transform: scale(1); }
+    15%      { transform: scale(1.12); }
+    30%      { transform: scale(1); }
+    45%      { transform: scale(1.08); }
+}
+
+/* ---------- Settings small helpers ---------- */
+.settings-account-card,
+.sound-settings-card {
+    position: relative;
+}
+
+/* ---------- Small screens ---------- */
+@media (max-width: 700px) {
+    body .inv-row { align-items: flex-start; }
+    body .inv-actions { width: 100%; }
+    body .inv-btn { flex: 1 1 auto; }
+    body .inv-tab { flex: 1 1 calc(50% - 8px); padding: 10px 8px; }
+    body .tier-card,
+    body .levelup-card { padding: 18px; }
+    body .inv-thumb { width: 72px; height: 46px; }
+}
+
+
+/* =========================================================
+   WHITE THEME  (Settings > Appearance > White Theme)
+   Applied with html[data-mafia-theme="white"]
+========================================================= */
+html[data-mafia-theme="white"] body {
+    color: #1b1b1f;
+    background:
+        radial-gradient(circle at 50% 12%, rgba(255, 255, 255, .95), transparent 45%),
+        linear-gradient(180deg, #f6f6f8, #dcdce2) fixed;
+}
+html[data-mafia-theme="white"] body::after {
+    background: radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, .12) 100%);
+}
+html[data-mafia-theme="white"] body.has-custom-wallpaper {
+    background-image:
+        linear-gradient(180deg, rgba(255, 255, 255, .35), rgba(255, 255, 255, .6)),
+        var(--custom-wallpaper) !important;
+}
+
+/* Home / generic cards */
+html[data-mafia-theme="white"] .home-container,
+html[data-mafia-theme="white"] .ranks-card,
+html[data-mafia-theme="white"] .rejoin-card {
+    background: rgba(255, 255, 255, .92) !important;
+    border-color: #c9c9d2 !important;
+    color: #1b1b1f !important;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, .18) !important;
+}
+html[data-mafia-theme="white"] h1,
+html[data-mafia-theme="white"] h2,
+html[data-mafia-theme="white"] h3,
+html[data-mafia-theme="white"] label {
+    color: #17171c;
+    text-shadow: none;
+}
+html[data-mafia-theme="white"] p,
+html[data-mafia-theme="white"] small {
+    color: #55555f;
+}
+html[data-mafia-theme="white"] input,
+html[data-mafia-theme="white"] select,
+html[data-mafia-theme="white"] textarea {
+    background: #fff;
+    color: #1b1b1f;
+    border-color: #b9b9c4;
+}
+html[data-mafia-theme="white"] #playerList li {
+    background: #fff;
+    border-color: #c9c9d2;
+    color: #1b1b1f;
+}
+
+/* Settings window */
+html[data-mafia-theme="white"] .settings-overlay { background: rgba(240, 240, 245, .85); }
+html[data-mafia-theme="white"] .settings-shell {
+    border-color: #b9b9c4;
+    background: linear-gradient(180deg, #ffffff, #f0f0f4);
+    box-shadow: 0 24px 80px rgba(0, 0, 0, .25);
+}
+html[data-mafia-theme="white"] .settings-header { border-bottom-color: #d4d4dc; }
+html[data-mafia-theme="white"] .settings-header h2 { color: #17171c; }
+html[data-mafia-theme="white"] .settings-back,
+html[data-mafia-theme="white"] .settings-close,
+html[data-mafia-theme="white"] .settings-action,
+html[data-mafia-theme="white"] .settings-option {
+    border-color: #b9b9c4;
+    background: linear-gradient(180deg, #ffffff, #e8e8ee);
+    color: #1b1b1f;
+}
+html[data-mafia-theme="white"] .settings-back:hover,
+html[data-mafia-theme="white"] .settings-close:hover,
+html[data-mafia-theme="white"] .settings-action:hover,
+html[data-mafia-theme="white"] .settings-option:hover {
+    border-color: #8a8a98;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, .15);
+}
+html[data-mafia-theme="white"] .settings-card {
+    border-color: #d0d0d8;
+    background: #fff;
+}
+html[data-mafia-theme="white"] .settings-card p,
+html[data-mafia-theme="white"] .settings-row small,
+html[data-mafia-theme="white"] .settings-muted,
+html[data-mafia-theme="white"] .settings-category .settings-copy span { color: #66666f; }
+html[data-mafia-theme="white"] .settings-row { border-bottom-color: #e4e4ea; }
+html[data-mafia-theme="white"] .settings-row strong { color: #1b1b1f; }
+html[data-mafia-theme="white"] .settings-admin-note {
+    background: #fdecec;
+    color: #5a2a2a;
+}
+
+/* Inventory / ranks / level-up in the white theme */
+html[data-mafia-theme="white"] body .inv-tab {
+    border-color: #b9b9c4;
+    background: #fff;
+    color: #33333a;
+}
+html[data-mafia-theme="white"] body .inv-tab.active,
+html[data-mafia-theme="white"] body .inv-btn.primary,
+html[data-mafia-theme="white"] body .theme-choice .inv-btn.active {
+    border-color: #1b1b1f;
+    background: #1b1b1f;
+    color: #fff;
+    box-shadow: none;
+}
+html[data-mafia-theme="white"] body .inv-btn {
+    border-color: #b9b9c4;
+    background: #fff;
+    color: #1b1b1f;
+}
+html[data-mafia-theme="white"] body .inv-btn.danger {
+    border-color: #d46b6b;
+    color: #b32020;
+}
+html[data-mafia-theme="white"] body .inv-row { border-bottom-color: #e4e4ea; }
+html[data-mafia-theme="white"] body .inv-row small { color: #66666f; }
+html[data-mafia-theme="white"] body .inv-message { color: #7a2a2a; }
+html[data-mafia-theme="white"] body .inv-form input,
+html[data-mafia-theme="white"] body .inv-form select {
+    border-color: #b9b9c4;
+    background: #fff;
+    color: #1b1b1f;
+}
+html[data-mafia-theme="white"] body .inv-thumb { border-color: #b9b9c4; }
+html[data-mafia-theme="white"] body .level-bar {
+    border-color: #c4c4cd;
+    background: #e8e8ee;
+}
+html[data-mafia-theme="white"] body .tier-overlay,
+html[data-mafia-theme="white"] body .levelup-overlay { background: rgba(230, 230, 238, .85); }
+html[data-mafia-theme="white"] body .tier-card,
+html[data-mafia-theme="white"] body .levelup-card {
+    border-color: #b9b9c4;
+    background: linear-gradient(180deg, #ffffff, #f0f0f4);
+    color: #1b1b1f;
+    box-shadow: 0 24px 70px rgba(0, 0, 0, .25);
+}
+html[data-mafia-theme="white"] body .tier-fact { border-bottom-color: #e4e4ea; }
+html[data-mafia-theme="white"] body .tier-fact span,
+html[data-mafia-theme="white"] body .tier-mock-label { color: #66666f; }
+html[data-mafia-theme="white"] body .tier-preview {
+    border-color: #d0d0d8;
+    background: #1b1b22;          /* dark strip so every rank color stays readable */
+}
+html[data-mafia-theme="white"] body .tier-mock {
+    border-color: #d0d0d8;
+    background: #1b1b22;
+    color: #eee;
+}
+html[data-mafia-theme="white"] body .levelup-title {
+    color: #b36b00;
+    text-shadow: none;
+}
+html[data-mafia-theme="white"] body .levelup-reward {
+    border-color: #d9b45a;
+    background: #fff6dc;
+}
+
+/* Game over stats in the white theme */
+html[data-mafia-theme="white"] .game-over-stats-title { color: #55555f; }
+html[data-mafia-theme="white"] .game-stat-card {
+    border-color: #c9c9d2;
+    background: #fff;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, .12);
+}
+html[data-mafia-theme="white"] .game-stat-card strong { color: #17171c; }
+html[data-mafia-theme="white"] .game-stat-card small { color: #66666f; }
+
+/* Keep the in-game night / role screens dark even in the white theme,
+   so the night atmosphere and role art still look right. */
+html[data-mafia-theme="white"] #nightTurnOverlay,
+html[data-mafia-theme="white"] #nightActionPopup,
+html[data-mafia-theme="white"] #detectiveResultPopup,
+html[data-mafia-theme="white"] #deathRevealOverlay,
+html[data-mafia-theme="white"] #roleRevealOverlay,
+html[data-mafia-theme="white"] #gameOverOverlay {
+    color: #eeeeea;
+}
+html[data-mafia-theme="white"] #gameOverOverlay h1,
+html[data-mafia-theme="white"] #gameOverOverlay h2,
+html[data-mafia-theme="white"] #gameOverOverlay p {
+    color: #eeeeea;
+}
+html[data-mafia-theme="white"] #gameOverOverlay .game-over-stats-title { color: #d8b4b4; }
+html[data-mafia-theme="white"] #gameOverOverlay .game-stat-card {
+    border-color: rgba(180, 30, 30, .4);
+    background: linear-gradient(180deg, rgba(40, 8, 8, .75), rgba(8, 8, 8, .9));
+}
+html[data-mafia-theme="white"] #gameOverOverlay .game-stat-card strong { color: #fff; }
+html[data-mafia-theme="white"] #gameOverOverlay .game-stat-card small { color: #aaa; }
+
+
+/* =========================================================
+   WHITE THEME — BLUE BUTTONS + BLUE LINES + OWN LOGO/WALLPAPER
+   Only active with html[data-mafia-theme="white"].
+   Dark / Blood Red themes are not touched.
+
+   Put these 2 image files next to index.html:
+     background-white.png        <- your White theme wallpaper
+     mafia-wars-white-logo.png   <- your White theme logo
+========================================================= */
+html[data-mafia-theme="white"] {
+    --wt-blue: #1a56e6;
+    --wt-blue-dark: #0b3fbf;
+    --wt-blue-light: #4a82ff;
+}
+
+/* ---- Wallpaper (an equipped custom wallpaper from Inventory still wins) ---- */
+html[data-mafia-theme="white"] body {
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, .15), rgba(255, 255, 255, .35)),
+        url("background-white.png") center / cover fixed no-repeat,
+        linear-gradient(180deg, #f6f6f8, #dcdce2);
+}
+
+/* ---- Logo glow: remove the dark red-theme shadow ---- */
+html[data-mafia-theme="white"] #homeScreen .logo-icon img,
+html[data-mafia-theme="white"] #authScreen .logo-icon img {
+    filter: drop-shadow(0 10px 18px rgba(26, 86, 230, .25));
+}
+
+/* ---- All buttons -> blue ---- */
+html[data-mafia-theme="white"] #homeScreen .home-buttons button,
+html[data-mafia-theme="white"] .ranks-top-button,
+html[data-mafia-theme="white"] .rank-details-button,
+html[data-mafia-theme="white"] .secondary-screen-button,
+html[data-mafia-theme="white"] .account-chip button,
+html[data-mafia-theme="white"] .action-panel > button,
+html[data-mafia-theme="white"] .action-panel .guide-button,
+html[data-mafia-theme="white"] .chat-input-row button,
+html[data-mafia-theme="white"] .refresh-match-button,
+html[data-mafia-theme="white"] .leave-room-button,
+html[data-mafia-theme="white"] .request-actions button,
+html[data-mafia-theme="white"] .guide-close-button,
+html[data-mafia-theme="white"] #gameOverBox button,
+html[data-mafia-theme="white"] .settings-back,
+html[data-mafia-theme="white"] .settings-close,
+html[data-mafia-theme="white"] .settings-action,
+html[data-mafia-theme="white"] .settings-option,
+html[data-mafia-theme="white"] body .inv-btn,
+html[data-mafia-theme="white"] body .inv-tab.active,
+html[data-mafia-theme="white"] body .inv-btn.primary,
+html[data-mafia-theme="white"] body .theme-choice .inv-btn.active,
+html[data-mafia-theme="white"] #quickStartScreen #backFromQuickStart {
+    background: linear-gradient(180deg, var(--wt-blue-light), var(--wt-blue-dark)) !important;
+    background-image: linear-gradient(180deg, var(--wt-blue-light), var(--wt-blue-dark)) !important;
+    border: 1px solid var(--wt-blue-dark) !important;
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+    text-shadow: none !important;
+    box-shadow: 0 8px 22px rgba(26, 86, 230, .35), inset 0 1px rgba(255, 255, 255, .25) !important;
+}
+
+html[data-mafia-theme="white"] #homeScreen .home-buttons button:hover,
+html[data-mafia-theme="white"] .ranks-top-button:hover,
+html[data-mafia-theme="white"] .rank-details-button:hover,
+html[data-mafia-theme="white"] .secondary-screen-button:hover,
+html[data-mafia-theme="white"] .account-chip button:hover,
+html[data-mafia-theme="white"] .action-panel > button:hover,
+html[data-mafia-theme="white"] .action-panel .guide-button:hover,
+html[data-mafia-theme="white"] .chat-input-row button:hover,
+html[data-mafia-theme="white"] .refresh-match-button:hover,
+html[data-mafia-theme="white"] .leave-room-button:hover,
+html[data-mafia-theme="white"] .request-actions button:hover,
+html[data-mafia-theme="white"] .guide-close-button:hover,
+html[data-mafia-theme="white"] #gameOverBox button:hover,
+html[data-mafia-theme="white"] .settings-back:hover,
+html[data-mafia-theme="white"] .settings-close:hover,
+html[data-mafia-theme="white"] .settings-action:hover,
+html[data-mafia-theme="white"] .settings-option:hover,
+html[data-mafia-theme="white"] body .inv-btn:hover,
+html[data-mafia-theme="white"] #quickStartScreen #backFromQuickStart:hover {
+    background: linear-gradient(180deg, #6a9bff, var(--wt-blue)) !important;
+    background-image: linear-gradient(180deg, #6a9bff, var(--wt-blue)) !important;
+    border-color: var(--wt-blue) !important;
+    box-shadow: 0 12px 30px rgba(26, 86, 230, .5) !important;
+}
+
+/* inactive Inventory tabs / theme picker stay light but get blue lines + text */
+html[data-mafia-theme="white"] body .inv-tab:not(.active) {
+    border-color: var(--wt-blue) !important;
+    color: var(--wt-blue-dark) !important;
+}
+
+/* ---- Welcome line under the title (was red) ---- */
+html[data-mafia-theme="white"] #homeScreen .home-container > p {
+    color: var(--wt-blue) !important;
+    text-shadow: none !important;
+}
+
+/* ---- All lines / borders -> blue ---- */
+html[data-mafia-theme="white"] .home-container,
+html[data-mafia-theme="white"] .ranks-card,
+html[data-mafia-theme="white"] .rejoin-card,
+html[data-mafia-theme="white"] .public-matches-shell,
+html[data-mafia-theme="white"] #roomHud,
+html[data-mafia-theme="white"] .settings-shell,
+html[data-mafia-theme="white"] .settings-card,
+html[data-mafia-theme="white"] .tier-card,
+html[data-mafia-theme="white"] .levelup-card,
+html[data-mafia-theme="white"] .game-stat-card,
+html[data-mafia-theme="white"] #playerList li,
+html[data-mafia-theme="white"] input,
+html[data-mafia-theme="white"] select,
+html[data-mafia-theme="white"] textarea,
+html[data-mafia-theme="white"] body .inv-form input,
+html[data-mafia-theme="white"] body .inv-form select,
+html[data-mafia-theme="white"] body .inv-thumb,
+html[data-mafia-theme="white"] body .level-bar {
+    border-color: var(--wt-blue) !important;
+}
+
+html[data-mafia-theme="white"] .settings-header,
+html[data-mafia-theme="white"] .settings-row,
+html[data-mafia-theme="white"] body .inv-row,
+html[data-mafia-theme="white"] body .tier-fact {
+    border-bottom-color: rgba(26, 86, 230, .45) !important;
+}
+
+html[data-mafia-theme="white"] hr {
+    border: 0;
+    border-top: 1px solid var(--wt-blue);
+    background: var(--wt-blue);
+}
+
+html[data-mafia-theme="white"] input:focus,
+html[data-mafia-theme="white"] select:focus,
+html[data-mafia-theme="white"] textarea:focus {
+    outline: none;
+    border-color: var(--wt-blue-dark) !important;
+    box-shadow: 0 0 0 3px rgba(26, 86, 230, .25);
+}
+
+
+/* =========================================================
+   FIX (append at END of style.css)
+   1) White theme: no white panels, show the wallpaper
+   2) Role Settings: all text readable (light on dark)
+========================================================= */
+
+/* 1) Remove white backgrounds in the white theme */
+html[data-mafia-theme="white"] .home-container,
+html[data-mafia-theme="white"] .ranks-card,
+html[data-mafia-theme="white"] .rejoin-card,
+html[data-mafia-theme="white"] .lobby-container {
+    background: transparent !important;
+    box-shadow: none !important;
+    border-color: transparent !important;
+}
+
+/* no white wash over the wallpaper */
+html[data-mafia-theme="white"] body {
+    background:
+        url("background-white.png") center / cover fixed no-repeat,
+        #05070d !important;
+}
+html[data-mafia-theme="white"] body::after {
+    background: radial-gradient(ellipse at center, transparent 45%, rgba(0, 0, 0, .45) 100%) !important;
+}
+
+/* text on the (now see-through) panels must be light */
+html[data-mafia-theme="white"] .home-container h1,
+html[data-mafia-theme="white"] .home-container h2,
+html[data-mafia-theme="white"] .home-container h3,
+html[data-mafia-theme="white"] .home-container label {
+    color: #f2f6ff !important;
+    text-shadow: 0 2px 10px rgba(0, 0, 0, .8) !important;
+}
+html[data-mafia-theme="white"] .home-container p {
+    color: #8fb4ff !important;
+}
+
+/* 2) Role Settings: readable in every theme */
+html[data-mafia-theme] .role-settings,
+html[data-mafia-theme] .role-settings h2,
+html[data-mafia-theme] .role-settings label,
+html[data-mafia-theme] .role-settings span,
+html[data-mafia-theme] .grandma-setting,
+html[data-mafia-theme] .grandma-setting p,
+html[data-mafia-theme] .grandma-setting label {
+    color: #f2f2f2 !important;
+    text-shadow: none !important;
+}
+html[data-mafia-theme] .role-settings input[type="number"] {
+    background: #050505 !important;
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+    border: 1px solid #1a56e6 !important;
+}
+
+
+/* =========================================================
+   FIX 2: white (readable) letters on Guide, Your Role,
+   action panel, chat, player list, lobby  — all themes
+========================================================= */
+html[data-mafia-theme] .guide-box,
+html[data-mafia-theme] .guide-box *:not(button),
+html[data-mafia-theme] .guide-content h3,
+html[data-mafia-theme] .guide-content p,
+html[data-mafia-theme] .guide-content li,
+html[data-mafia-theme] .guide-content strong,
+html[data-mafia-theme] .guide-role,
+html[data-mafia-theme] .guide-role *,
+html[data-mafia-theme] .guide-system,
+html[data-mafia-theme] .guide-system *,
+html[data-mafia-theme] .guide-final,
+html[data-mafia-theme] .guide-final *,
+html[data-mafia-theme] .your-role-panel,
+html[data-mafia-theme] .your-role-panel *,
+html[data-mafia-theme] #yourRole,
+html[data-mafia-theme] .action-panel,
+html[data-mafia-theme] .action-panel h2,
+html[data-mafia-theme] .action-panel h3,
+html[data-mafia-theme] .action-panel p,
+html[data-mafia-theme] .action-panel label,
+html[data-mafia-theme] .chat-message,
+html[data-mafia-theme] .chat-message *,
+html[data-mafia-theme] #gamePlayerList li,
+html[data-mafia-theme] #gamePlayerList li *,
+html[data-mafia-theme] #playerList li,
+html[data-mafia-theme] .lobby-container,
+html[data-mafia-theme] .lobby-container h1,
+html[data-mafia-theme] .lobby-container h2,
+html[data-mafia-theme] .lobby-container h3,
+html[data-mafia-theme] .lobby-container p,
+html[data-mafia-theme] .lobby-container label,
+html[data-mafia-theme] .game-header h1,
+html[data-mafia-theme] .game-header h2,
+html[data-mafia-theme] .game-header p {
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+    text-shadow: none !important;
+}
+
+/* dark backgrounds behind that white text */
+html[data-mafia-theme="white"] .guide-box,
+html[data-mafia-theme="white"] .your-role-panel,
+html[data-mafia-theme="white"] .action-panel,
+html[data-mafia-theme="white"] #gamePlayerList li,
+html[data-mafia-theme="white"] #playerList li,
+html[data-mafia-theme="white"] .chat-message {
+    background: rgba(8, 10, 18, .88) !important;
+    border-color: #1a56e6 !important;
+}
+
+/* inputs / dropdowns keep readable text */
+html[data-mafia-theme] .action-panel select,
+html[data-mafia-theme] .chat-input-row input {
+    background: #0a0d16 !important;
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+}
+
+
+/* =========================================================
+   FIX 3: Public Matches screen — white readable letters
+========================================================= */
+html[data-mafia-theme] .public-matches-shell,
+html[data-mafia-theme] .public-matches-shell h1,
+html[data-mafia-theme] .public-matches-shell h2,
+html[data-mafia-theme] .public-matches-shell h3,
+html[data-mafia-theme] .public-matches-shell p,
+html[data-mafia-theme] .public-matches-shell span,
+html[data-mafia-theme] .public-matches-shell small,
+html[data-mafia-theme] .public-matches-shell strong,
+html[data-mafia-theme] .public-matches-shell label,
+html[data-mafia-theme] .public-match-folder,
+html[data-mafia-theme] .public-match-folder *:not(button),
+html[data-mafia-theme] .no-public-matches,
+html[data-mafia-theme] .no-public-matches h2,
+html[data-mafia-theme] .no-public-matches p {
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+    text-shadow: none !important;
+}
+
+/* keep the red "MAFIA WARS" kicker visible but brighter */
+html[data-mafia-theme] .public-matches-kicker {
+    color: #ff5a5a !important;
+    -webkit-text-fill-color: #ff5a5a !important;
+}
+
+/* big PUBLIC MATCHES title: white with a dark outline so it pops */
+html[data-mafia-theme] .public-matches-header h1 {
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+    text-shadow: 0 3px 0 #1a56e6, 0 10px 25px #000 !important;
+}
+
+/* white theme: dark panel + blue lines behind the white text */
+html[data-mafia-theme="white"] .public-matches-shell {
+    background: rgba(8, 10, 18, .9) !important;
+    border-color: #1a56e6 !important;
+}
+html[data-mafia-theme="white"] .no-public-matches {
+    background: rgba(10, 12, 20, .8) !important;
+    border-color: #1a56e6 !important;
+}
