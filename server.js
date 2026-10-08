@@ -668,6 +668,7 @@ function finishNightTurnThenAdvance(roomCode) {
     // Between turns nobody can act, and the turn overlay is hidden.
     room.nightTurn = null;
     room.hiddenNightTurn = false;
+    broadcastVoiceState(roomCode);
     sendGameInformation(roomCode);
 
     room.nightTransitionTimer = setTimeout(() => {
@@ -703,6 +704,7 @@ function startNightTurn(roomCode, requestedIndex = 0) {
         room.nightTurnEndsAt = null;
         room.hiddenNightTurn = false;
 
+        broadcastVoiceState(roomCode);
         sendGameInformation(roomCode);
 
         /*
@@ -754,6 +756,10 @@ function startNightTurn(roomCode, requestedIndex = 0) {
         "night"
     );
 
+    // The voice channel changes whenever the active night role changes.
+    // Broadcast it immediately so every browser closes the old peer group
+    // and connects to the correct group without waiting for another event.
+    broadcastVoiceState(roomCode);
     sendGameInformation(roomCode);
 }
 
@@ -1030,6 +1036,9 @@ function resetGameState(room) {
     room.players.forEach(player => {
         player.role = null;
         player.alive = true;
+
+        // The host picks the voice-chat players again for the next game.
+        player.voiceAllowed = false;
     });
 }
 /* =========================================================
@@ -1085,6 +1094,12 @@ function emitLobby(roomCode) {
 
             allowPeopleToJoin:
                 room.allowPeopleToJoin !== false,
+
+            voiceChatAllowed:
+                room.voiceChatAllowed !== false,
+
+            voicePlayerIds:
+                getVoicePlayerIds(room),
 
             roomCode
         }
@@ -1397,6 +1412,12 @@ function sendGameInformation(roomCode) {
 
                 allowPeopleToJoin:
                     room.allowPeopleToJoin !== false,
+
+                voiceChatAllowed:
+                    room.voiceChatAllowed !== false,
+
+                voicePlayerIds:
+                    getVoicePlayerIds(room),
 
                 stats:
                     room.stats || {
@@ -2063,6 +2084,9 @@ function endNight(roomCode) {
 
     room.phase = "day";
 
+    // Day voice is a shared channel for all living players.
+    broadcastVoiceState(roomCode);
+
     room.votes = {};
 
     resetNightActions(room);
@@ -2420,6 +2444,133 @@ function endVoting(roomCode) {
     startNextNight(roomCode);
 }
 
+
+
+/* =========================================================
+   WEBRTC VOICE CHAT
+   Server-side permissions + Socket.IO signaling only.
+   Raw audio never passes through this server.
+========================================================= */
+
+const MAX_VOICE_PLAYERS = Infinity; // no limit on voice-chat players
+
+function getVoicePlayerIds(room) {
+    if (!room) return [];
+
+    return room.players
+        .filter(p => p.voiceAllowed && p.connected !== false)
+        .map(p => p.id);
+}
+
+/*
+   Validates the host's voice-player selection.
+   Returns { ids } or { error }. The 5-player limit is enforced HERE, on
+   the server, so a modified browser cannot go over it.
+*/
+function cleanVoiceSelection(room, ids) {
+    const raw = Array.isArray(ids) ? ids.map(id => String(id)) : [];
+    const unique = Array.from(new Set(raw));
+
+    if (unique.length > MAX_VOICE_PLAYERS) {
+        return { error: `You can select at most ${MAX_VOICE_PLAYERS} voice-chat players.` };
+    }
+
+    const valid = unique.filter(id =>
+        room.players.some(p => p.id === id && p.connected !== false)
+    );
+
+    return { ids: valid };
+}
+
+/*
+   allowed: true / false / undefined (undefined = leave unchanged)
+   ids:     array of player ids / undefined (undefined = leave unchanged)
+   Returns an error string, or null when everything was applied.
+*/
+function setRoomVoiceSettings(room, allowed, ids) {
+    let selection = null;
+
+    if (ids !== undefined) {
+        const cleaned = cleanVoiceSelection(room, ids);
+        if (cleaned.error) return cleaned.error;
+        selection = cleaned.ids;
+    }
+
+    if (typeof allowed === "boolean") {
+        room.voiceChatAllowed = allowed;
+    }
+
+    if (selection) {
+        room.players.forEach(p => {
+            p.voiceAllowed = selection.includes(p.id);
+        });
+    }
+
+    return null;
+}
+
+function getVoiceGroup(room, player) {
+    if (!room || !player || player.connected === false) return "none";
+
+    // Host turned voice chat OFF -> nobody has voice.
+    if (room.voiceChatAllowed === false) return "none";
+
+    // Once the game has started, only the players the host selected
+    // (maximum 5) can use voice chat. Everyone else plays normally.
+    if (room.phase !== "lobby" && !player.voiceAllowed) return "none";
+
+    if (room.phase === "lobby") return "lobby";
+    if (room.phase === "gameover") return "gameover";
+    if (!player.alive) return "dead";
+    if (room.phase === "day") return "alive";
+
+    if (room.phase === "night") {
+        if (room.nightTurn === "mafia" && isMafiaTeam(player.role)) return "mafia";
+        if (room.nightTurn === "doctor" && player.role === "Doctor") return "doctor";
+        if (room.nightTurn === "detective" && player.role === "Detective") return "detective";
+        if (room.nightTurn === "cupid" && player.role === "Cupid") return "cupid";
+        return "silent";
+    }
+
+    return "none";
+}
+
+function getVoicePeers(room, player) {
+    const group = getVoiceGroup(room, player);
+    if (group === "none" || group === "silent") return [];
+
+    return room.players
+        .filter(other =>
+            other.id !== player.id &&
+            other.connected !== false &&
+            getVoiceGroup(room, other) === group
+        )
+        .map(other => ({
+            id: other.id,
+            name: other.name,
+            badge: getBadgeOf(other.id),
+            alive: other.alive,
+            role: group === "mafia" && isMafiaTeam(other.role) ? other.role : null
+        }));
+}
+
+function broadcastVoiceState(roomCode) {
+    const room = rooms[roomCode];
+    if (!room) return;
+
+    room.players.forEach(player => {
+        const chatAllowed = room.voiceChatAllowed !== false;
+        const selected = room.phase === "lobby" || Boolean(player.voiceAllowed);
+
+        io.to(player.id).emit("voiceState", {
+            enabled: chatAllowed && selected,
+            chatAllowed,
+            selected,
+            group: getVoiceGroup(room, player),
+            peers: getVoicePeers(room, player)
+        });
+    });
+}
 
 
 /* =========================================================
@@ -3324,6 +3475,78 @@ io.on(
 
 
         /* =================================================
+           WEBRTC VOICE SIGNALING
+        ================================================= */
+
+        socket.on("voiceRequestState", () => {
+            for (const roomCode of Object.keys(rooms)) {
+                const room = rooms[roomCode];
+                if (room?.players?.some(p => p.id === socket.id)) {
+                    broadcastVoiceState(roomCode);
+                    break;
+                }
+            }
+        });
+
+        function relayVoiceSignal(eventName, data) {
+            const roomCode = String(data?.roomCode || "").trim().toUpperCase();
+            const targetId = String(data?.targetId || "");
+            const room = rooms[roomCode];
+            if (!room || !targetId || targetId === socket.id) return;
+
+            const sender = room.players.find(p => p.id === socket.id);
+            const target = room.players.find(p => p.id === targetId);
+            if (!sender || !target) return;
+
+            const senderGroup = getVoiceGroup(room, sender);
+            const targetGroup = getVoiceGroup(room, target);
+            if (senderGroup === "none" || senderGroup === "silent" || senderGroup !== targetGroup) {
+                return;
+            }
+
+            io.to(targetId).emit(eventName, {
+                fromId: socket.id,
+                fromName: sender.name,
+                ...data
+            });
+        }
+
+        socket.on("voiceOffer", data => relayVoiceSignal("voiceOffer", data));
+        socket.on("voiceAnswer", data => relayVoiceSignal("voiceAnswer", data));
+        socket.on("voiceIceCandidate", data => relayVoiceSignal("voiceIceCandidate", data));
+
+
+        /* =================================================
+           HOST VOICE SETTINGS
+           Allow Voice Chat YES/NO + choose up to 5 voice players.
+        ================================================= */
+
+        socket.on("setVoiceSettings", data => {
+            const roomCode = String(data?.roomCode || "").trim().toUpperCase();
+            const room = rooms[roomCode];
+
+            if (!room || room.host !== socket.id) return;
+
+            const error = setRoomVoiceSettings(
+                room,
+                typeof data?.allowed === "boolean" ? data.allowed : undefined,
+                Array.isArray(data?.players) ? data.players : undefined
+            );
+
+            if (error) {
+                return socket.emit("gameError", error);
+            }
+
+            if (room.phase === "lobby") {
+                emitLobby(roomCode);
+            } else {
+                sendGameInformation(roomCode);
+            }
+
+            broadcastVoiceState(roomCode);
+        });
+
+        /* =================================================
            CREATE ROOM
         ================================================= */
 
@@ -3369,6 +3592,8 @@ io.on(
                     allowPeopleToJoin: true,
                     pendingJoinRequests: {},
 
+                    // Voice chat: host can turn it off; maximum 5 voice players.
+                    voiceChatAllowed: true,
                     hiddenNightTurn: false,
                     nightEndTimer: null,
 
@@ -3465,6 +3690,7 @@ io.on(
                 );
 
                 emitLobby(roomCode);
+                broadcastVoiceState(roomCode);
 
                 announce(
                     roomCode,
@@ -3570,6 +3796,7 @@ io.on(
                 );
 
                 emitLobby(roomCode);
+                broadcastVoiceState(roomCode);
 
                 announce(
                     roomCode,
@@ -3707,6 +3934,7 @@ io.on(
                 sendGameInformation(roomCode);
             }
 
+            broadcastVoiceState(roomCode);
             emitPublicMatches();
         });
 
@@ -3788,6 +4016,7 @@ io.on(
             }
 
             emitLobby(code);
+            broadcastVoiceState(code);
             announce(
                 code,
                 `🚪 ${leavingPlayer.name} left the room.`,
@@ -3937,6 +4166,29 @@ io.on(
                     );
                 }
 
+                /* =========================
+                   VOICE CHAT SELECTION
+                   (validated before anything starts)
+                ========================= */
+
+                const voiceInput =
+                    data.voice && typeof data.voice === "object"
+                        ? data.voice
+                        : null;
+
+                if (voiceInput) {
+                    const voiceCheck = cleanVoiceSelection(
+                        room,
+                        voiceInput.players
+                    );
+
+                    if (voiceCheck.error) {
+                        return socket.emit(
+                            "gameError",
+                            voiceCheck.error
+                        );
+                    }
+                }
 /* =========================
    START COMPLETELY NEW GAME
 ========================= */
@@ -3977,6 +4229,14 @@ room.players.forEach(player => {
     player.role = null;
     player.alive = true;
 });
+
+if (voiceInput) {
+    setRoomVoiceSettings(
+        room,
+        typeof voiceInput.allowed === "boolean" ? voiceInput.allowed : undefined,
+        Array.isArray(voiceInput.players) ? voiceInput.players : []
+    );
+}
 
 /* =========================
    ASSIGN NEW ROLES
@@ -4839,6 +5099,7 @@ assignRoles(
                 ========================= */
 
                 emitLobby(roomCode);
+                broadcastVoiceState(roomCode);
 
                 /* =========================
                    TELL EVERYONE
@@ -4942,6 +5203,8 @@ assignRoles(
                         `📡 ${disconnected.name} disconnected and can rejoin from the Home screen.`,
                         "danger"
                     );
+
+                    broadcastVoiceState(roomCode);
 
 
                     /* =========================
