@@ -22,11 +22,44 @@ function playGameSound(sound) {
 
     try {
         sound.currentTime = 0;
+        duckMicForSound(sound);
         const promise = sound.play();
         if (promise) promise.catch(() => {});
     } catch (error) {
         console.warn("Sound error:", error);
     }
+}
+
+/*
+   Without this, a game sound effect (like the death sound) plays out of
+   your speakers, your own microphone picks it up, and it gets re-sent
+   live over voice chat to everyone else — arriving garbled/echoey on top
+   of the same sound they already played locally. To stop that, we briefly
+   disable your outgoing mic track for the duration of the sound effect,
+   then restore it (unless you had already muted yourself on purpose).
+*/
+function duckMicForSound(sound) {
+    if (!voiceEnabled || !voiceLocalStream || voiceMuted) return;
+
+    const tracks = voiceLocalStream.getAudioTracks();
+    if (!tracks.length) return;
+
+    tracks.forEach(track => { track.enabled = false; });
+
+    let restored = false;
+    const restore = () => {
+        if (restored) return;
+        restored = true;
+        if (!voiceMuted) tracks.forEach(track => { track.enabled = true; });
+    };
+
+    sound.addEventListener("ended", restore, { once: true });
+    sound.addEventListener("pause", restore, { once: true });
+
+    // Fallback in case 'ended'/'pause' never fire for some reason -
+    // never leave the mic muted longer than the sound could possibly run.
+    const fallbackMs = (isFinite(sound.duration) && sound.duration > 0 ? sound.duration * 1000 : 3000) + 300;
+    setTimeout(restore, fallbackMs);
 }
 
 /*
@@ -88,6 +121,11 @@ let roomCode = "";
 let myRole = "";
 let players = [];
 
+/* Voice chat permission state (sent by the server). */
+let voiceChatAllowedSetting = true;
+let voicePlayerIds = [];
+let voicePermitted = true;
+let voiceAutoDisabled = false;
 let currentPhase = "";
 let isHost = false;
 let hasVoted = false;
@@ -874,6 +912,9 @@ function getCurrentHostId() {
 
 function updateHostUI() {
 
+    ensureVoiceHostSetting();
+    updateVoiceHostButton();
+
     const hostSettings =
         $("hostSettings");
 
@@ -1063,6 +1104,12 @@ function leaveCurrentRoom() {
 
     socket.emit("leaveRoom", { roomCode });
 
+    // Stop the mic and tear down any peer connections so voice chat doesn't
+    // keep running (and the mic doesn't stay hot) after leaving the room.
+    disableVoice();
+    const voicePanel = $("voiceChatPanel");
+    if (voicePanel) voicePanel.style.display = "none";
+
     roomCode = "";
     myRole = "";
     players = [];
@@ -1102,6 +1149,9 @@ socket.on("roomCreated", code => {
     }
 
     setScreen("lobby");
+    ensureVoicePanel();
+    $("voiceChatPanel")?.style && ($("voiceChatPanel").style.display = "block");
+    setTimeout(() => enableVoice(), 250);
 
     updateHostUI();
 
@@ -1134,6 +1184,9 @@ socket.on("joinedRoom", code => {
     }
 
     setScreen("lobby");
+    ensureVoicePanel();
+    $("voiceChatPanel")?.style && ($("voiceChatPanel").style.display = "block");
+    setTimeout(() => enableVoice(), 250);
 
     updateHostUI();
 
@@ -1183,6 +1236,8 @@ socket.on("playerJoined", data => {
     isHost =
         socket.id ===
         window.currentHostId;
+
+    readVoiceSettings(Array.isArray(data) ? null : data);
 
     updateHostUI();
     updateRoomHud();
@@ -1394,7 +1449,13 @@ function setupStartGame() {
                 }
             );
 
-            socket.emit("startGame", startPayload);
+            if (voiceChatAllowedSetting) {
+                // Allow Voice Chat = YES -> the host picks up to 5 voice players first.
+                openVoicePicker("start", startPayload);
+            } else {
+                startPayload.voice = { allowed: false, players: [] };
+                socket.emit("startGame", startPayload);
+            }
         }
     );
 }
@@ -1969,6 +2030,8 @@ socket.on(
 
         allowPeopleToJoin =
             data.allowPeopleToJoin !== false;
+
+        readVoiceSettings(data);
 
         isHost =
             data.hostId === socket.id;
@@ -3382,6 +3445,9 @@ socket.on("rejoinApproved", data => {
         "🔄 Rejoin approved. You are back in your old slot.",
         "success"
     );
+    ensureVoicePanel();
+    $("voiceChatPanel")?.style && ($("voiceChatPanel").style.display = "block");
+    setTimeout(() => enableVoice(), 250);
 });
 
 socket.on("rejoinDeclined", data => {
@@ -3861,6 +3927,740 @@ document.addEventListener(
 
 socket.on("gameOver", () => {
     currentPhase = "gameover";
+});
+
+
+/* =========================================================
+   WEBRTC VOICE CHAT - CLIENT
+   Real peer-to-peer browser audio with Socket.IO signaling.
+========================================================= */
+
+let voiceEnabled = false;
+let voiceMuted = false;
+let voiceLocalStream = null;
+let voiceMicInputStream = null;
+let voiceAudioContext = null;
+let voiceMicGainNode = null;
+let voiceGroup = "none";
+let voicePeers = [];
+const voiceConnections = new Map();
+const voiceVolumes = new Map();
+// Players YOU muted on your own side only. Nobody else is affected.
+const voiceMutedPeers = new Set();
+// Tracks each peer's REAL WebRTC connection state (not just "who should be
+// in this channel"), so the UI can show whether audio is actually flowing
+// instead of just showing the name and looking connected regardless.
+const voiceConnectionStates = new Map();
+const voiceIceQueues = new Map();
+const voiceOfferLocks = new Map();
+const voiceReconnectTimers = new Map();
+// Offers (and ICE candidates) that arrive before our own mic/voice is ready
+// get stashed here instead of being silently dropped, then replayed once
+// enableVoice() finishes. This is what fixes peers never hearing each other.
+const voicePendingOffers = new Map();
+let voiceAudioUnlocked = false;
+
+const VOICE_ICE_SERVERS = [
+    { urls: "stun:stun.relay.metered.ca:80" },
+    {
+        urls: "turn:global.relay.metered.ca:80",
+        username: "8b3ac6aa5def01abdfbceb26",
+        credential: "RzFLuKDnnSxZUkWn"
+    },
+    {
+        urls: "turn:global.relay.metered.ca:80?transport=tcp",
+        username: "8b3ac6aa5def01abdfbceb26",
+        credential: "RzFLuKDnnSxZUkWn"
+    },
+    {
+        urls: "turn:global.relay.metered.ca:443",
+        username: "8b3ac6aa5def01abdfbceb26",
+        credential: "RzFLuKDnnSxZUkWn"
+    },
+    {
+        urls: "turns:global.relay.metered.ca:443?transport=tcp",
+        username: "8b3ac6aa5def01abdfbceb26",
+        credential: "RzFLuKDnnSxZUkWn"
+    }
+];
+
+function ensureVoicePanel() {
+    if ($("voiceChatPanel")) return;
+
+    const panel = document.createElement("div");
+    panel.id = "voiceChatPanel";
+    panel.innerHTML = `
+        <div class="voice-header">
+            <div>
+                <div class="voice-title">🎙️ VOICE CHAT</div>
+                <div id="voiceStatus" class="voice-status">Voice is off</div>
+            </div>
+            <button id="voiceCollapseButton" class="voice-icon-button" type="button">−</button>
+        </div>
+        <div id="voiceBody" class="voice-body">
+            <button id="voiceEnableButton" class="voice-enable-button" type="button">🎙️ ENABLE VOICE</button>
+            <div id="voiceError" class="voice-error"></div>
+            <div id="voiceParticipants" class="voice-participants"></div>
+            <div class="voice-controls">
+                <button id="voiceMuteButton" class="voice-control-button" type="button" disabled>🎤 UNMUTE</button>
+                <button id="voiceSpeakerButton" class="voice-control-button" type="button">🔊 SPEAKER</button>
+                <button id="voiceReconnectButton" class="voice-control-button" type="button">🔄 RECONNECT</button>
+            </div>
+            <div id="voiceSpeakerPanel" class="voice-speaker-panel" style="display:none;"></div>
+        </div>
+    `;
+
+    panel.style.display = "none";
+    document.body.appendChild(panel);
+
+    $("voiceEnableButton")?.addEventListener("click", enableVoice);
+    $("voiceMuteButton")?.addEventListener("click", toggleVoiceMute);
+    $("voiceReconnectButton")?.addEventListener("click", reconnectVoice);
+    $("voiceSpeakerButton")?.addEventListener("click", toggleSpeakerPanel);
+    $("voiceCollapseButton")?.addEventListener("click", () => {
+        const body = $("voiceBody");
+        const button = $("voiceCollapseButton");
+        if (!body || !button) return;
+        const collapsed = body.style.display === "none";
+        body.style.display = collapsed ? "block" : "none";
+        button.textContent = collapsed ? "−" : "+";
+    });
+}
+
+function setVoiceError(message) {
+    ensureVoicePanel();
+    const el = $("voiceError");
+    if (el) el.textContent = message || "";
+}
+
+function setVoiceStatus(text, active = false) {
+    ensureVoicePanel();
+    const el = $("voiceStatus");
+    if (el) {
+        el.textContent = text;
+        el.classList.toggle("voice-live", active);
+    }
+}
+
+function isVoiceRoomScreen() {
+    return Boolean(roomCode) && currentPhase !== "";
+}
+
+async function enableVoice() {
+    ensureVoicePanel();
+    setVoiceError("");
+
+    if (!voicePermitted) {
+        setVoiceError("Voice chat is not available for you right now.");
+        return;
+    }
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setVoiceError("Your browser does not support microphone voice chat.");
+        return;
+    }
+
+    if (!window.isSecureContext && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
+        setVoiceError("Voice requires HTTPS (or localhost). Open the game using https://.");
+        return;
+    }
+
+    try {
+        if (!voiceLocalStream) {
+            voiceMicInputStream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true
+                },
+                video: false
+            });
+
+            // Route the microphone through a gain node so Microphone Volume
+            // changes the audio actually sent to the other players.
+            try {
+                const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+                if (AudioContextClass) {
+                    voiceAudioContext = new AudioContextClass();
+                    const source = voiceAudioContext.createMediaStreamSource(voiceMicInputStream);
+                    voiceMicGainNode = voiceAudioContext.createGain();
+                    voiceMicGainNode.gain.value = getAudioSettings().microphoneVolume;
+                    const destination = voiceAudioContext.createMediaStreamDestination();
+                    source.connect(voiceMicGainNode);
+                    voiceMicGainNode.connect(destination);
+                    voiceLocalStream = destination.stream;
+                } else {
+                    voiceLocalStream = voiceMicInputStream;
+                }
+            } catch (audioError) {
+                console.warn("Microphone gain setup failed; using direct microphone stream.", audioError);
+                voiceLocalStream = voiceMicInputStream;
+            }
+        }
+
+        voiceAudioUnlocked = true;
+        voiceEnabled = true;
+        voiceMuted = !!getAudioSettings().microphoneMuted;
+        if (voiceLocalStream) {
+            voiceLocalStream.getAudioTracks().forEach(track => { track.enabled = !voiceMuted; });
+        }
+        applyAudioSettings();
+        updateVoiceControls();
+        setVoiceStatus("LIVE • waiting for players...", true);
+        // Replay any offers a faster peer sent us before our mic was ready,
+        // instead of leaving them dropped forever.
+        processPendingVoiceOffers();
+        socket.emit("voiceRequestState");
+    } catch (error) {
+        console.error("Voice microphone error:", error);
+        setVoiceError(
+            error?.name === "NotAllowedError"
+                ? "Microphone permission was blocked. Allow microphone access and try again."
+                : "Could not access your microphone."
+        );
+        setVoiceStatus("Voice is off", false);
+    }
+}
+
+function updateVoiceControls() {
+    ensureVoicePanel();
+    const enable = $("voiceEnableButton");
+    const mute = $("voiceMuteButton");
+    if (enable) {
+        enable.disabled = voiceEnabled || !voicePermitted;
+        enable.textContent = voiceEnabled ? "🎙️ VOICE ENABLED" : "🎙️ ENABLE VOICE";
+    }
+    if (mute) {
+        mute.disabled = !voiceEnabled;
+        mute.textContent = voiceMuted ? "🎤 UNMUTE" : "🔇 MUTE";
+    }
+}
+
+function toggleVoiceMute() {
+    if (!voiceLocalStream) return;
+    voiceMuted = !voiceMuted;
+    voiceLocalStream.getAudioTracks().forEach(track => {
+        track.enabled = !voiceMuted;
+    });
+    updateVoiceControls();
+}
+
+// Manually tears down and rebuilds every peer connection in the current
+// voice group. This was referenced by the RECONNECT button but never
+// actually defined anywhere, which crashed the page with a ReferenceError
+// the moment the voice panel was first created.
+function reconnectVoice() {
+    if (!voiceEnabled || !voiceLocalStream) {
+        setVoiceError("Enable voice first, then try reconnecting.");
+        return;
+    }
+    setVoiceError("");
+    closeAllVoicePeers();
+    voicePendingOffers.clear();
+    setVoiceStatus("Reconnecting...", false);
+    socket.emit("voiceRequestState");
+}
+
+function closeVoicePeer(peerId) {
+    const pc = voiceConnections.get(peerId);
+    if (pc) {
+        try { pc.onicecandidate = null; pc.ontrack = null; pc.onconnectionstatechange = null; pc.close(); } catch (_) {}
+        voiceConnections.delete(peerId);
+    }
+    voiceIceQueues.delete(peerId);
+    voiceOfferLocks.delete(peerId);
+    voicePendingOffers.delete(peerId);
+    voiceConnectionStates.delete(peerId);
+    const timer = voiceReconnectTimers.get(peerId);
+    if (timer) clearTimeout(timer);
+    voiceReconnectTimers.delete(peerId);
+    const audio = document.getElementById(`voice-audio-${CSS.escape(peerId)}`);
+    if (audio) { try { audio.pause(); } catch (_) {} audio.srcObject = null; audio.remove(); }
+}
+
+function closeAllVoicePeers() {
+    for (const peerId of Array.from(voiceConnections.keys())) closeVoicePeer(peerId);
+}
+
+function disableVoice() {
+    closeAllVoicePeers();
+    if (voiceLocalStream) {
+        voiceLocalStream.getTracks().forEach(track => track.stop());
+        voiceLocalStream = null;
+    }
+    if (voiceMicInputStream && voiceMicInputStream !== voiceLocalStream) {
+        voiceMicInputStream.getTracks().forEach(track => track.stop());
+    }
+    voiceMicInputStream = null;
+    voiceMicGainNode = null;
+    if (voiceAudioContext) {
+        try { voiceAudioContext.close(); } catch (_) {}
+        voiceAudioContext = null;
+    }
+    voiceEnabled = false;
+    voiceMuted = false;
+    voiceGroup = "none";
+    voicePeers = [];
+    voicePendingOffers.clear();
+    renderVoiceParticipants();
+    updateVoiceControls();
+    setVoiceStatus("Voice is off", false);
+}
+
+function createVoicePeer(peer) {
+    if (!voiceEnabled || !voiceLocalStream || !peer?.id) return null;
+    if (voiceConnections.has(peer.id)) return voiceConnections.get(peer.id);
+    const pc = new RTCPeerConnection({ iceServers: VOICE_ICE_SERVERS });
+    voiceConnections.set(peer.id, pc);
+    voiceIceQueues.set(peer.id, voiceIceQueues.get(peer.id) || []);
+    voiceLocalStream.getTracks().forEach(track => pc.addTrack(track, voiceLocalStream));
+    pc.onicecandidate = event => {
+        if (event.candidate && roomCode) socket.emit("voiceIceCandidate", { roomCode, targetId: peer.id, candidate: event.candidate });
+    };
+    pc.ontrack = event => {
+        console.log(`[voice] received remote audio track from ${peer.name || peer.id}`);
+        let audio = document.getElementById(`voice-audio-${CSS.escape(peer.id)}`);
+        if (!audio) {
+            audio = document.createElement("audio");
+            audio.id = `voice-audio-${CSS.escape(peer.id)}`;
+            audio.autoplay = true; audio.playsInline = true; audio.setAttribute("playsinline", ""); audio.style.display = "none";
+            document.body.appendChild(audio);
+        }
+        audio.srcObject = event.streams[0] || new MediaStream([event.track]);
+        const audioSettings = getAudioSettings();
+        const individual = voiceVolumes.has(peer.id) ? voiceVolumes.get(peer.id) : 1;
+        audio.volume = audioSettings.masterVolume * audioSettings.speakerVolume * individual;
+        audio.muted = voiceMutedPeers.has(peer.id);
+        const play = () => audio.play().then(() => { voiceAudioUnlocked = true; }).catch(error => {
+            console.warn(`[voice] audio.play() blocked for ${peer.name || peer.id}:`, error?.name || error);
+        });
+        play();
+        if (!voiceAudioUnlocked) {
+            const unlock = () => play();
+            document.addEventListener("click", unlock, { once: true });
+            document.addEventListener("keydown", unlock, { once: true });
+            document.addEventListener("touchstart", unlock, { once: true });
+        }
+    };
+    pc.onconnectionstatechange = () => {
+        const state = pc.connectionState;
+        console.log(`[voice] connection to ${peer.name || peer.id}: ${state}`);
+        voiceConnectionStates.set(peer.id, state);
+        renderVoiceParticipants();
+        if (state === "connected") { setVoiceStatus(`LIVE • ${voiceGroup.toUpperCase()}`, true); return; }
+        if (["failed", "disconnected"].includes(state)) {
+            const stillWanted = voicePeers.some(p => p.id === peer.id);
+            if (!stillWanted || !voiceEnabled) return;
+            if (state === "failed") { try { pc.restartIce(); } catch (_) {} }
+            if (!voiceReconnectTimers.has(peer.id)) {
+                const timer = setTimeout(() => {
+                    voiceReconnectTimers.delete(peer.id);
+                    if (!voiceEnabled || !voicePeers.some(p => p.id === peer.id)) return;
+                    closeVoicePeer(peer.id);
+                    updateVoicePeers(voicePeers).catch(err => console.error("Voice reconnect error:", err));
+                }, 1200);
+                voiceReconnectTimers.set(peer.id, timer);
+            }
+        }
+    };
+    return pc;
+}
+
+async function makeVoiceOffer(peer) {
+    const pc = createVoicePeer(peer);
+    if (!pc || voiceOfferLocks.get(peer.id)) return;
+    voiceOfferLocks.set(peer.id, true);
+    try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        socket.emit("voiceOffer", { roomCode, targetId: peer.id, offer: pc.localDescription });
+    } catch (error) {
+        console.error("Voice offer error:", error);
+        closeVoicePeer(peer.id);
+    } finally { voiceOfferLocks.delete(peer.id); }
+}
+
+async function updateVoicePeers(peers) {
+    if (!voiceEnabled || !voiceLocalStream) return;
+
+    const wanted = new Map((Array.isArray(peers) ? peers : []).map(p => [p.id, p]));
+
+    for (const existingId of Array.from(voiceConnections.keys())) {
+        if (!wanted.has(existingId)) closeVoicePeer(existingId);
+    }
+
+    for (const peer of wanted.values()) {
+        if (voiceConnections.has(peer.id)) continue;
+
+        // Only the lexicographically smaller socket ID creates the offer.
+        // This guarantees exactly one WebRTC connection per pair.
+        if (String(socket.id) < String(peer.id)) {
+            await makeVoiceOffer(peer);
+        } else {
+            createVoicePeer(peer);
+        }
+    }
+
+    renderVoiceParticipants();
+}
+
+function renderVoiceParticipants() {
+    ensureVoicePanel();
+    const container = $("voiceParticipants");
+    if (!container) return;
+
+    if (!voicePeers.length) {
+        container.innerHTML = '<div class="voice-empty">No one is in your current voice channel.</div>';
+        return;
+    }
+
+    container.innerHTML = "";
+
+    voicePeers.forEach(peer => {
+        const row = document.createElement("div");
+        row.className = "voice-participant";
+        row.dataset.peerId = peer.id;
+
+        const name = document.createElement("div");
+        name.className = "voice-player-name";
+        name.textContent = peer.name || "Player";
+        if (!isGameScreenOpen()) appendUserBadge(name, peer.badge);
+
+        // Real WebRTC state for this peer, not just "they're in my channel".
+        // This is what tells you whether audio can actually flow.
+        const stateLabel = document.createElement("div");
+        stateLabel.className = "voice-player-state";
+        const rawState = voiceConnectionStates.get(peer.id) || "connecting";
+        const stateText = {
+            connected: "🟢 Connected",
+            connecting: "🟡 Connecting…",
+            new: "🟡 Connecting…",
+            disconnected: "🟠 Reconnecting…",
+            failed: "🔴 Failed",
+            closed: "⚪ Closed"
+        }[rawState] || `🟡 ${rawState}`;
+        stateLabel.textContent = stateText;
+        stateLabel.style.fontSize = "0.8em";
+        stateLabel.style.opacity = "0.8";
+
+        row.append(name, stateLabel);
+        container.appendChild(row);
+    });
+
+    // Keep the Speaker menu in step with who is in the channel.
+    renderSpeakerPanel();
+}
+
+/* =========================================================
+   SPEAKER MENU
+   Choose which player to mute (only for you) and set each
+   player's volume. Rows are updated IN PLACE, so the slider
+   never resets while you are dragging it.
+========================================================= */
+
+function toggleSpeakerPanel() {
+    const panel = $("voiceSpeakerPanel");
+    if (!panel) return;
+
+    const open = panel.style.display === "none";
+    panel.style.display = open ? "" : "none";
+    $("voiceSpeakerButton")?.classList.toggle("voice-control-active", open);
+
+    if (open) renderSpeakerPanel(true);
+}
+
+function applyPeerAudio(peerId) {
+    const audio = document.getElementById(`voice-audio-${CSS.escape(peerId)}`);
+    if (!audio) return;
+
+    const audioSettings = getAudioSettings();
+    const individual = voiceVolumes.has(peerId) ? voiceVolumes.get(peerId) : 1;
+    audio.volume = audioSettings.masterVolume * audioSettings.speakerVolume * individual;
+    audio.muted = voiceMutedPeers.has(peerId);
+}
+
+function renderSpeakerPanel(force = false) {
+    const panel = $("voiceSpeakerPanel");
+    if (!panel || panel.style.display === "none") return;
+
+    const signature = voicePeers.map(p => p.id).join("|");
+
+    // Same players as before -> only refresh names, do not rebuild the sliders.
+    if (!force && panel.dataset.signature === signature) {
+        voicePeers.forEach(peer => {
+            const nameEl = panel.querySelector(`[data-speaker-name="${CSS.escape(peer.id)}"]`);
+            if (nameEl) {
+                nameEl.textContent = peer.name || "Player";
+                if (!isGameScreenOpen()) appendUserBadge(nameEl, peer.badge);
+            }
+        });
+        return;
+    }
+
+    panel.dataset.signature = signature;
+    panel.innerHTML = "";
+
+    if (!voicePeers.length) {
+        panel.innerHTML = '<div class="voice-empty">No one is in your current voice channel.</div>';
+        return;
+    }
+
+    voicePeers.forEach(peer => {
+        const row = document.createElement("div");
+        row.className = "speaker-row";
+
+        const top = document.createElement("div");
+        top.className = "speaker-row-top";
+
+        const name = document.createElement("div");
+        name.className = "speaker-name";
+        name.dataset.speakerName = peer.id;
+        name.textContent = peer.name || "Player";
+        if (!isGameScreenOpen()) appendUserBadge(name, peer.badge);
+
+        const muteButton = document.createElement("button");
+        muteButton.type = "button";
+        muteButton.className = "speaker-mute";
+
+        const slider = document.createElement("input");
+        slider.type = "range";
+        slider.className = "speaker-slider";
+        slider.min = "0";
+        slider.max = "100";
+        slider.step = "1";
+        slider.value = String(Math.round((voiceVolumes.has(peer.id) ? voiceVolumes.get(peer.id) : 1) * 100));
+        slider.title = `Volume for ${peer.name || "player"}`;
+
+        const percent = document.createElement("span");
+        percent.className = "speaker-percent";
+
+        const refreshLabels = () => {
+            const muted = voiceMutedPeers.has(peer.id);
+            muteButton.textContent = muted ? "🔇 UNMUTE" : "🔊 MUTE";
+            muteButton.classList.toggle("is-muted", muted);
+            slider.disabled = muted;
+            row.classList.toggle("is-muted", muted);
+            percent.textContent = muted ? "muted" : `${slider.value}%`;
+        };
+
+        slider.addEventListener("input", () => {
+            voiceVolumes.set(peer.id, Number(slider.value) / 100);
+            applyPeerAudio(peer.id);
+            refreshLabels();
+        });
+
+        muteButton.addEventListener("click", () => {
+            if (voiceMutedPeers.has(peer.id)) voiceMutedPeers.delete(peer.id);
+            else voiceMutedPeers.add(peer.id);
+
+            applyPeerAudio(peer.id);
+            refreshLabels();
+        });
+
+        refreshLabels();
+
+        top.append(name, muteButton);
+
+        const sliderLine = document.createElement("div");
+        sliderLine.className = "speaker-slider-line";
+        sliderLine.append(slider, percent);
+
+        row.append(top, sliderLine);
+        panel.appendChild(row);
+    });
+}
+
+async function flushVoiceIceCandidates(peerId, pc) {
+    const queued = voiceIceQueues.get(peerId) || [];
+    voiceIceQueues.set(peerId, []);
+    for (const candidate of queued) {
+        try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch (error) { console.error("Queued voice ICE error:", error); }
+    }
+}
+
+socket.on("voiceState", async data => {
+    if (!data) return;
+
+    /*
+       Voice permission from the server:
+       - the host turned Allow Voice Chat OFF, or
+       - this player was not one of the (max 5) players the host picked.
+       In both cases the mic is released and no voice connections exist.
+    */
+    voicePermitted = data.enabled !== false;
+
+    if (!voicePermitted) {
+        if (voiceEnabled) {
+            voiceAutoDisabled = true;
+            disableVoice();
+        }
+
+        voiceGroup = "none";
+        voicePeers = [];
+
+        ensureVoicePanel();
+        const lockedPanel = $("voiceChatPanel");
+        if (lockedPanel) lockedPanel.style.display = "block";
+
+        setVoiceStatus(
+            data.chatAllowed === false
+                ? "Voice chat is turned off by the host"
+                : "Voice chat is only for players picked by the host",
+            false
+        );
+        setVoiceError("");
+        renderVoiceParticipants();
+        updateVoiceControls();
+        updateVoiceHostButton();
+        return;
+    }
+
+    // Permission came back (or the host turned voice on): reconnect the mic.
+    if (voiceAutoDisabled && !voiceEnabled) {
+        voiceAutoDisabled = false;
+        setTimeout(() => enableVoice(), 250);
+    }
+
+    voiceGroup = data.group || "none";
+    voicePeers = Array.isArray(data.peers)
+        ? data.peers.filter(peer => peer && peer.connected !== false)
+        : [];
+
+    // A crashed/disconnected player is removed from the server's peer list.
+    // updateVoicePeers() immediately tears down that old WebRTC connection.
+    if (voiceEnabled) {
+        updateVoicePeers(voicePeers).catch(error => console.error("Voice peer update error:", error));
+    }
+
+    ensureVoicePanel();
+    const voicePanel = $("voiceChatPanel");
+    if (voicePanel) voicePanel.style.display = "block";
+    updateVoiceHostButton();
+    updateVoiceControls();
+
+    if (!voiceEnabled) {
+        setVoiceStatus(
+            voiceGroup === "silent" || voiceGroup === "none"
+                ? "No active voice channel"
+                : "Voice is off • click Enable Voice",
+            false
+        );
+        renderVoiceParticipants();
+        return;
+    }
+
+    if (voiceGroup === "silent" || voiceGroup === "none") {
+        closeAllVoicePeers();
+        setVoiceStatus("No active voice channel", false);
+        renderVoiceParticipants();
+        return;
+    }
+
+    setVoiceStatus(`LIVE • ${voiceGroup.toUpperCase()}`, true);
+    processPendingVoiceOffers();
+    await updateVoicePeers(voicePeers);
+});
+
+async function handleVoiceOffer(data) {
+    const peer = voicePeers.find(p => p.id === data.fromId) || { id: data.fromId, name: data.fromName || "Player" };
+    const pc = createVoicePeer(peer);
+    if (!pc) return;
+
+    try {
+        await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+        await flushVoiceIceCandidates(data.fromId, pc);
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.emit("voiceAnswer", {
+            roomCode,
+            targetId: data.fromId,
+            answer: pc.localDescription
+        });
+    } catch (error) {
+        console.error("Voice answer error:", error);
+    }
+}
+
+function processPendingVoiceOffers() {
+    if (!voiceEnabled || !voiceLocalStream) return;
+    for (const [peerId, data] of Array.from(voicePendingOffers.entries())) {
+        voicePendingOffers.delete(peerId);
+        handleVoiceOffer(data).catch(error => console.error("Voice pending offer error:", error));
+    }
+}
+
+socket.on("voiceOffer", data => {
+    if (!data?.fromId || !data?.offer) return;
+
+    // If our mic isn't ready yet (getUserMedia still pending, or voice not
+    // enabled locally), don't drop the offer - a faster peer's offer used to
+    // vanish here, leaving both sides silently stuck with no audio. Queue it
+    // and replay it as soon as enableVoice() finishes.
+    if (!voiceEnabled || !voiceLocalStream) {
+        voicePendingOffers.set(data.fromId, data);
+        return;
+    }
+
+    handleVoiceOffer(data).catch(error => console.error("Voice offer error:", error));
+});
+
+socket.on("voiceAnswer", async data => {
+    if (!voiceEnabled || !data?.fromId || !data?.answer) return;
+    const pc = voiceConnections.get(data.fromId);
+    if (!pc) return;
+    try {
+        await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+        await flushVoiceIceCandidates(data.fromId, pc);
+    } catch (error) {
+        console.error("Voice remote answer error:", error);
+    }
+});
+
+socket.on("voiceIceCandidate", async data => {
+    if (!data?.fromId || !data?.candidate) return;
+    const peerId = data.fromId;
+    const pc = voiceConnections.get(peerId);
+    // Queue whenever there's no connection yet OR it has no remote
+    // description yet - a candidate that arrives before we've processed the
+    // matching offer (e.g. while our mic is still initializing) used to be
+    // silently discarded here instead of queued.
+    if (!pc || !pc.remoteDescription) {
+        const queue = voiceIceQueues.get(peerId) || [];
+        queue.push(data.candidate);
+        voiceIceQueues.set(peerId, queue);
+        return;
+    }
+    try { await pc.addIceCandidate(new RTCIceCandidate(data.candidate)); } catch (error) { console.error("Voice ICE error:", error); }
+});
+
+socket.on("connect", () => {
+    if (roomCode) socket.emit("voiceRequestState");
+});
+
+socket.on("disconnect", () => {
+    closeAllVoicePeers();
+});
+
+// Hook into room/game UI without replacing any existing handlers.
+const originalVoiceInit = document.addEventListener;
+document.addEventListener("DOMContentLoaded", () => {
+    ensureVoicePanel();
+    updateVoiceControls();
+});
+
+socket.on("gameOver", () => {
+    currentPhase = "gameover";
+    socket.emit("voiceRequestState");
+});
+
+socket.on("gameRestarted", () => {
+    closeAllVoicePeers();
+    socket.emit("voiceRequestState");
+});
+
+window.addEventListener("beforeunload", () => {
+    try { closeAllVoicePeers(); } catch (_) {}
+    if (voiceLocalStream) voiceLocalStream.getTracks().forEach(track => track.stop());
 });
 
 
@@ -4772,6 +5572,9 @@ const defaultMafiaSettings = {
     rankNotifications: true,
     matchNotifications: true,
     masterVolume: 1,
+    speakerVolume: 1,
+    microphoneVolume: 1,
+    microphoneMuted: false,
     soundEffectsVolume: 1,
     notificationSoundsVolume: 1
 };
@@ -4785,6 +5588,9 @@ function getAudioSettings() {
     const st = loadMafiaSettings();
     return {
         masterVolume: clampAudioSetting(st.masterVolume),
+        speakerVolume: clampAudioSetting(st.speakerVolume),
+        microphoneVolume: clampAudioSetting(st.microphoneVolume),
+        microphoneMuted: !!st.microphoneMuted,
         soundEffectsVolume: clampAudioSetting(st.soundEffectsVolume),
         notificationSoundsVolume: clampAudioSetting(st.notificationSoundsVolume)
     };
@@ -4799,6 +5605,15 @@ function applyAudioSettings() {
         sound.volume = sfxVolume;
     });
 
+    document.querySelectorAll('audio[id^="voice-audio-"]').forEach(el => {
+        const peerId = el.id.replace(/^voice-audio-/, "");
+        const individual = voiceVolumes.has(peerId) ? voiceVolumes.get(peerId) : 1;
+        el.volume = audio.masterVolume * audio.speakerVolume * individual;
+    });
+
+    if (voiceMicGainNode) {
+        voiceMicGainNode.gain.value = audio.microphoneMuted ? 0 : audio.microphoneVolume;
+    }
 }
 
 function updateAudioSetting(key, value) {
@@ -4989,8 +5804,20 @@ function renderSettingsPage(view) {
         page.innerHTML = settingsHeader("🔊 SOUND SETTINGS") + `
             <div class="settings-card sound-settings-card">
                 <div class="settings-row sound-setting-row">
-                    <div><strong>🔊 Master Volume</strong><small>Controls all game audio and notifications.</small></div>
+                    <div><strong>🔊 Master Volume</strong><small>Controls all game audio, notifications and other players' voices.</small></div>
                     <div class="settings-slider-wrap"><input id="settingsMasterVolume" class="settings-range" type="range" min="0" max="100" step="1" value="${pct(st.masterVolume)}"><span id="settingsMasterVolumeValue" class="settings-value">${pct(st.masterVolume)}%</span></div>
+                </div>
+                <div class="settings-row sound-setting-row">
+                    <div><strong>🎧 Speaker Volume</strong><small>Controls the volume of other players' voices.</small></div>
+                    <div class="settings-slider-wrap"><input id="settingsSpeakerVolume" class="settings-range" type="range" min="0" max="100" step="1" value="${pct(st.speakerVolume)}"><span id="settingsSpeakerVolumeValue" class="settings-value">${pct(st.speakerVolume)}%</span></div>
+                </div>
+                <div class="settings-row sound-setting-row">
+                    <div><strong>🎤 Microphone Volume</strong><small>Controls how loud your voice is sent to other players.</small></div>
+                    <div class="settings-slider-wrap"><input id="settingsMicrophoneVolume" class="settings-range" type="range" min="0" max="100" step="1" value="${pct(st.microphoneVolume)}"><span id="settingsMicrophoneVolumeValue" class="settings-value">${pct(st.microphoneVolume)}%</span></div>
+                </div>
+                <div class="settings-row">
+                    <div><strong>🔇 Mute Microphone</strong><small>Other players will not hear you while muted.</small></div>
+                    <input id="settingsMicrophoneMuted" class="settings-switch" type="checkbox" ${st.microphoneMuted ? "checked" : ""}>
                 </div>
                 <div class="settings-row sound-setting-row">
                     <div><strong>🔊 Sound Effects</strong><small>Controls the existing 4 game sound effects separately.</small></div>
@@ -5015,8 +5842,21 @@ function renderSettingsPage(view) {
             });
         };
         bindAudioSlider("settingsMasterVolume", "settingsMasterVolumeValue", "masterVolume");
+        bindAudioSlider("settingsSpeakerVolume", "settingsSpeakerVolumeValue", "speakerVolume");
+        bindAudioSlider("settingsMicrophoneVolume", "settingsMicrophoneVolumeValue", "microphoneVolume");
         bindAudioSlider("settingsSoundEffectsVolume", "settingsSoundEffectsVolumeValue", "soundEffectsVolume");
         bindAudioSlider("settingsNotificationSoundsVolume", "settingsNotificationSoundsVolumeValue", "notificationSoundsVolume");
+        $("settingsMicrophoneMuted")?.addEventListener("change", event => {
+            const current = loadMafiaSettings();
+            current.microphoneMuted = !!event.target.checked;
+            saveMafiaSettings(current);
+            voiceMuted = current.microphoneMuted;
+            if (voiceLocalStream) {
+                voiceLocalStream.getAudioTracks().forEach(track => { track.enabled = !voiceMuted; });
+            }
+            applyAudioSettings();
+            updateVoiceControls();
+        });
     } else if (view === "account") {
         page.innerHTML = settingsHeader("👤 ACCOUNT") + `
             <div class="settings-card settings-account-card">
@@ -6022,3 +6862,207 @@ async function handleProgressClick(event) {
 
 /* If the page was reloaded while signed in, authResult will load progress. */
 if (authState?.username) setTimeout(requestMyProgress, 500);
+
+
+/* =========================================================
+   VOICE CHAT — HOST CONTROLS
+   - Allow Voice Chat: YES / NO (host settings)
+   - Host picks up to 5 voice-chat players (the server enforces the limit)
+========================================================= */
+
+const MAX_VOICE_PLAYERS_CLIENT = Infinity; // no limit
+
+/* Styles for the voice picker and night popups live in style.css. */
+function ensureMafiaVoiceUiStyles() {}
+
+function readVoiceSettings(data) {
+    if (!data) return;
+
+    if (data.voiceChatAllowed !== undefined) {
+        voiceChatAllowedSetting = data.voiceChatAllowed !== false;
+    }
+
+    if (Array.isArray(data.voicePlayerIds)) {
+        voicePlayerIds = data.voicePlayerIds.slice();
+    }
+}
+
+/* "Allow Voice Chat: YES / NO" inside the host's Role Settings (index.html). */
+function ensureVoiceHostSetting() {
+    if (!isHost) return;
+
+    let box = $("voiceAllowSetting");
+
+    if (!box) {
+        const hostSettings = $("hostSettings");
+        if (!hostSettings) return;
+
+        box = document.createElement("div");
+        box.id = "voiceAllowSetting";
+        box.className = "grandma-setting voice-allow-setting";
+        box.innerHTML = `
+            <p>🎙️ Allow Voice Chat</p>
+            <label><input type="radio" name="voiceAllowChoice" id="voiceAllowYes"> Yes</label>
+            <label><input type="radio" name="voiceAllowChoice" id="voiceAllowNo"> No</label>
+            <small id="voiceAllowHint" class="voice-allow-hint"></small>
+        `;
+
+        const heading = hostSettings.querySelector("h2");
+        if (heading && heading.nextSibling) {
+            hostSettings.insertBefore(box, heading.nextSibling);
+        } else {
+            hostSettings.insertBefore(box, hostSettings.firstChild);
+        }
+    }
+
+    if (!box.dataset.bound) {
+        box.dataset.bound = "1";
+
+        const send = allowed => {
+            voiceChatAllowedSetting = allowed;
+            socket.emit("setVoiceSettings", { roomCode, allowed });
+            ensureVoiceHostSetting();
+            updateVoiceHostButton();
+        };
+
+        $("voiceAllowYes")?.addEventListener("change", () => { if ($("voiceAllowYes").checked) send(true); });
+        $("voiceAllowNo")?.addEventListener("change", () => { if ($("voiceAllowNo").checked) send(false); });
+    }
+
+    const yes = $("voiceAllowYes");
+    const no = $("voiceAllowNo");
+    if (yes) yes.checked = voiceChatAllowedSetting;
+    if (no) no.checked = !voiceChatAllowedSetting;
+
+    const hint = $("voiceAllowHint");
+    if (hint) {
+        hint.textContent = voiceChatAllowedSetting
+            ? `You will pick the voice-chat players when you press START GAME.`
+            : "Voice chat is disabled for everyone.";
+    }
+}
+
+/* Host-only button inside the voice panel to change the selected players. */
+function updateVoiceHostButton() {
+    const body = $("voiceBody");
+    if (!body) return;
+
+    const show = Boolean(isHost && voiceChatAllowedSetting);
+    let button = $("voicePlayersButton");
+
+    if (!button) {
+        if (!show) return;
+
+        button = document.createElement("button");
+        button.id = "voicePlayersButton";
+        button.type = "button";
+        button.className = "voice-control-button";
+        button.addEventListener("click", () => openVoicePicker("edit"));
+        body.insertBefore(button, $("voiceParticipants") || null);
+    }
+
+    button.style.display = show ? "" : "none";
+    button.textContent = `👥 VOICE PLAYERS (${voicePlayerIds.length})`;
+}
+
+/*
+   mode "start": shown after START GAME is pressed; confirming starts the game.
+   mode "edit":  host changes the selected players (lobby or during the game).
+*/
+function openVoicePicker(mode, startPayload) {
+    if (!isHost) return;
+
+    ensureMafiaVoiceUiStyles();
+
+    let overlay = $("voicePickerOverlay");
+    if (!overlay) {
+        overlay = document.createElement("div");
+        overlay.id = "voicePickerOverlay";
+        document.body.appendChild(overlay);
+    }
+
+    const list = players.filter(player => player && player.connected !== false);
+    const selected = new Set(voicePlayerIds.filter(id => list.some(player => player.id === id)));
+
+    const close = () => { overlay.style.display = "none"; };
+
+    const render = () => {
+        overlay.innerHTML = "";
+
+        const card = document.createElement("div");
+        card.className = "voice-picker-card";
+
+        const title = document.createElement("h2");
+        title.textContent = "🎙️ Choose Voice Chat Players";
+
+        const info = document.createElement("p");
+        info.textContent = `Pick the players who can use voice chat. Everyone else still plays normally but cannot use voice chat.`;
+
+        const count = document.createElement("div");
+        count.className = "voice-picker-count";
+        count.textContent = `${selected.size} selected`;
+
+        card.append(title, info, count);
+
+        list.forEach(player => {
+            const row = document.createElement("label");
+            row.className = "voice-picker-row";
+
+            const checkbox = document.createElement("input");
+            checkbox.type = "checkbox";
+            checkbox.checked = selected.has(player.id);
+
+            const locked = !checkbox.checked && selected.size >= MAX_VOICE_PLAYERS_CLIENT;
+            checkbox.disabled = locked;
+            if (locked) row.classList.add("voice-picker-disabled");
+
+            checkbox.addEventListener("change", () => {
+                if (checkbox.checked) {
+                    if (selected.size >= MAX_VOICE_PLAYERS_CLIENT) { checkbox.checked = false; return; }
+                    selected.add(player.id);
+                } else {
+                    selected.delete(player.id);
+                }
+                render();
+            });
+
+            const name = document.createElement("span");
+            name.textContent = player.name + (player.id === socket.id ? " (you)" : "");
+
+            row.append(checkbox, name);
+            card.appendChild(row);
+        });
+
+        const actions = document.createElement("div");
+        actions.className = "voice-picker-actions";
+
+        const confirm = document.createElement("button");
+        confirm.type = "button";
+        confirm.textContent = mode === "start" ? "▶ START GAME" : "✅ SAVE";
+        confirm.addEventListener("click", () => {
+            const chosen = Array.from(selected);
+
+            if (mode === "start" && startPayload) {
+                startPayload.voice = { allowed: true, players: chosen };
+                socket.emit("startGame", startPayload);
+            } else {
+                socket.emit("setVoiceSettings", { roomCode, allowed: true, players: chosen });
+            }
+
+            close();
+        });
+
+        const cancel = document.createElement("button");
+        cancel.type = "button";
+        cancel.textContent = "CANCEL";
+        cancel.addEventListener("click", close);
+
+        actions.append(confirm, cancel);
+        card.appendChild(actions);
+        overlay.appendChild(card);
+    };
+
+    render();
+    overlay.style.display = "flex";
+}
+
