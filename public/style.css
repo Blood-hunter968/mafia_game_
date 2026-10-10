@@ -6933,3 +6933,81 @@ html[data-mafia-theme="white"] .no-public-matches {
     background: rgba(10, 12, 20, .8) !important;
     border-color: #1a56e6 !important;
 }
+
+
+/* =========================================================
+   FIXES (game over scroll / white-theme countdown / voice picker names)
+========================================================= */
+
+/* 1) Game Over: let the whole screen scroll when the box is taller than the display */
+#gameOverOverlay {
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch;
+    align-items: flex-start !important;   /* centered flex clips the top of tall content */
+}
+#gameOverBox {
+    margin: auto !important;              /* still centered when it fits, scrolls when it doesn't */
+    flex-shrink: 0;
+}
+
+/* 2) White theme: STARTING GAME countdown goes blue instead of red */
+html[data-mafia-theme="white"] #roleRevealOverlay::before {
+    border-color: rgba(26, 86, 230, .45);
+}
+html[data-mafia-theme="white"] .role-reveal-countdown {
+    background:
+        radial-gradient(circle at 50% 35%, rgba(26, 86, 230, .16), transparent 45%),
+        linear-gradient(180deg, rgba(20, 20, 24, .98), rgba(4, 4, 6, .99));
+    border-color: rgba(26, 86, 230, .7);
+    box-shadow: 0 30px 100px rgba(0, 0, 0, .95), inset 0 0 70px rgba(26, 86, 230, .1);
+}
+html[data-mafia-theme="white"] .role-reveal-countdown-number {
+    color: #1a56e6;
+    -webkit-text-stroke: 1px #6a9bff;
+    text-shadow: 0 5px 0 #06205e, 0 14px 40px rgba(0, 0, 0, .95), 0 0 35px rgba(26, 86, 230, .45);
+}
+html[data-mafia-theme="white"] .role-reveal-countdown-ready {
+    border-color: rgba(74, 130, 255, .65);
+    background: linear-gradient(180deg, rgba(26, 86, 230, .28), rgba(0, 0, 0, .45));
+    color: #f4f4f4;
+    box-shadow: 0 8px 25px rgba(0, 0, 0, .45), inset 0 0 18px rgba(26, 86, 230, .12);
+}
+html[data-mafia-theme="white"] .role-reveal-countdown-line {
+    background: linear-gradient(90deg, transparent, #0b3fbf, #4a82ff, #0b3fbf, transparent);
+    box-shadow: 0 0 12px rgba(26, 86, 230, .35);
+}
+
+/* 3) Voice picker: the white theme turned every <label>/<h2>/<p> dark, but this card
+      stays dark, so names and title became invisible. Force light text + blue accents. */
+html[data-mafia-theme] .voice-picker-card h2 {
+    color: #f2f2f2 !important;
+    -webkit-text-fill-color: #f2f2f2 !important;
+}
+html[data-mafia-theme] .voice-picker-card p {
+    color: #b5b5b5 !important;
+}
+html[data-mafia-theme] .voice-picker-row,
+html[data-mafia-theme] .voice-picker-row span {
+    color: #f2f2f2 !important;
+    -webkit-text-fill-color: #f2f2f2 !important;
+    text-shadow: none !important;
+}
+html[data-mafia-theme="white"] .voice-picker-card {
+    border-color: #1a56e6;
+    box-shadow: 0 25px 70px rgba(0, 0, 0, .9), 0 0 35px rgba(26, 86, 230, .3);
+}
+html[data-mafia-theme="white"] .voice-picker-card::before {
+    background: linear-gradient(90deg, transparent, #0b3fbf, #4a82ff, #0b3fbf, transparent);
+    box-shadow: 0 0 15px rgba(26, 86, 230, .6);
+}
+html[data-mafia-theme="white"] .voice-picker-count { color: #6a9bff; }
+html[data-mafia-theme="white"] .voice-picker-row input[type="checkbox"] { accent-color: #1a56e6; }
+html[data-mafia-theme="white"] .voice-picker-row:hover {
+    border-color: rgba(74, 130, 255, .7);
+    background: rgba(26, 86, 230, .18);
+}
+html[data-mafia-theme="white"] .voice-picker-actions button:first-child {
+    border-color: #0b3fbf;
+    background: linear-gradient(180deg, #4a82ff, #0b3fbf);
+}
+html[data-mafia-theme="white"] .voice-picker-actions button:hover { border-color: #6a9bff; }
