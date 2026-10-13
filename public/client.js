@@ -983,6 +983,7 @@ function renderLobbyPlayers() {
             document.createElement("span");
 
         setTierName(name, player.name, player.tier);
+        name.insertBefore(avatarNode(player.look, 30, true), name.firstChild);
 
         appendUserBadge(name, player.badge);
 
@@ -1473,22 +1474,22 @@ function isMobileOrTablet() {
 function getRoleImage(role) {
     const mobile = isMobileOrTablet();
     const roleImages = {
-        mafia: mobile ? "/mafia-role.png" : "/mafia-role.png",
-        doctor: mobile ? "/doctor-role.png" : "/doctor-role.png",
-        detective: mobile ? "/detective-role.png" : "/detective-role.png",
-        cupid: mobile ? "/cupid-role.png" : "/cupid-role.png",
-        godfather: "/godfather.png",
-        grandmafia: "/grandmafia.png",
-        grandma: "/grandma.png",
-        jester: "/jester.png",
-        civilian: "/civilian.png",
-        babymafia: mobile ? "/mafia-role.png" : "/mafia-role.png"
+        mafia: mobile ? "/images/roles/mafia-role.png" : "/images/roles/mafia-role.png",
+        doctor: mobile ? "/images/roles/doctor-role.png" : "/images/roles/doctor-role.png",
+        detective: mobile ? "/images/roles/detective-role.png" : "/images/roles/detective-role.png",
+        cupid: mobile ? "/images/roles/cupid-role.png" : "/images/roles/cupid-role.png",
+        godfather: "/images/roles/godfather.png",
+        grandmafia: "/images/roles/grandmafia.png",
+        grandma: "/images/roles/grandma.png",
+        jester: "/images/roles/jester.png",
+        civilian: "/images/roles/civilian.png",
+        babymafia: mobile ? "/images/roles/mafia-role.png" : "/images/roles/mafia-role.png"
     };
     return roleImages[String(role || "").toLowerCase().replace(/\s+/g, "")] || "";
 }
 
 function getDeathImage() {
-    return isMobileOrTablet() ? "death-mobile.png" : "death-laptop.png";
+    return isMobileOrTablet() ? "/images/mobile/death-mobile.png" : "/images/laptop/death-laptop.png";
 }
 
 /* =========================================================
@@ -1599,22 +1600,22 @@ function updateNightTurnOverlay(turn, endsAt) {
         mafia: {
             title: "MAFIA TURN",
             subtitle: "MAFIA IS MAKING A DECISION",
-            image: isMobileOrTablet() ? "/mafia-turn-mobile.png" : "/mafia-turn-laptop.png"
+            image: isMobileOrTablet() ? "/images/mobile/mafia-turn-mobile.png" : "/images/laptop/mafia-turn-laptop.png"
         },
         doctor: {
             title: "DOCTOR TURN",
             subtitle: "DOCTOR IS MAKING A DECISION",
-            image: isMobileOrTablet() ? "/doctor-turn-mobile.png" : "/doctor-turn-laptop.png"
+            image: isMobileOrTablet() ? "/images/mobile/doctor-turn-mobile.png" : "/images/laptop/doctor-turn-laptop.png"
         },
         detective: {
             title: "DETECTIVE TURN",
             subtitle: "DETECTIVE IS MAKING A DECISION",
-            image: isMobileOrTablet() ? "/detective-turn-mobile.png" : "/detective-turn-laptop.png"
+            image: isMobileOrTablet() ? "/images/mobile/detective-turn-mobile.png" : "/images/laptop/detective-turn-laptop.png"
         },
         cupid: {
             title: "CUPID TURN",
             subtitle: "CUPID IS MAKING A DECISION",
-            image: isMobileOrTablet() ? "/cupid-turn-mobile.png" : "/cupid-turn-laptop.png"
+            image: isMobileOrTablet() ? "/images/mobile/cupid-turn-mobile.png" : "/images/laptop/cupid-turn-laptop.png"
         }
     };
 
@@ -1719,14 +1720,14 @@ function updateRoleDisplay(role) {
     if (!roleText || !roleLogo) return;
 
     const roleLogos = {
-        "Civilian": "civilian.png",
-        "Mafia": "mafia-role.png",
-        "Godfather": "godfather.png",
-        "Grandmafia": "grandmafia.png",
-        "Grandma": "grandma.png",
+        "Civilian": "/images/roles/civilian.png",
+        "Mafia": "/images/roles/mafia-role.png",
+        "Godfather": "/images/roles/godfather.png",
+        "Grandmafia": "/images/roles/grandmafia.png",
+        "Grandma": "/images/roles/grandma.png",
         "Detective": getRoleImage("detective"),
         "Doctor": getRoleImage("doctor"),
-        "Jester": "jester.png",
+        "Jester": "/images/roles/jester.png",
         "Cupid": getRoleImage("cupid"),
         "Baby Mafia": getRoleImage("babymafia")
     };
@@ -2187,6 +2188,7 @@ function renderGamePlayers() {
 
         const name = document.createElement("span");
         setTierName(name, player.name, player.tier);
+        name.insertBefore(avatarNode(player.look, 30, true), name.firstChild);
 
         if (player.role) {
             const role = document.createElement("span");
@@ -2257,6 +2259,13 @@ function addOption(select, id) {
    TARGETS
 ========================================================= */
 
+function amIDead() {
+    const me = Array.isArray(players)
+        ? players.find(player => player.id === socket.id)
+        : null;
+    return Boolean(me && me.alive === false);
+}
+
 function renderTargets(data) {
 
     const select =
@@ -2267,6 +2276,13 @@ function renderTargets(data) {
 
     if (!select || !button)
         return;
+
+    /* Dead players cannot vote or use any action - hide the controls. */
+    if (amIDead()) {
+        hide("targetPlayer");
+        hide("confirmAction");
+        return;
+    }
 
     select.innerHTML =
         `<option value="">-- Select a player --</option>`;
@@ -2473,6 +2489,8 @@ function setupMainAction() {
     $("confirmAction")?.addEventListener(
         "click",
         () => {
+
+            if (amIDead()) return;
 
             const targetId =
                 $("targetPlayer")?.value;
@@ -2691,6 +2709,12 @@ function updateActionMessage() {
         $("actionMessage");
 
     if (!message) return;
+
+    if (amIDead()) {
+        message.textContent =
+            "☠️ You are dead. Just watch the game - you cannot vote or act.";
+        return;
+    }
 
     if (
         currentPhase === "night"
@@ -3582,15 +3606,15 @@ function showGameOverMenu(winner, message, stats = gameStats) {
     if (winnerLogo) {
 
         if (winner === "Mafia Team") {
-            winnerLogo.src = "/mafia-win.png";
+            winnerLogo.src = "/images/wins/mafia-win.png";
         }
 
         else if (winner === "Jester") {
-            winnerLogo.src = "/jester-win.png";
+            winnerLogo.src = "/images/wins/jester-win.png";
         }
 
         else if (winner === "Civilians") {
-            winnerLogo.src = "/civilian-win.png";
+            winnerLogo.src = "/images/wins/civilian-win.png";
         }
     }
 
@@ -4948,6 +4972,7 @@ socket.on("playerStatsData", data => {
     if (!data || !data.ok) return;
 
     setTierName($("ranksDetailsName"), data.username, data.tier);
+    showDetailsAvatar(data.look);
     appendUserBadge($("ranksDetailsName"), data.badge);
     $("statKills").textContent = data.stats.kills || 0;
     $("statSaves").textContent = data.stats.saves || 0;
@@ -5663,10 +5688,12 @@ const MAIN_LOGO_FILE = "mafia-wars-main-logo.png";
 const WHITE_LOGO_FILE = "mafia-wars-white-logo.png";
 function applyThemeLogos(theme) {
     const useWhite = theme === "white";
-    document.querySelectorAll('img[src$="' + MAIN_LOGO_FILE + '"], img[src$="' + WHITE_LOGO_FILE + '"]').forEach(img => {
-        const wanted = useWhite ? WHITE_LOGO_FILE : MAIN_LOGO_FILE;
+    const customLogo = (typeof getEquippedLogoUrl === "function") ? getEquippedLogoUrl() : null;
+    document.querySelectorAll('img[data-mw-logo], img[src$="' + MAIN_LOGO_FILE + '"], img[src$="' + WHITE_LOGO_FILE + '"]').forEach(img => {
+        img.dataset.mwLogo = "1";
+        const wanted = customLogo || (useWhite ? WHITE_LOGO_FILE : MAIN_LOGO_FILE);
         if (img.getAttribute("src") === wanted) return;
-        // if the white logo file is missing, quietly fall back to the original logo
+        // if the chosen logo file is missing, quietly fall back to the original logo
         img.onerror = () => { img.onerror = null; img.setAttribute("src", MAIN_LOGO_FILE); };
         img.setAttribute("src", wanted);
     });
@@ -6191,7 +6218,7 @@ const SOUND_EVENT_LABELS = {
 var myProgress = null;      // latest progress sent by the server
 var myTierKey = null;       // rank tag currently shown next to my name
 var pendingLevelUps = [];
-var inventoryTab = "tags";
+var inventoryTab = "character";
 var inventoryMessage = "";
 
 function getTierInfo(key) {
@@ -6359,13 +6386,13 @@ function openTierDetails(key) {
         <div class="tier-card">
             <h2>📋 ${tier.symbol} ${escapeHtml(tier.name)} Rank</h2>
             <div class="tier-fact"><span>Rank name</span><strong>${escapeHtml(tier.name)}</strong></div>
-            <div class="tier-fact"><span>Points required</span><strong>${tier.min}</strong></div>
+            <div class="tier-fact"><span>Shop price</span><strong>${tierPriceText(key)}</strong></div>
             <div class="tier-fact"><span>Rank symbol</span><strong>${tier.symbol}</strong></div>
             <div class="tier-fact"><span>Name color</span><strong><span class="tier-swatch" style="background:${tier.color}"></span>${tier.color.toUpperCase()}</strong></div>
             <div class="tier-preview">${preview}</div>
             <div class="tier-mock-label">How it looks in the game</div>
             <div class="tier-mock"><span>Lobby / player list</span><span>${preview}</span></div>
-            <div class="tier-mock"><span>Leaderboard</span><span>#1 ${preview} · ${tier.min} points</span></div>
+            <div class="tier-mock"><span>Leaderboard</span><span>#1 ${preview}</span></div>
             <div class="tier-mock"><span>Game screen</span><span>${preview}</span></div>
             <div style="margin-top:14px;text-align:right"><button class="inv-btn primary" type="button" data-tier-close="1">CLOSE</button></div>
         </div>
@@ -6434,6 +6461,11 @@ function playCustomSound(url) {
 
 /* Plays the player's chosen sound for this event, otherwise the normal game sound. */
 function playEventSound(event, fallback) {
+    const shopSound = (typeof getEquippedShopSound === "function") ? getEquippedShopSound(event) : null;
+    if (shopSound) {
+        playShopSound(shopSound);
+        return;
+    }
     const url = getEquippedSoundUrl(event);
     if (url) {
         playCustomSound(url);
@@ -6486,10 +6518,11 @@ function getEquippedWallpaperUrl() {
 }
 
 function applyWallpaper() {
-    const url = getEquippedWallpaperUrl();
-    document.body.classList.toggle("has-custom-wallpaper", Boolean(url));
-    if (url) document.body.style.setProperty("--custom-wallpaper", `url("${url}")`);
+    const value = (typeof getEquippedWallpaperValue === "function") ? getEquippedWallpaperValue() : null;
+    document.body.classList.toggle("has-custom-wallpaper", Boolean(value));
+    if (value) document.body.style.setProperty("--custom-wallpaper", value);
     else document.body.style.removeProperty("--custom-wallpaper");
+    if (typeof applyThemeLogos === "function") applyThemeLogos(loadMafiaSettings().theme);
 }
 
 /* ---------- Settings pages: Inventory, Level Up, Appearance ---------- */
@@ -6514,131 +6547,18 @@ function inventoryGuestHtml() {
     return `<div class="settings-card"><h3>👻 Guest</h3><p>Sign in or create an account to earn points, ranks and unlock your Inventory.</p></div>`;
 }
 
-function renderTagsTab(p) {
-    const username = authState.username;
-    const auto = p.equippedTier === "auto";
-    const none = p.equippedTier === "none";
-
-    const rows = TIER_ORDER.map(key => {
-        const tier = TIER_INFO[key];
-        const unlocked = (p.unlockedTiers || []).includes(key);
-        const equipped = p.equippedTier === key;
-        return `
-            <div class="inv-row ${unlocked ? "" : "inv-locked"}">
-                <div>${tierNameHtml(username, key)}<small>${tier.name} · ${tier.min} points ${unlocked ? "" : `· 🔒 ${Math.max(0, tier.min - p.points)} more needed`}</small></div>
-                <div class="inv-actions">
-                    <button class="inv-btn" type="button" data-inv="tier-details" data-key="${key}">Details</button>
-                    ${unlocked ? `<button class="inv-btn ${equipped ? "" : "primary"}" type="button" data-inv="equip-tier" data-key="${key}" ${equipped ? "disabled" : ""}>${equipped ? "Equipped" : "Equip"}</button>` : ""}
-                </div>
-            </div>`;
-    }).join("");
-
-    return `
-        <div class="settings-card">
-            <h3>🏷️ Tags / Ranks</h3>
-            <div class="inv-row">
-                <div><strong>Automatic</strong><small>Always show my highest unlocked rank</small></div>
-                <div class="inv-actions"><button class="inv-btn ${auto ? "" : "primary"}" type="button" data-inv="equip-tier" data-key="auto" ${auto ? "disabled" : ""}>${auto ? "Equipped" : "Equip"}</button></div>
-            </div>
-            ${rows}
-            <div class="inv-row">
-                <div><strong>No tag</strong><small>Show my plain username</small></div>
-                <div class="inv-actions"><button class="inv-btn ${none ? "" : "primary"}" type="button" data-inv="equip-tier" data-key="none" ${none ? "disabled" : ""}>${none ? "Equipped" : "Equip"}</button></div>
-            </div>
-        </div>`;
+function renderUploadedSoundsTab(p) {
+    return "";
 }
 
-function renderSoundsTab(p) {
-    if (!p.soundsUnlocked) {
-        return `<div class="settings-card inv-locked"><h3>🔊 Custom Sounds</h3><p>🔒 Unlocks at ${p.soundUnlockPoints} points. You have ${p.points}.</p></div>`;
-    }
-
-    const eventOptions = (p.soundEvents || []).map(key => `<option value="${key}">${SOUND_EVENT_LABELS[key] || key}</option>`).join("");
-    const list = (p.sounds || []).map(item => {
-        const equipped = p.equipped?.sounds?.[item.event] === item.id;
-        return `
-            <div class="inv-row">
-                <div><strong>${escapeHtml(item.name)}</strong><small>${SOUND_EVENT_LABELS[item.event] || item.event}${equipped ? " · ✅ active" : ""}</small></div>
-                <div class="inv-actions">
-                    <button class="inv-btn" type="button" data-inv="play-sound" data-url="${escapeHtml(item.url)}">▶ Play</button>
-                    <button class="inv-btn ${equipped ? "" : "primary"}" type="button" data-inv="equip-sound" data-id="${item.id}" data-equip="${equipped ? "0" : "1"}">${equipped ? "Unequip" : "Equip"}</button>
-                    <button class="inv-btn danger" type="button" data-inv="delete-sound" data-id="${item.id}">Delete</button>
-                </div>
-            </div>`;
-    }).join("") || `<div class="settings-muted">No custom sounds yet.</div>`;
-
-    return `
-        <div class="settings-card">
-            <h3>🔊 Add a Custom Sound</h3>
-            <div class="inv-form">
-                <input id="invSoundName" type="text" maxlength="24" placeholder="Sound name (optional)">
-                <select id="invSoundEvent">${eventOptions}</select>
-                <input id="invSoundFile" type="file" accept="audio/*">
-                <button class="inv-btn primary" type="button" data-inv="upload-sound">Add sound (max 5 seconds)</button>
-            </div>
-        </div>
-        <div class="settings-card"><h3>🎧 My Sounds</h3>${list}</div>`;
-}
-
-function renderWallpapersTab(p) {
-    if (!p.wallpapersUnlocked) {
-        return `<div class="settings-card inv-locked"><h3>🖼️ Custom Wallpapers</h3><p>🔒 Unlocks at ${p.wallpaperUnlockPoints} points. You have ${p.points}.</p></div>`;
-    }
-
-    const activeId = p.equipped?.wallpaper || null;
-    const list = (p.wallpapers || []).map(item => {
-        const equipped = activeId === item.id;
-        return `
-            <div class="inv-row">
-                <div style="display:flex;gap:10px;align-items:center"><div class="inv-thumb" style="background-image:url('${escapeHtml(item.url)}')"></div><div><strong>${escapeHtml(item.name)}</strong><small>${equipped ? "✅ active" : "Unlocked"}</small></div></div>
-                <div class="inv-actions">
-                    <button class="inv-btn ${equipped ? "" : "primary"}" type="button" data-inv="equip-wallpaper" data-id="${equipped ? "" : item.id}">${equipped ? "Use default" : "Equip"}</button>
-                    <button class="inv-btn danger" type="button" data-inv="delete-wallpaper" data-id="${item.id}">Delete</button>
-                </div>
-            </div>`;
-    }).join("") || `<div class="settings-muted">No wallpapers yet.</div>`;
-
-    return `
-        <div class="settings-card">
-            <h3>🖼️ Add a Wallpaper</h3>
-            <div class="inv-form">
-                <input id="invWallpaperName" type="text" maxlength="24" placeholder="Wallpaper name (optional)">
-                <input id="invWallpaperFile" type="file" accept="image/png,image/jpeg,image/webp">
-                <button class="inv-btn primary" type="button" data-inv="upload-wallpaper">Add wallpaper (max 4 MB)</button>
-            </div>
-        </div>
-        <div class="settings-card"><h3>🖼️ My Wallpapers</h3>${list}</div>`;
+function renderUploadedWallpapersTab(p) {
+    return "";
 }
 
 function renderRewardsTab(p) {
     const rows = (p.rewards || []).map(r => `<div class="inv-row"><div><strong>${escapeHtml(r.icon)} ${escapeHtml(r.name)}</strong><small>Level ${r.level} reward</small></div></div>`).join("")
         || `<div class="settings-muted">Level rewards you unlock will appear here.</div>`;
     return `<div class="settings-card"><h3>✨ Rewards & Future Unlocks</h3>${rows}</div>`;
-}
-
-function renderInventoryPage(page) {
-    const tabs = [["tags", "🏷️ Tags"], ["sounds", "🔊 Sounds"], ["wallpapers", "🖼️ Wallpapers"], ["rewards", "✨ Rewards"]];
-    let body;
-
-    if (!authState?.username) {
-        body = inventoryGuestHtml();
-    } else if (!myProgress) {
-        body = `<div class="settings-card"><p class="settings-muted">Loading your inventory…</p></div>`;
-    } else if (inventoryTab === "sounds") {
-        body = renderSoundsTab(myProgress);
-    } else if (inventoryTab === "wallpapers") {
-        body = renderWallpapersTab(myProgress);
-    } else if (inventoryTab === "rewards") {
-        body = renderRewardsTab(myProgress);
-    } else {
-        body = renderTagsTab(myProgress);
-    }
-
-    page.innerHTML = settingsHeader("🎒 INVENTORY") + `
-        <div class="inv-tabs">${tabs.map(([key, label]) => `<button class="inv-tab ${inventoryTab === key ? "active" : ""}" type="button" data-inv="tab" data-key="${key}">${label}</button>`).join("")}</div>
-        ${body}
-        <div class="inv-message" id="invMessage">${escapeHtml(inventoryMessage)}</div>
-    `;
 }
 
 function renderLevelUpPage(page) {
@@ -6712,7 +6632,7 @@ function addRankProgressCards(page) {
         const tier = TIER_INFO[key];
         const reached = myProgress ? (myProgress.unlockedTiers || []).includes(key) : false;
         return `<div class="inv-row ${reached ? "" : "inv-locked"}">
-            <div>${tierNameHtml(username, key)}<small>${tier.min} points${reached ? " · ✅ unlocked" : ""}</small></div>
+            <div>${tierNameHtml(username, key)}<small>${reached ? "✅ owned" : "🛍️ " + tierPriceText(key) + " in the Shop"}</small></div>
             <div class="inv-actions"><button class="inv-btn" type="button" data-inv="tier-details" data-key="${key}">Details</button></div>
         </div>`;
     }).join("");
@@ -6768,8 +6688,10 @@ renderSettingsPage = function(view) {
                 button.addEventListener("click", () => settingsNav(target));
                 grid.appendChild(button);
             };
-            add("🎒", "Inventory", "Rank tags, sounds, wallpapers and rewards", "inventory");
+            add("🛍️", "Shop", "Spend points on items, tags, wallpapers, sounds and logos", "rewards");
+            add("🎒", "Inventory", "Equip your character, tags, sounds, wallpapers and logos", "inventory");
             add("🎨", "Appearance", "Dark or White theme", "appearance");
+            if (myBadge === "owner") add("💰", "Shop Management", "Owner: set the price of any shop item", "shopadmin");
         }
     } else if (view === "ranks") {
         addRankProgressCards(page);
@@ -6862,6 +6784,983 @@ async function handleProgressClick(event) {
 
 /* If the page was reloaded while signed in, authResult will load progress. */
 if (authState?.username) setTimeout(requestMyProgress, 500);
+
+
+/* =========================================================
+   SHOP (buy) + INVENTORY (equip) + CHARACTER + OWNER PRICES
+   - The SERVER decides prices, balance and ownership. This block only
+     shows them and sends the player's choices.
+   - Avatar art, prices and names all come from the server catalog, so
+     new items are added in server.js only (one line each).
+========================================================= */
+
+const DEFAULT_LOOK = { face: "face_basic", hair: null, shirt: "shirt_basic", suit: null, pants: "pants_basic", hat: null, mask: null, accessory: null };
+const OPTIONAL_SLOTS = ["hair", "suit", "hat", "mask", "accessory"];
+
+var shopCatalog = null;                 // { items, categories, slots, ... } from the server
+var shopItemMap = new Map();
+var shopGroup = "character";            // Shop tab: character | tag | wallpaper | sound
+var shopSlot = "face";                  // Shop: which character category is open
+var shopPreviewLook = null;             // "Try on" preview (never saved)
+var shopMessage = "";
+var inventorySlot = "face";             // Inventory: which character category is open
+var shopAdminCat = "tag";               // Owner panel: which category is open
+var shopAdminMessage = "";
+
+/* ---------- Catalog ---------- */
+
+function loadShopCatalog() {
+    socket.emit("getShopCatalog", result => {
+        if (!result || !result.ok) return;
+        shopCatalog = result;
+        shopItemMap = new Map(result.items.map(item => [item.id, item]));
+        hydrateAvatars(document);
+        applyWallpaper();
+        rerenderShopPages();
+    });
+}
+
+if (socket.connected) loadShopCatalog();
+socket.on("connect", loadShopCatalog);
+
+socket.on("shopPricesUpdated", data => {
+    if (!data || !data.prices || !shopCatalog) return;
+    shopCatalog.items.forEach(item => {
+        if (data.prices[item.id] !== undefined) item.price = data.prices[item.id];
+    });
+    if (progressSettingsOpen && settingsView === "rewards") renderSettingsPage("rewards");
+});
+
+function shopItem(id) {
+    return id ? (shopItemMap.get(id) || null) : null;
+}
+
+function shopOwned(id) {
+    const item = shopItem(id);
+    if (!item) return false;
+    return item.free || (myProgress?.ownedItems || []).includes(id);
+}
+
+function shopItemsIn(cat) {
+    return (shopCatalog?.items || []).filter(item => item.cat === cat);
+}
+
+function shopCategory(key) {
+    return (shopCatalog?.categories || []).find(c => c.key === key) || { key, label: key, icon: "" };
+}
+
+function rerenderShopPages() {
+    if (progressSettingsOpen && ["inventory", "rewards"].includes(settingsView)) renderSettingsPage(settingsView);
+}
+
+/* ---------- Avatar (SVG body parts + emoji items) ---------- */
+
+function avatarLayer(item) {
+    if (!item) return "";
+    if (item.art) return item.art;
+    if (item.emoji) {
+        const e = item.emoji;
+        return `<text x="${e.x}" y="${e.y}" font-size="${e.s}" text-anchor="middle">${e.t}</text>`;
+    }
+    return "";
+}
+
+function avatarMarkup(look, bust) {
+    const wear = Object.assign({}, DEFAULT_LOOK, look || {});
+    const face = shopItem(wear.face) || shopItem("face_basic");
+    const skin = (face && face.skin) || "#f1c27d";
+
+    const parts = [
+        avatarLayer(shopItem(wear.pants) || shopItem("pants_basic")),
+        `<rect x="17" y="62" width="11" height="40" rx="5.5" fill="${skin}"/><rect x="72" y="62" width="11" height="40" rx="5.5" fill="${skin}"/><rect x="44" y="50" width="12" height="14" fill="${skin}"/>`,
+        avatarLayer(shopItem(wear.shirt) || shopItem("shirt_basic")),
+        avatarLayer(shopItem(wear.suit)),
+        `<circle cx="30" cy="38" r="4.5" fill="${skin}"/><circle cx="70" cy="38" r="4.5" fill="${skin}"/><circle cx="50" cy="36" r="20" fill="${skin}"/>`,
+        avatarLayer(face),
+        avatarLayer(shopItem(wear.hair)),
+        avatarLayer(shopItem(wear.mask)),
+        avatarLayer(shopItem(wear.accessory)),
+        avatarLayer(shopItem(wear.hat))
+    ];
+
+    const viewBox = bust ? "8 -4 84 88" : "0 -8 100 148";
+    return `<svg viewBox="${viewBox}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">${parts.join("")}</svg>`;
+}
+
+/* A small avatar element for lists (lobby, player list, details). */
+function avatarNode(look, size, bust) {
+    const span = document.createElement("span");
+    span.className = "mw-avatar";
+    span.style.width = size + "px";
+    span.style.height = Math.round(bust ? size * 88 / 84 : size * 148 / 100) + "px";
+    span.dataset.look = JSON.stringify(look || null);
+    span.dataset.bust = bust ? "1" : "";
+    if (shopCatalog) span.innerHTML = avatarMarkup(look, bust);
+    return span;
+}
+
+function hydrateAvatars(root) {
+    if (!shopCatalog) return;
+    (root || document).querySelectorAll(".mw-avatar").forEach(el => {
+        if (el.dataset.look === undefined) return;
+        let look = null;
+        try { look = JSON.parse(el.dataset.look); } catch (_) { /* default look */ }
+        el.innerHTML = avatarMarkup(look, el.dataset.bust === "1");
+    });
+}
+
+function avatarHtml(look, size, bust) {
+    const height = Math.round(bust ? size * 88 / 84 : size * 148 / 100);
+    return `<span class="mw-avatar" data-look="${escapeHtml(JSON.stringify(look || null))}" data-bust="${bust ? "1" : ""}" style="width:${size}px;height:${height}px">${shopCatalog ? avatarMarkup(look, bust) : ""}</span>`;
+}
+
+/* Big character picture inside the Ranks -> Details popup. */
+function showDetailsAvatar(look) {
+    const nameEl = $("ranksDetailsName");
+    if (!nameEl || !nameEl.parentElement) return;
+
+    let box = $("ranksDetailsAvatar");
+    if (!box) {
+        box = document.createElement("div");
+        box.id = "ranksDetailsAvatar";
+        box.style.cssText = "display:flex;justify-content:center;margin:6px 0 10px";
+        nameEl.parentElement.insertBefore(box, nameEl);
+    }
+    box.innerHTML = avatarHtml(look, 120, false);
+}
+
+function tierPriceText(key) {
+    const item = shopItem("tag_" + key);
+    return item ? "💰 " + Number(item.price).toLocaleString() : "—";
+}
+
+function myLook() {
+    return Object.assign({}, DEFAULT_LOOK, myProgress?.look || {});
+}
+
+/* ---------- Built-in shop sounds (WebAudio, no files needed) ---------- */
+
+var shopAudioCtx = null;
+
+function shopAudio() {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return null;
+    if (!shopAudioCtx) shopAudioCtx = new Ctx();
+    if (shopAudioCtx.state === "suspended") shopAudioCtx.resume();
+    return shopAudioCtx;
+}
+
+function synthTone(ctx, vol, o) {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    const t0 = ctx.currentTime + (o.at || 0);
+    osc.type = o.type || "sine";
+    osc.frequency.setValueAtTime(o.f0, t0);
+    if (o.f1) osc.frequency.exponentialRampToValueAtTime(o.f1, t0 + o.dur);
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, (o.gain || 0.3) * vol), t0 + 0.012);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + o.dur);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(t0);
+    osc.stop(t0 + o.dur + 0.05);
+}
+
+function synthNoise(ctx, vol, o) {
+    const length = Math.floor(ctx.sampleRate * o.dur);
+    const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / length);
+
+    const source = ctx.createBufferSource();
+    const filter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+    source.buffer = buffer;
+    filter.type = "lowpass";
+    filter.frequency.value = o.cutoff || 3000;
+    gain.gain.value = (o.gain || 0.6) * vol;
+    source.connect(filter).connect(gain).connect(ctx.destination);
+    source.start(ctx.currentTime + (o.at || 0));
+}
+
+const SHOP_SYNTH = {
+    snd_chime: (c, v) => {
+        synthTone(c, v, { f0: 880, dur: 0.9, gain: 0.35 });
+        synthTone(c, v, { f0: 1320, at: 0.12, dur: 1.0, gain: 0.3 });
+    },
+    snd_coin: (c, v) => {
+        synthTone(c, v, { type: "square", f0: 988, dur: 0.1, gain: 0.18 });
+        synthTone(c, v, { type: "square", f0: 1319, at: 0.09, dur: 0.45, gain: 0.18 });
+    },
+    snd_horn: (c, v) => {
+        synthTone(c, v, { type: "sawtooth", f0: 220, dur: 0.7, gain: 0.22 });
+        synthTone(c, v, { type: "sawtooth", f0: 277, dur: 0.7, gain: 0.22 });
+    },
+    snd_heartbeat: (c, v) => {
+        [0, 0.28, 1.0, 1.28].forEach((at, i) => synthTone(c, v, { f0: i % 2 ? 55 : 70, f1: 38, at, dur: 0.22, gain: 0.9 }));
+    },
+    snd_bell: (c, v) => {
+        synthTone(c, v, { f0: 392, dur: 2.2, gain: 0.35 });
+        synthTone(c, v, { f0: 588, dur: 1.6, gain: 0.18 });
+        synthTone(c, v, { f0: 1046, dur: 1.0, gain: 0.1 });
+    },
+    snd_siren: (c, v) => {
+        [0, 0.6, 1.2].forEach((at, i) => synthTone(c, v, { type: "triangle", f0: i % 2 ? 950 : 620, f1: i % 2 ? 620 : 950, at, dur: 0.6, gain: 0.25 }));
+    },
+    snd_gunshot: (c, v) => {
+        synthNoise(c, v, { dur: 0.28, cutoff: 5000, gain: 0.9 });
+        synthTone(c, v, { f0: 140, f1: 40, dur: 0.25, gain: 0.8 });
+    }
+};
+
+function playShopSound(item) {
+    if (!item) return;
+    if (item.url) { playCustomSound(item.url); return; }
+
+    const synth = SHOP_SYNTH[item.id];
+    const ctx = synth ? shopAudio() : null;
+    if (!ctx) return;
+
+    try {
+        const settings = getAudioSettings();
+        synth(ctx, Math.min(1, settings.masterVolume * settings.soundEffectsVolume));
+    } catch (error) {
+        console.warn("Shop sound error:", error);
+    }
+}
+
+function getEquippedShopSound(event) {
+    if (!myProgress || !authState?.username) return null;
+    const id = myProgress.equipped?.sounds?.[event];
+    const item = id && String(id).startsWith("snd_") ? shopItem(id) : null;
+    return item && shopOwned(item.id) ? item : null;
+}
+
+/* ---------- Wallpaper (uploaded images OR bought gradients/images) ---------- */
+
+function getEquippedWallpaperValue() {
+    const p = myProgress;
+    if (!p || !p.equipped || !authState?.username || !p.equipped.wallpaper) return null;
+
+    const id = p.equipped.wallpaper;
+    const upload = (p.wallpapers || []).find(w => w.id === id);
+    if (upload) return `url("${upload.url}")`;
+
+    const item = shopItem(id);
+    if (item && shopOwned(id)) return item.css ? item.css : (item.url ? `url("${item.url}")` : null);
+
+    return null;
+}
+
+function getEquippedLogoUrl() {
+    const p = myProgress;
+    if (!p || !p.equipped || !authState?.username || !p.equipped.logo) return null;
+    const item = shopItem(p.equipped.logo);
+    return item && item.cat === "logo" && shopOwned(item.id) && item.url ? item.url : null;
+}
+
+/* ---------- Small messages ---------- */
+
+function shopNotice(text) {
+    shopMessage = text || "";
+    const box = $("shopMessage");
+    if (box) box.textContent = shopMessage;
+}
+
+function showShopToast(text) {
+    let toast = $("shopToast");
+    if (!toast) {
+        toast = document.createElement("div");
+        toast.id = "shopToast";
+        document.body.appendChild(toast);
+    }
+    toast.textContent = text;
+    toast.classList.add("show");
+    clearTimeout(showShopToast.timer);
+    showShopToast.timer = setTimeout(() => toast.classList.remove("show"), 5000);
+}
+
+socket.on("shopReward", data => {
+    if (!data) return;
+    const bonus = data.won ? ` (includes +${data.bonus} win bonus!)` : "";
+    showShopToast(`💰 +${data.earned} shop points${bonus}`);
+    setTimeout(requestMyProgress, 800);
+});
+
+/* ---------- "Where should this sound play?" popup (right after buying a sound) ---------- */
+
+const SOUND_EVENT_HINTS = {
+    roundStart: "A new round begins",
+    turnStart: "The next turn starts",
+    turnOver: "A turn ends",
+    votingStart: "Voting begins",
+    gameEnd: "The game is over",
+    playerDeath: "A player dies"
+};
+
+function openSoundEventPopup(item) {
+    closeSoundEventPopup();
+    const events = (myProgress?.soundEvents && myProgress.soundEvents.length) ? myProgress.soundEvents : Object.keys(SOUND_EVENT_LABELS);
+
+    const overlay = document.createElement("div");
+    overlay.id = "soundEventPopup";
+    overlay.className = "mw-modal-overlay";
+    overlay.innerHTML = `
+        <div class="mw-modal" role="dialog" aria-modal="true">
+            <h3>${escapeHtml(item.icon || "🔊")} ${escapeHtml(item.name)} is yours!</h3>
+            <p class="settings-muted">When should this sound play? Pick one or more.</p>
+            <div class="mw-modal-list">
+                ${events.map(ev => `
+                    <label class="mw-modal-option">
+                        <input type="checkbox" value="${ev}">
+                        <span><strong>${escapeHtml(SOUND_EVENT_LABELS[ev] || ev)}</strong><small>${escapeHtml(SOUND_EVENT_HINTS[ev] || "")}</small></span>
+                    </label>`).join("")}
+            </div>
+            <div class="mw-modal-message" id="soundEventPopupMsg"></div>
+            <div class="mw-modal-actions">
+                <button class="inv-btn" type="button" data-popup="play">▶ Play</button>
+                <button class="inv-btn" type="button" data-popup="later">Later</button>
+                <button class="inv-btn primary" type="button" data-popup="save">Save</button>
+            </div>
+        </div>`;
+
+    overlay.addEventListener("click", event => {
+        if (event.target === overlay) return closeSoundEventPopup();
+        const btn = event.target.closest("[data-popup]");
+        if (!btn) return;
+
+        if (btn.dataset.popup === "play") {
+            playShopSound(item);
+        } else if (btn.dataset.popup === "later") {
+            closeSoundEventPopup();
+        } else if (btn.dataset.popup === "save") {
+            const chosen = Array.from(overlay.querySelectorAll("input[type=checkbox]:checked")).map(box => box.value);
+            const msg = overlay.querySelector("#soundEventPopupMsg");
+            if (!chosen.length) { msg.textContent = "Pick at least one moment, or press Later."; return; }
+
+            btn.disabled = true;
+            let pending = chosen.length;
+            let failed = null;
+            chosen.forEach(ev => {
+                socket.emit("equipShopSound", { id: item.id, event: ev, equip: true }, result => {
+                    if (!result?.ok) failed = result?.error || "Could not save.";
+                    if (--pending === 0) {
+                        if (failed) { msg.textContent = failed; btn.disabled = false; return; }
+                        closeSoundEventPopup();
+                        shopNotice(`🔊 ${item.name} will play on: ${chosen.map(ev => SOUND_EVENT_LABELS[ev] || ev).join(", ")}.`);
+                        showShopToast(`🔊 ${item.name} saved`);
+                    }
+                });
+            });
+        }
+    });
+
+    document.body.appendChild(overlay);
+}
+
+function closeSoundEventPopup() {
+    const old = document.getElementById("soundEventPopup");
+    if (old) old.remove();
+}
+
+/* ---------- Details popup for wallpapers and logos (big picture) ---------- */
+
+function openItemDetailsPopup(item) {
+    if (!item) return;
+    closeItemDetailsPopup();
+
+    const owned = shopOwned(item.id);
+    const isLogo = item.cat === "logo";
+    const active = myProgress?.equipped?.[isLogo ? "logo" : "wallpaper"] === item.id;
+    const status = item.free ? "Default" : (active ? "✅ Equipped" : (owned ? "✅ Owned" : "Not owned yet"));
+
+    const overlay = document.createElement("div");
+    overlay.id = "itemDetailsPopup";
+    overlay.className = "mw-modal-overlay";
+    overlay.innerHTML = `
+        <div class="mw-modal mw-modal-wide" role="dialog" aria-modal="true">
+            <h3>${isLogo ? "📛" : "🖼️"} ${escapeHtml(item.name)}</h3>
+            <div class="mw-detail-img ${isLogo ? "logo" : "wall"}">${shopImageHtml(item, isLogo ? "contain" : "cover")}</div>
+            <p class="mw-detail-meta"><span>${escapeHtml(isLogo ? "Logo" : "Wallpaper")}</span><span>${priceLabel(item)}</span><span>${status}</span></p>
+            <div class="mw-modal-actions"><button class="inv-btn primary" type="button" data-popup="close">Close</button></div>
+        </div>`;
+
+    overlay.addEventListener("click", event => {
+        if (event.target === overlay || event.target.closest("[data-popup='close']")) closeItemDetailsPopup();
+    });
+
+    document.body.appendChild(overlay);
+
+    // If the picture can't be loaded, say exactly which file the page asked for.
+    if (item.url) {
+        const probe = new Image();
+        probe.onerror = () => {
+            const note = document.createElement("p");
+            note.className = "mw-modal-message";
+            note.textContent = `Picture not found: ${item.url}  (put your file in the "public" folder at that path, then refresh with Ctrl+F5)`;
+            const meta = overlay.querySelector(".mw-detail-meta");
+            if (meta) meta.after(note);
+        };
+        probe.src = item.url;
+    }
+}
+
+function closeItemDetailsPopup() {
+    const old = document.getElementById("itemDetailsPopup");
+    if (old) old.remove();
+}
+
+document.addEventListener("keydown", event => {
+    if (event.key === "Escape") { closeItemDetailsPopup(); closeSoundEventPopup(); }
+});
+
+/* ---------- CSS ---------- */
+
+(function injectShopCss() {
+    if (document.getElementById("shopCss")) return;
+    const style = document.createElement("style");
+    style.id = "shopCss";
+    style.textContent = `
+        .mw-avatar { display: inline-block; vertical-align: middle; flex: none; margin-right: 6px; line-height: 0; }
+        .mw-avatar svg { width: 100%; height: 100%; display: block; overflow: visible; }
+        .shop-wallet { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+        .shop-wallet strong { font-size: 1.5em; }
+        .shop-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 12px; }
+        .shop-chip { padding: 6px 11px; border-radius: 999px; border: 1px solid rgba(255,255,255,.2); background: rgba(255,255,255,.06); color: inherit; cursor: pointer; font: inherit; font-size: .88em; }
+        .shop-chip.active { background: rgba(255,255,255,.22); border-color: rgba(255,255,255,.55); font-weight: 700; }
+        .shop-preview { display: flex; align-items: center; justify-content: center; gap: 16px; padding: 10px 0 4px; flex-wrap: wrap; }
+        .shop-preview .mw-avatar { margin: 0; }
+        .shop-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(138px, 1fr)); gap: 10px; }
+        .shop-card { display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; padding: 10px 8px; border-radius: 12px; border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.05); }
+        .shop-card.owned { border-color: rgba(90,220,140,.55); }
+        .shop-card.equipped { border-color: rgba(255,210,63,.8); box-shadow: 0 0 0 1px rgba(255,210,63,.45) inset; }
+        .shop-thumb { width: 100%; height: 92px; display: flex; align-items: center; justify-content: center; border-radius: 9px; overflow: hidden; background: rgba(0,0,0,.28); font-size: 1.05em; padding: 4px; box-sizing: border-box; }
+        .shop-thumb .mw-avatar { margin: 0; }
+        .shop-thumb.wall { padding: 0; background-size: cover; background-position: center; }
+        .shop-thumb.sound { font-size: 2.2em; }
+        .shop-card small { opacity: .75; }
+        .shop-price { font-weight: 700; }
+        .shop-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; margin-top: 2px; }
+        .shop-message { margin-top: 10px; min-height: 1.2em; font-size: .92em; }
+        .shop-admin-row { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; align-items: center; padding: 9px 0; border-bottom: 1px solid rgba(255,255,255,.08); }
+        .shop-admin-row:last-child { border-bottom: 0; }
+        .shop-admin-row input[type=number] { width: 110px; padding: 7px 9px; border-radius: 8px; border: 1px solid rgba(255,255,255,.25); background: rgba(0,0,0,.25); color: inherit; font: inherit; }
+        .shop-admin-controls { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+        .shop-thumb.wall, .shop-thumb.logo { padding: 0; }
+        .shop-thumb.logo { padding: 6px; }
+        .shop-img { width: 100%; height: 100%; display: block; }
+        .shop-img.cover { object-fit: cover; }
+        .shop-img.contain { object-fit: contain; }
+        .shop-img-missing { font-size: 2em; opacity: .5; }
+        .shop-img-css { width: 100%; height: 100%; background-size: cover; background-position: center; }
+        .mw-modal-overlay { position: fixed; inset: 0; z-index: 100002; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(0,0,0,.72); }
+        .mw-modal { width: min(420px, 100%); max-height: 90vh; overflow: auto; padding: 18px; border-radius: 14px; background: #120a0a; color: #f3e9e9; border: 1px solid rgba(255,60,60,.55); box-shadow: 0 16px 50px rgba(0,0,0,.7), 0 0 24px rgba(200,0,0,.25); }
+        .mw-modal h3 { margin: 0 0 6px; }
+        .mw-modal-wide { width: min(640px, 100%); }
+        .mw-detail-img { width: 100%; border-radius: 12px; overflow: hidden; background: rgba(0,0,0,.4); border: 1px solid rgba(255,255,255,.12); display: flex; align-items: center; justify-content: center; margin: 10px 0; }
+        .mw-detail-img.wall { aspect-ratio: 16 / 9; }
+        .mw-detail-img.logo { height: min(52vh, 380px); padding: 12px; box-sizing: border-box; }
+        .mw-detail-img .shop-img { width: 100%; height: 100%; }
+        .mw-detail-img .shop-img-missing { font-size: 4em; }
+        .mw-detail-meta { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin: 6px 0; opacity: .9; }
+        .mw-modal-list { display: flex; flex-direction: column; gap: 6px; margin: 12px 0 8px; }
+        .mw-modal-option { display: flex; align-items: center; gap: 10px; padding: 9px 11px; border-radius: 10px; border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.05); cursor: pointer; }
+        .mw-modal-option:hover { border-color: rgba(255,80,80,.6); }
+        .mw-modal-option input { width: 18px; height: 18px; accent-color: #c1121f; flex: none; }
+        .mw-modal-option small { display: block; opacity: .7; }
+        .mw-modal-message { min-height: 1.2em; font-size: .9em; color: #ff8a8a; }
+        .mw-modal-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; margin-top: 8px; }
+        #shopToast { position: fixed; left: 50%; bottom: 26px; transform: translate(-50%, 30px); opacity: 0; pointer-events: none; z-index: 100001; padding: 11px 18px; border-radius: 12px; background: rgba(18,18,24,.96); color: #fff; border: 1px solid rgba(255,210,63,.6); box-shadow: 0 10px 30px rgba(0,0,0,.5); transition: opacity .3s, transform .3s; max-width: 92vw; text-align: center; }
+        #shopToast.show { opacity: 1; transform: translate(-50%, 0); }
+    `;
+    document.head.appendChild(style);
+})();
+
+/* ---------- Shop page ---------- */
+
+function priceLabel(item) {
+    return item.free ? "Free" : `💰 ${Number(item.price).toLocaleString()}`;
+}
+
+/* Picture for wallpapers / logos. If your image file is not in public/ yet, a placeholder shows. */
+function shopImageHtml(item, fit) {
+    if (item.css) return `<div class="shop-img-css" style="background-image:${item.css}"></div>`;
+    const url = escapeHtml(item.url || "");
+    const placeholder = item.cat === "logo" ? "📛" : "🖼️";
+    return `<img class="shop-img ${fit}" src="${url}" alt="${escapeHtml(item.name)}" loading="lazy" onerror="this.outerHTML='<span class=&quot;shop-img-missing&quot;>${placeholder}</span>'">`;
+}
+
+function shopBuyButton(item, signedIn, wallet) {
+    if (item.free) return `<small>Default</small>`;
+    if (shopOwned(item.id)) return `<span class="shop-price">✅ Owned</span>`;
+    if (!signedIn) return `<button class="inv-btn" type="button" disabled>Sign in to buy</button>`;
+    const afford = wallet >= item.price;
+    return `<button class="inv-btn ${afford ? "primary" : ""}" type="button" data-inv="shop-buy" data-id="${item.id}" ${afford ? "" : "disabled"}>${afford ? "Buy" : "Need " + (item.price - wallet)} · ${Number(item.price).toLocaleString()}</button>`;
+}
+
+function renderShopCard(item, signedIn, wallet, username, previewBase) {
+    const owned = shopOwned(item.id);
+    let thumb = "";
+    let extra = "";
+
+    if (item.cat === "tag") {
+        thumb = `<div class="shop-thumb">${tierNameHtml(username, item.tier)}</div>`;
+        extra = `<button class="inv-btn" type="button" data-inv="tier-details" data-key="${item.tier}">Details</button>`;
+    } else if (item.cat === "wallpaper") {
+        thumb = `<div class="shop-thumb wall">${shopImageHtml(item, "cover")}</div>`;
+        extra = `<button class="inv-btn" type="button" data-inv="shop-details" data-id="${item.id}">Details</button>`;
+    } else if (item.cat === "logo") {
+        thumb = `<div class="shop-thumb logo">${shopImageHtml(item, "contain")}</div>`;
+        extra = `<button class="inv-btn" type="button" data-inv="shop-details" data-id="${item.id}">Details</button>`;
+    } else if (item.cat === "sound") {
+        thumb = `<div class="shop-thumb sound">${escapeHtml(item.icon || "🔊")}</div>`;
+        extra = `<button class="inv-btn" type="button" data-inv="shop-play" data-id="${item.id}">▶ Play</button>`;
+    } else {
+        const look = Object.assign({}, previewBase, { [item.cat]: item.id });
+        thumb = `<div class="shop-thumb">${avatarHtml(look, 58, false)}</div>`;
+        extra = `<button class="inv-btn" type="button" data-inv="shop-preview" data-id="${item.id}">Try on</button>`;
+    }
+
+    return `<div class="shop-card ${owned ? "owned" : ""}">
+        ${thumb}
+        <strong>${escapeHtml(item.name)}</strong>
+        <small>${priceLabel(item)}</small>
+        <div class="shop-actions">${extra}${shopBuyButton(item, signedIn, wallet)}</div>
+    </div>`;
+}
+
+function renderRewardsShopPage(page) {
+    const signedIn = Boolean(authState?.username);
+    const groups = [["character", "👤 Character"], ["tag", "🏷️ Name Tags"], ["wallpaper", "🖼️ Wallpapers"], ["sound", "🔊 Sounds"], ["logo", "📛 Logos"]];
+    const wallet = signedIn ? (myProgress?.shopPoints || 0) : 0;
+    const username = authState?.username || "Player";
+
+    let body = "";
+
+    if (!shopCatalog) {
+        body = `<div class="settings-card"><p class="settings-muted">Loading the shop…</p></div>`;
+    } else {
+        const previewBase = shopPreviewLook || myLook();
+        let items;
+        let top = "";
+
+        if (shopGroup === "character") {
+            const slots = (shopCatalog.categories || []).filter(c => c.group === "character");
+            if (!slots.some(c => c.key === shopSlot)) shopSlot = slots[0]?.key || "face";
+            top = `
+                <div class="settings-card">
+                    <div class="shop-preview">
+                        ${avatarHtml(previewBase, 96, false)}
+                        <div>
+                            <strong>Preview</strong><br><small class="settings-muted">${shopPreviewLook ? "Trying on an item (not saved)." : "This is your current character."}</small><br>
+                            ${shopPreviewLook ? `<button class="inv-btn" type="button" data-inv="shop-preview-reset" style="margin-top:8px">Reset preview</button>` : ""}
+                        </div>
+                    </div>
+                </div>
+                <div class="shop-chips">${slots.map(c => `<button class="shop-chip ${shopSlot === c.key ? "active" : ""}" type="button" data-inv="shop-slot" data-key="${c.key}">${c.icon} ${c.label}</button>`).join("")}</div>`;
+            items = shopItemsIn(shopSlot);
+        } else {
+            items = shopItemsIn(shopGroup);
+        }
+
+        const cards = items.map(item => renderShopCard(item, signedIn, wallet, username, previewBase)).join("") || `<div class="settings-muted">Nothing here yet.</div>`;
+        body = `${top}<div class="settings-card"><div class="shop-grid">${cards}</div></div>`;
+    }
+
+    page.innerHTML = settingsHeader("🛍️ SHOP") + `
+        <div class="settings-card">
+            <div class="shop-wallet">
+                <div><small class="settings-muted">Your shop points</small><br><strong>💰 ${signedIn ? wallet.toLocaleString() : "—"}</strong></div>
+                <small class="settings-muted">Earn +${shopCatalog?.pointsPerGame ?? 20} for every finished game and +${shopCatalog?.winBonus ?? 30} more for a win.<br>Spending shop points never lowers your rank.</small>
+            </div>
+            ${signedIn ? "" : `<p class="settings-muted" style="margin-top:8px">👻 Guests can look around. Sign in or create an account to earn points and buy items.</p>`}
+        </div>
+        <div class="inv-tabs">${groups.map(([key, label]) => `<button class="inv-tab ${shopGroup === key ? "active" : ""}" type="button" data-inv="shop-group" data-key="${key}">${label}</button>`).join("")}</div>
+        ${body}
+        <div class="shop-message" id="shopMessage">${escapeHtml(shopMessage)}</div>
+    `;
+}
+
+/* ---------- Inventory pages ---------- */
+
+function renderTagsTab(p) {
+    const username = authState.username;
+    const auto = p.equippedTier === "auto";
+    const none = p.equippedTier === "none";
+    const owned = TIER_ORDER.filter(key => (p.unlockedTiers || []).includes(key));
+
+    const rows = owned.map(key => {
+        const tier = TIER_INFO[key];
+        const equipped = p.equippedTier === key;
+        return `
+            <div class="inv-row">
+                <div>${tierNameHtml(username, key)}<small>${tier.name} tag</small></div>
+                <div class="inv-actions">
+                    <button class="inv-btn" type="button" data-inv="tier-details" data-key="${key}">Details</button>
+                    <button class="inv-btn ${equipped ? "" : "primary"}" type="button" data-inv="equip-tier" data-key="${key}" ${equipped ? "disabled" : ""}>${equipped ? "Equipped" : "Equip"}</button>
+                </div>
+            </div>`;
+    }).join("") || `<div class="settings-muted" style="padding:8px 0">You don't own any name tags yet. Buy one in 🛍️ Shop.</div>`;
+
+    return `
+        <div class="settings-card">
+            <h3>🏷️ Name Tags</h3>
+            <div class="inv-row">
+                <div><strong>Automatic</strong><small>Always show my highest owned tag</small></div>
+                <div class="inv-actions"><button class="inv-btn ${auto ? "" : "primary"}" type="button" data-inv="equip-tier" data-key="auto" ${auto ? "disabled" : ""}>${auto ? "Equipped" : "Equip"}</button></div>
+            </div>
+            ${rows}
+            <div class="inv-row">
+                <div><strong>No tag</strong><small>Show my plain username</small></div>
+                <div class="inv-actions"><button class="inv-btn ${none ? "" : "primary"}" type="button" data-inv="equip-tier" data-key="none" ${none ? "disabled" : ""}>${none ? "Equipped" : "Equip"}</button></div>
+            </div>
+        </div>`;
+}
+
+function renderCharacterTab(p) {
+    if (!shopCatalog) return `<div class="settings-card"><p class="settings-muted">Loading your character…</p></div>`;
+
+    const slots = (shopCatalog.categories || []).filter(c => c.group === "character");
+    if (!slots.some(c => c.key === inventorySlot)) inventorySlot = slots[0]?.key || "face";
+
+    const look = myLook();
+    const items = shopItemsIn(inventorySlot).filter(item => shopOwned(item.id));
+    const optional = OPTIONAL_SLOTS.includes(inventorySlot);
+
+    const cards = [];
+
+    if (optional) {
+        const active = !look[inventorySlot];
+        cards.push(`<div class="shop-card ${active ? "equipped" : ""}">
+            <div class="shop-thumb">${avatarHtml(Object.assign({}, look, { [inventorySlot]: null }), 58, false)}</div>
+            <strong>None</strong><small>Take it off</small>
+            <div class="shop-actions"><button class="inv-btn ${active ? "" : "primary"}" type="button" data-inv="equip-char" data-slot="${inventorySlot}" data-id="" ${active ? "disabled" : ""}>${active ? "Equipped" : "Equip"}</button></div>
+        </div>`);
+    }
+
+    items.forEach(item => {
+        const active = look[inventorySlot] === item.id;
+        cards.push(`<div class="shop-card ${active ? "equipped" : ""}">
+            <div class="shop-thumb">${avatarHtml(Object.assign({}, look, { [inventorySlot]: item.id }), 58, false)}</div>
+            <strong>${escapeHtml(item.name)}</strong><small>${item.free ? "Default" : "Owned"}</small>
+            <div class="shop-actions"><button class="inv-btn ${active ? "" : "primary"}" type="button" data-inv="equip-char" data-slot="${inventorySlot}" data-id="${item.id}" ${active ? "disabled" : ""}>${active ? "Equipped" : "Equip"}</button></div>
+        </div>`);
+    });
+
+    const hint = items.filter(item => !item.free).length ? "" : `<p class="settings-muted" style="margin-top:10px">You haven't bought anything in this category yet. Visit 🛍️ Shop to get some.</p>`;
+
+    return `
+        <div class="settings-card">
+            <div class="shop-preview">${avatarHtml(look, 110, false)}<div><strong>${escapeHtml(authState.username)}</strong><br><small class="settings-muted">This is how other players see you.</small></div></div>
+        </div>
+        <div class="shop-chips">${slots.map(c => `<button class="shop-chip ${inventorySlot === c.key ? "active" : ""}" type="button" data-inv="inv-slot" data-key="${c.key}">${c.icon} ${c.label}</button>`).join("")}</div>
+        <div class="settings-card"><div class="shop-grid">${cards.join("")}</div>${hint}</div>`;
+}
+
+function themeDefaultCards(kind, p) {
+    const white = loadMafiaSettings().theme === "white";
+    const custom = kind === "logo" ? p.equipped?.logo : p.equipped?.wallpaper;
+    const items = [
+        { theme: "noir", label: "Dark", img: kind === "logo" ? MAIN_LOGO_FILE : "/images/backgrounds/background.png" },
+        { theme: "white", label: "White", img: kind === "logo" ? WHITE_LOGO_FILE : "/images/backgrounds/background-white.png" }
+    ];
+    return items.map(it => {
+        const on = !custom && (white ? "white" : "noir") === it.theme;
+        const title = kind === "logo" ? `Default logo (${it.label})` : `Default wallpaper (${it.label})`;
+        const thumb = kind === "logo"
+            ? `<div class="shop-thumb logo"><img class="shop-img contain" src="${it.img}" alt="${title}"></div>`
+            : `<div class="shop-thumb"><div style="width:100%;height:100%;min-height:90px;background:url('${it.img}') center/cover no-repeat;border-radius:8px"></div></div>`;
+        return `<div class="shop-card ${on ? "equipped" : ""}">
+            ${thumb}
+            <strong>${title}</strong><small>${it.label} theme</small>
+            <div class="shop-actions"><button class="inv-btn ${on ? "" : "primary"}" type="button" data-inv="pick-theme" data-theme="${it.theme}" data-clear="${kind}" ${on ? "disabled" : ""}>${on ? "Equipped" : "Use"}</button></div>
+        </div>`;
+    }).join("");
+}
+
+function renderSoundsTab(p) {
+    let shopPart = `<div class="settings-card"><p class="settings-muted">Loading…</p></div>`;
+
+    if (shopCatalog) {
+        const events = p.soundEvents || [];
+        const owned = shopItemsIn("sound").filter(item => shopOwned(item.id));
+        const rows = owned.map(item => {
+            const active = events.filter(ev => p.equipped?.sounds?.[ev] === item.id);
+            return `
+                <div class="inv-row">
+                    <div><strong>${escapeHtml(item.icon || "🔊")} ${escapeHtml(item.name)}</strong><small>${active.length ? "✅ Active on: " + active.map(ev => SOUND_EVENT_LABELS[ev] || ev).join(", ") : "Not used yet"}</small></div>
+                    <div class="inv-actions">
+                        <button class="inv-btn" type="button" data-inv="shop-play" data-id="${item.id}">▶ Play</button>
+                        <select id="invEvt_${item.id}" class="inv-btn">${events.map(ev => `<option value="${ev}">${SOUND_EVENT_LABELS[ev] || ev}</option>`).join("")}</select>
+                        <button class="inv-btn primary" type="button" data-inv="equip-shop-sound" data-id="${item.id}" data-equip="1">Use</button>
+                        ${active.length ? `<button class="inv-btn" type="button" data-inv="equip-shop-sound" data-id="${item.id}" data-equip="0">Stop</button>` : ""}
+                    </div>
+                </div>`;
+        }).join("") || `<div class="settings-muted">You haven't bought any sounds yet. Visit 🛍️ Shop.</div>`;
+
+        shopPart = `<div class="settings-card"><h3>🔊 My Sounds</h3>${rows}<small class="settings-muted">Pick the game event, then press Use. Only you hear your sounds.</small></div>`;
+    }
+
+    const defaultSounds = [["Button Click", "/sounds/button-click.mp3"], ["Player Dead", "/sounds/player-dead.mp3"], ["New Round", "/sounds/new-round.mp3"], ["Last 10 Seconds", "/sounds/last-10-heartbeat.mp3"], ["Turn Over", "/sounds/turn-over.mp3"]];
+    const defaultPart = `<div class="settings-card"><h3>🔊 Default Sounds</h3>${defaultSounds.map(([name, url]) => `<div class="inv-row"><div><strong>${name}</strong><small>Built-in game sound</small></div><div class="inv-actions"><button class="inv-btn" type="button" data-inv="play-sound" data-url="${url}">▶ Play</button></div></div>`).join("")}</div>`;
+
+    return defaultPart + shopPart;
+}
+
+function renderWallpapersTab(p) {
+    let shopPart = `<div class="settings-card"><p class="settings-muted">Loading…</p></div>`;
+
+    if (shopCatalog) {
+        const active = p.equipped?.wallpaper || null;
+        const owned = shopItemsIn("wallpaper").filter(item => shopOwned(item.id));
+        const rows = owned.map(item => {
+            const on = active === item.id;
+            const bg = item.css ? item.css : `url('${escapeHtml(item.url || "")}')`;
+            return `
+                <div class="inv-row">
+                    <div style="display:flex;gap:10px;align-items:center"><div class="inv-thumb" style="background-image:${bg};background-size:cover;background-position:center"></div><div><strong>${escapeHtml(item.name)}</strong><small>${on ? "✅ active" : "Owned"}</small></div></div>
+                    <div class="inv-actions"><button class="inv-btn ${on ? "" : "primary"}" type="button" data-inv="equip-wallpaper" data-id="${on ? "" : item.id}">${on ? "Use default" : "Equip"}</button></div>
+                </div>`;
+        }).join("") || `<div class="settings-muted">You haven't bought any wallpapers yet. Visit 🛍️ Shop.</div>`;
+
+        shopPart = `<div class="settings-card"><h3>🖼️ My Wallpapers</h3>${rows}</div>`;
+    }
+
+    return `<div class="settings-card"><h3>🖼️ Default Wallpapers</h3><div class="shop-grid">${themeDefaultCards("wallpaper", p)}</div></div>` + shopPart;
+}
+
+function renderLogosTab(p) {
+    if (!shopCatalog) return `<div class="settings-card"><p class="settings-muted">Loading…</p></div>`;
+
+    const active = p.equipped?.logo || null;
+    const owned = shopItemsIn("logo").filter(item => shopOwned(item.id));
+
+    const cards = [themeDefaultCards("logo", p)];
+
+    owned.forEach(item => {
+        const on = active === item.id;
+        cards.push(`<div class="shop-card ${on ? "equipped" : "owned"}">
+            <div class="shop-thumb logo">${shopImageHtml(item, "contain")}</div>
+            <strong>${escapeHtml(item.name)}</strong><small>${on ? "✅ active" : "Owned"}</small>
+            <div class="shop-actions"><button class="inv-btn ${on ? "" : "primary"}" type="button" data-inv="equip-logo" data-id="${item.id}" ${on ? "disabled" : ""}>${on ? "Equipped" : "Equip"}</button></div>
+        </div>`);
+    });
+
+    const hint = owned.length ? "" : `<p class="settings-muted" style="margin-top:10px">You haven't bought any logos yet. Visit 🛍️ Shop → 📛 Logos.</p>`;
+
+    return `<div class="settings-card"><h3>📛 My Logos</h3><div class="shop-grid">${cards.join("")}</div>${hint}<small class="settings-muted">Your equipped logo replaces the Mafia Wars logo on your screen.</small></div>`;
+}
+
+function renderInventoryPage(page) {
+    const tabs = [["character", "👤 Character"], ["tags", "🏷️ Tags"], ["sounds", "🔊 Sounds"], ["wallpapers", "🖼️ Wallpapers"], ["logos", "📛 Logos"], ["rewards", "🏅 Medals"]];
+    if (!tabs.some(([key]) => key === inventoryTab)) inventoryTab = "character";
+
+    let body;
+
+    if (!authState?.username) {
+        body = inventoryGuestHtml();
+    } else if (!myProgress) {
+        body = `<div class="settings-card"><p class="settings-muted">Loading your inventory…</p></div>`;
+    } else if (inventoryTab === "sounds") {
+        body = renderSoundsTab(myProgress);
+    } else if (inventoryTab === "wallpapers") {
+        body = renderWallpapersTab(myProgress);
+    } else if (inventoryTab === "logos") {
+        body = renderLogosTab(myProgress);
+    } else if (inventoryTab === "rewards") {
+        body = renderRewardsTab(myProgress);
+    } else if (inventoryTab === "tags") {
+        body = renderTagsTab(myProgress);
+    } else {
+        body = renderCharacterTab(myProgress);
+    }
+
+    page.innerHTML = settingsHeader("🎒 INVENTORY") + `
+        <div class="inv-tabs">${tabs.map(([key, label]) => `<button class="inv-tab ${inventoryTab === key ? "active" : ""}" type="button" data-inv="tab" data-key="${key}">${label}</button>`).join("")}</div>
+        ${body}
+        <div class="inv-message" id="invMessage">${escapeHtml(inventoryMessage)}</div>
+    `;
+}
+
+/* ---------- Owner: Shop Management ---------- */
+
+function renderShopAdminPage(page) {
+    const isOwner = myBadge === "owner";
+
+    if (!isOwner) {
+        page.innerHTML = settingsHeader("💰 SHOP MANAGEMENT") + `<div class="settings-card"><p>Only the Owner can manage shop prices.</p></div>`;
+        return;
+    }
+
+    if (!shopCatalog) {
+        page.innerHTML = settingsHeader("💰 SHOP MANAGEMENT") + `<div class="settings-card"><p class="settings-muted">Loading…</p></div>`;
+        return;
+    }
+
+    const cats = shopCatalog.categories;
+    if (!cats.some(c => c.key === shopAdminCat)) shopAdminCat = cats[0].key;
+
+    const rows = shopItemsIn(shopAdminCat).filter(item => !item.free).map(item => `
+        <div class="shop-admin-row">
+            <div><strong>${escapeHtml(item.name)}</strong><br><small class="settings-muted" id="adminNow_${item.id}">Current price: ${Number(item.price).toLocaleString()} points</small></div>
+            <div class="shop-admin-controls">
+                <input type="number" min="0" max="1000000" step="1" id="adminPrice_${item.id}" value="${item.price}">
+                <button class="inv-btn primary" type="button" data-inv="admin-save" data-id="${item.id}">Save</button>
+                <button class="inv-btn" type="button" data-inv="admin-reset" data-id="${item.id}">Reset</button>
+            </div>
+        </div>`).join("") || `<div class="settings-muted">No priced items in this category.</div>`;
+
+    page.innerHTML = settingsHeader("💰 SHOP MANAGEMENT") + `
+        <div class="settings-admin-note">Changes apply immediately for every player. Items players already bought stay theirs. The server re-checks that you are the signed-in Owner.</div>
+        <div class="settings-card">
+            <div class="settings-row"><div><strong>Category</strong></div>
+                <select id="adminCat" class="inv-btn" data-inv="admin-cat">${cats.map(c => `<option value="${c.key}" ${c.key === shopAdminCat ? "selected" : ""}>${c.icon} ${c.label}</option>`).join("")}</select>
+            </div>
+        </div>
+        <div class="settings-card">${rows}</div>
+        <div class="shop-message" id="shopAdminMessage">${escapeHtml(shopAdminMessage)}</div>
+    `;
+}
+
+function shopAdminNotice(text) {
+    shopAdminMessage = text || "";
+    const box = $("shopAdminMessage");
+    if (box) box.textContent = shopAdminMessage;
+}
+
+/* ---------- Click / change handling for the new pages ---------- */
+
+function handleShopClick(event) {
+    const target = event.target.closest("[data-inv]");
+    if (!target) return;
+    const action = target.dataset.inv;
+
+    if (action === "shop-group") {
+        shopGroup = target.dataset.key;
+        shopMessage = "";
+        renderSettingsPage("rewards");
+    } else if (action === "shop-slot") {
+        shopSlot = target.dataset.key;
+        renderSettingsPage("rewards");
+    } else if (action === "shop-preview") {
+        const item = shopItem(target.dataset.id);
+        if (item) shopPreviewLook = Object.assign({}, myLook(), { [item.cat]: item.id });
+        renderSettingsPage("rewards");
+    } else if (action === "shop-preview-reset") {
+        shopPreviewLook = null;
+        renderSettingsPage("rewards");
+    } else if (action === "shop-details") {
+        openItemDetailsPopup(shopItem(target.dataset.id));
+    } else if (action === "shop-play") {
+        playShopSound(shopItem(target.dataset.id));
+    } else if (action === "shop-buy") {
+        target.disabled = true;
+        socket.emit("shopBuy", { id: target.dataset.id }, result => {
+            const item = shopItem(target.dataset.id);
+            shopNotice(result?.ok
+                ? `✅ Bought ${item ? item.name : "item"}! Open Inventory to equip it.`
+                : (result?.error || "Could not buy that item."));
+            if (!result?.ok) target.disabled = false;
+            // A new sound: ask right away which game event it should play on.
+            if (result?.ok && item && item.cat === "sound") openSoundEventPopup(item);
+        });
+    } else if (action === "inv-slot") {
+        inventorySlot = target.dataset.key;
+        renderSettingsPage("inventory");
+    } else if (action === "pick-theme") {
+        updateMafiaSetting("theme", target.dataset.theme);
+        if (target.dataset.clear === "wallpaper") inventoryEmit("equipWallpaper", { id: null }, "Wallpaper updated.");
+        else if (target.dataset.clear === "logo") inventoryEmit("equipLogo", { id: null }, "Logo updated.");
+        else renderSettingsPage("inventory");
+    } else if (action === "equip-logo") {
+        inventoryEmit("equipLogo", { id: target.dataset.id || null }, "Logo updated.");
+    } else if (action === "equip-char") {
+        inventoryEmit("equipCharacter", { slot: target.dataset.slot, id: target.dataset.id || null }, "Character updated.");
+    } else if (action === "equip-shop-sound") {
+        const equip = target.dataset.equip === "1";
+        const select = $("invEvt_" + target.dataset.id);
+        let eventName = select ? select.value : "";
+
+        if (!equip) {
+            // Stop: remove it from every event it is active on.
+            const events = (myProgress?.soundEvents || []).filter(ev => myProgress.equipped?.sounds?.[ev] === target.dataset.id);
+            events.forEach(ev => socket.emit("equipShopSound", { id: target.dataset.id, event: ev, equip: false }));
+            inventoryNotice("Sound removed from all events.");
+            return;
+        }
+
+        inventoryEmit("equipShopSound", { id: target.dataset.id, event: eventName, equip: true }, "Sound updated.");
+    } else if (action === "admin-save") {
+        const id = target.dataset.id;
+        const price = Number($("adminPrice_" + id)?.value);
+        socket.emit("ownerSetPrice", { id, price }, result => {
+            shopAdminNotice(result?.ok ? `✅ Saved. New price: ${Number(result.price).toLocaleString()} points.` : (result?.error || "Could not save."));
+            if (result?.ok) {
+                const now = $("adminNow_" + id);
+                if (now) now.textContent = `Current price: ${Number(result.price).toLocaleString()} points`;
+            }
+        });
+    } else if (action === "admin-reset") {
+        const id = target.dataset.id;
+        socket.emit("ownerSetPrice", { id, reset: true }, result => {
+            shopAdminNotice(result?.ok ? "✅ Price reset to the default." : (result?.error || "Could not reset."));
+            if (result?.ok) {
+                const input = $("adminPrice_" + id);
+                if (input) input.value = result.price;
+                const now = $("adminNow_" + id);
+                if (now) now.textContent = `Current price: ${Number(result.price).toLocaleString()} points`;
+            }
+        });
+    }
+}
+
+function handleShopChange(event) {
+    const target = event.target.closest("[data-inv='admin-cat']");
+    if (!target) return;
+    shopAdminCat = target.value;
+    renderSettingsPage("shopadmin");
+}
+
+var shopListenersInstalled = false;
+const renderSettingsPageBeforeShop = renderSettingsPage;
+
+renderSettingsPage = function(view) {
+    const page = $("settingsPage");
+
+    if (view === "main") shopPreviewLook = null;
+
+    if (page && !shopListenersInstalled) {
+        shopListenersInstalled = true;
+        page.addEventListener("click", handleShopClick);
+        page.addEventListener("change", handleShopChange);
+    }
+
+    if (page && (view === "rewards" || view === "shopadmin")) {
+        // Keep the existing Account controls safe (same rule the other pages follow).
+        const accountInfo = $("accountInfo");
+        const accountChip = $("accountChip");
+        if (accountInfo && accountChip && accountInfo.parentElement !== accountChip) {
+            accountChip.appendChild(accountInfo);
+            accountInfo.style.display = "none";
+        }
+
+        if (!shopCatalog) loadShopCatalog();
+
+        if (view === "rewards") renderRewardsShopPage(page);
+        else renderShopAdminPage(page);
+
+        $("settingsBack")?.addEventListener("click", () => settingsNav("main"));
+        $("settingsClose")?.addEventListener("click", closeSettings);
+        return;
+    }
+
+    renderSettingsPageBeforeShop(view);
+};
+
+/* Refresh the shop / inventory when the server sends new points or items. */
+socket.on("myProgressData", () => {
+    hydrateAvatars(document);
+    if (progressSettingsOpen && settingsView === "rewards") renderSettingsPage("rewards");
+});
 
 
 /* =========================================================
