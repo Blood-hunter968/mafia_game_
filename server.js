@@ -253,8 +253,8 @@ const TIERS = [
     { key: "legend",  min: 500 }
 ];
 
-const SOUND_UNLOCK_POINTS = 600;
-const WALLPAPER_UNLOCK_POINTS = 1000;
+const SOUND_UNLOCK_POINTS = 0;      // no point requirement anymore
+const WALLPAPER_UNLOCK_POINTS = 0;  // no point requirement anymore
 const SOUND_EVENTS = ["roundStart", "turnStart", "turnOver", "votingStart", "gameEnd", "playerDeath"];
 const MAX_CUSTOM_SOUNDS = 12;
 const MAX_CUSTOM_WALLPAPERS = 12;
@@ -310,6 +310,25 @@ function ensureProgress(user) {
     if (typeof p.equipped.tier !== "string") p.equipped.tier = "auto";
     if (!p.equipped.sounds || typeof p.equipped.sounds !== "object") p.equipped.sounds = {};
     if (typeof p.equipped.wallpaper !== "string") p.equipped.wallpaper = null;
+    if (typeof p.equipped.logo !== "string") p.equipped.logo = null;
+    if (!p.equipped.character || typeof p.equipped.character !== "object") p.equipped.character = {};
+
+    /* Shop wallet + owned items (see the SHOP section below). */
+    if (!p.shop || typeof p.shop !== "object") p.shop = {};
+    p.shop.points = Math.max(0, Math.floor(Number(p.shop.points) || 0));
+    p.shop.earned = Math.max(0, Math.floor(Number(p.shop.earned) || 0));
+    if (!Array.isArray(p.shop.owned)) p.shop.owned = [];
+
+    if (!p.shop.tagsMigrated) {
+        p.shop.tagsMigrated = true;
+        // Players who already unlocked rank tags by score keep them.
+        if (GRANDFATHER_EXISTING_TAGS) {
+            getUnlockedTiers(totalStats(user.stats)).forEach(tier => {
+                const id = "tag_" + tier.key;
+                if (!p.shop.owned.includes(id)) p.shop.owned.push(id);
+            });
+        }
+    }
 
     return p;
 }
@@ -337,8 +356,7 @@ function getUnlockedTiers(points) {
 function getEquippedTierKey(user) {
     if (!user) return null;
 
-    const points = totalStats(user.stats);
-    const unlocked = getUnlockedTiers(points);
+    const unlocked = getOwnedTiers(user);
     const chosen = ensureProgress(user).equipped.tier;
 
     if (chosen === "none") return null;
@@ -395,7 +413,7 @@ function buildProgressPayload(accountKey, user) {
     const p = ensureProgress(user);
     const points = totalStats(user.stats);
     const info = levelInfo(p.xp);
-    const unlocked = getUnlockedTiers(points).map(tier => tier.key);
+    const unlocked = getOwnedTiers(user).map(tier => tier.key);
 
     const rewardOwned = p.rewards
         .filter(level => LEVEL_REWARDS[level])
@@ -416,6 +434,10 @@ function buildProgressPayload(accountKey, user) {
         unlockedTiers: unlocked,
         equippedTier: p.equipped.tier,
         shownTier: getEquippedTierKey(user),
+        shopPoints: p.shop.points,
+        shopEarned: p.shop.earned,
+        ownedItems: p.shop.owned.slice(),
+        look: getLookOfUser(user),
         level: info.level,
         xp: Math.floor(p.xp),
         xpIntoLevel: info.xpIntoLevel,
@@ -432,9 +454,337 @@ function buildProgressPayload(accountKey, user) {
         wallpapers: p.wallpapers.map(item => ({ id: item.id, name: item.name, url: uploadUrl(accountKey, item.file) })),
         equipped: {
             sounds: { ...p.equipped.sounds },
-            wallpaper: p.equipped.wallpaper
+            wallpaper: p.equipped.wallpaper,
+            logo: p.equipped.logo
         }
     };
+}
+
+/* =========================================================
+   SHOP (buy) + INVENTORY (equip) + SHOP POINTS
+   - Shop points are a SEPARATE wallet from rank points, so spending
+     never lowers a player's rank or leaderboard position.
+   - Players earn shop points for finishing a game + a win bonus.
+   - Only signed-in accounts can buy / equip. Guests use defaults.
+   - The SERVER checks login, ownership, current price and balance.
+   - Wallet, owned items and equipped items are saved on the account
+     (accounts.json inside DATA_DIR), so they survive logout, restarts
+     and redeploys as long as DATA_DIR is on persistent storage.
+   - Prices set by the Owner are saved in accountsDb.shop.prices.
+   - To add a new item later, add ONE line to the catalog below.
+========================================================= */
+
+const SHOP_POINTS_PER_GAME = 20;        // earned for completing a game
+const SHOP_POINTS_WIN_BONUS = 30;       // extra points for being on the winning side
+const GRANDFATHER_EXISTING_TAGS = true; // players who already unlocked tags by score keep them
+const MAX_SHOP_PRICE = 1000000;
+
+const CHARACTER_SLOTS = ["face", "hair", "shirt", "suit", "pants", "hat", "mask", "accessory"];
+const REQUIRED_SLOT_DEFAULTS = { face: "face_basic", shirt: "shirt_basic", pants: "pants_basic" };
+
+const SHOP_CATEGORIES = [
+    { key: "face",      group: "character", label: "Faces",       icon: "🙂" },
+    { key: "hair",      group: "character", label: "Hairstyles",  icon: "💇" },
+    { key: "shirt",     group: "character", label: "Shirts",      icon: "👕" },
+    { key: "suit",      group: "character", label: "Suits",       icon: "🤵" },
+    { key: "pants",     group: "character", label: "Pants",       icon: "👖" },
+    { key: "hat",       group: "character", label: "Hats",        icon: "🎩" },
+    { key: "mask",      group: "character", label: "Masks",       icon: "🎭" },
+    { key: "accessory", group: "character", label: "Accessories", icon: "🕶️" },
+    { key: "tag",       group: "tag",       label: "Name Tags",   icon: "🏷️" },
+    { key: "wallpaper", group: "wallpaper", label: "Wallpapers",  icon: "🖼️" },
+    { key: "sound",     group: "sound",     label: "Sounds",      icon: "🔊" },
+    { key: "logo",      group: "logo",      label: "Logos",       icon: "📛" }
+];
+
+/* ---------- Catalog ----------
+   id         unique, never change it after players own it
+   cat        one of SHOP_CATEGORIES keys
+   price      default price in shop points (Owner can override it live)
+   free       true = everyone owns it (the default character)
+   art        SVG markup drawn on the avatar (viewBox 0 0 100 140)
+   emoji      { t, x, y, s } emoji drawn on the avatar instead of SVG
+   skin       (faces) skin color of the head, neck and hands
+   css        (wallpapers) any CSS background-image value, e.g. a gradient
+   file       (wallpapers / sounds) URL of your own file in /public
+   base       (wallpapers / logos) file name WITHOUT extension. Put your image in
+              public/wallpapers/<base>.jpg|png|webp  or  public/logos/<base>.png|jpg|webp
+              (the server finds whichever extension you used, no restart needed)
+   tier       (tags) matches TIER_INFO key in client.js                */
+
+const SHOP_CATALOG = [];
+
+function shopAdd(item) {
+    SHOP_CATALOG.push(item);
+}
+
+/* ----- Faces ----- */
+const faceEyes = "<circle cx='43' cy='34' r='2.2' fill='#222'/><circle cx='57' cy='34' r='2.2' fill='#222'/>";
+const faceSmile = "<path d='M43 44 Q50 49 57 44' stroke='#222' stroke-width='2' fill='none' stroke-linecap='round'/>";
+shopAdd({ id: "face_basic",   cat: "face", name: "Classic",   price: 0,   free: true, skin: "#f1c27d", art: faceEyes + faceSmile });
+shopAdd({ id: "face_happy",   cat: "face", name: "Happy",     price: 100, skin: "#e0ac69", art: "<path d='M39 35 Q43 30 47 35' stroke='#222' stroke-width='2' fill='none' stroke-linecap='round'/><path d='M53 35 Q57 30 61 35' stroke='#222' stroke-width='2' fill='none' stroke-linecap='round'/><path d='M41 42 Q50 55 59 42 Z' fill='#fff' stroke='#222' stroke-width='1.6' stroke-linejoin='round'/>" });
+shopAdd({ id: "face_serious", cat: "face", name: "Serious",   price: 100, skin: "#c68642", art: faceEyes + "<path d='M38 28 L47 30' stroke='#222' stroke-width='2' stroke-linecap='round'/><path d='M62 28 L53 30' stroke='#222' stroke-width='2' stroke-linecap='round'/><path d='M44 46 H56' stroke='#222' stroke-width='2' stroke-linecap='round'/>" });
+shopAdd({ id: "face_scar",    cat: "face", name: "Scarface",  price: 150, skin: "#d9a066", art: faceEyes + faceSmile + "<path d='M57 24 L63 43' stroke='#a33' stroke-width='2' stroke-linecap='round'/><path d='M55 31 L61 30 M57 37 L63 36' stroke='#a33' stroke-width='1.4'/>" });
+shopAdd({ id: "face_angry",    cat: "face", name: "Angry",     price: 120, skin: "#f1c27d", art: faceEyes + "<path d='M38 27 L47 32' stroke='#222' stroke-width='2.4' stroke-linecap='round'/><path d='M62 27 L53 32' stroke='#222' stroke-width='2.4' stroke-linecap='round'/><path d='M43 47 Q50 41 57 47' stroke='#222' stroke-width='2' fill='none' stroke-linecap='round'/>" });
+shopAdd({ id: "face_vampire", cat: "face", name: "Vampire",   price: 200, skin: "#efe2da", art: "<circle cx='43' cy='34' r='2.4' fill='#c1121f'/><circle cx='57' cy='34' r='2.4' fill='#c1121f'/><path d='M43 43 Q50 48 57 43' stroke='#222' stroke-width='2' fill='none' stroke-linecap='round'/><path d='M45 44 L47 50 L49 45 Z M51 45 L53 50 L55 44 Z' fill='#fff' stroke='#222' stroke-width='.8'/>" });
+
+/* ----- Hairstyles ----- */
+shopAdd({ id: "hair_short",  cat: "hair", name: "Short Cut",   price: 100, art: "<path d='M30 36 Q28 13 50 13 Q72 13 70 36 Q64 24 50 24 Q36 24 30 36Z' fill='#2b1d14'/>" });
+shopAdd({ id: "hair_slick",  cat: "hair", name: "Slick Back",  price: 100, art: "<path d='M29 37 Q27 11 52 12 Q73 13 71 37 Q66 22 50 21 Q36 21 29 37Z' fill='#151515'/><path d='M38 19 Q52 14 65 21' stroke='#555' stroke-width='1.6' fill='none' stroke-linecap='round'/>" });
+shopAdd({ id: "hair_spiky",  cat: "hair", name: "Spiky Blond", price: 100, art: "<path d='M30 36 L27 14 L38 24 L42 7 L50 22 L58 7 L62 24 L73 14 L70 36 Q60 24 50 24 Q40 24 30 36Z' fill='#e8c547'/>" });
+shopAdd({ id: "hair_long",   cat: "hair", name: "Long Brown",  price: 120, art: "<path d='M28 42 Q25 11 50 12 Q75 11 72 42 L72 64 Q65 62 65 52 L65 31 Q50 21 35 31 L35 52 Q35 62 28 64Z' fill='#6b3f1f'/>" });
+shopAdd({ id: "hair_curly",  cat: "hair", name: "Curly",       price: 120, art: "<g fill='#2b1d14'><circle cx='36' cy='21' r='8'/><circle cx='50' cy='15' r='9'/><circle cx='64' cy='21' r='8'/><circle cx='29' cy='30' r='6'/><circle cx='71' cy='30' r='6'/></g>" });
+shopAdd({ id: "hair_mohawk", cat: "hair", name: "Red Mohawk",  price: 150, art: "<path d='M43 22 L45 4 L50 12 L55 3 L57 22Z' fill='#d62828'/>" });
+
+/* ----- Shirts / Suits / Pants ----- */
+function shirtArt(color, extra) {
+    return `<rect x='28' y='60' width='44' height='42' rx='6' fill='${color}'/><rect x='15' y='62' width='14' height='24' rx='7' fill='${color}'/><rect x='71' y='62' width='14' height='24' rx='7' fill='${color}'/>${extra || ""}`;
+}
+function suitArt(color, tie, trim) {
+    return `<rect x='26' y='59' width='48' height='46' rx='6' fill='${color}'/><rect x='13' y='61' width='15' height='32' rx='7' fill='${color}'/><rect x='72' y='61' width='15' height='32' rx='7' fill='${color}'/><path d='M42 60 L58 60 L50 82 Z' fill='#f4f4f4'/><path d='M50 64 L46.5 70 L50 90 L53.5 70 Z' fill='${tie}'/><path d='M42 60 L33 60 L47 90 L50 82 Z' fill='${trim}'/><path d='M58 60 L67 60 L53 90 L50 82 Z' fill='${trim}'/><circle cx='50' cy='96' r='1.6' fill='#111'/><circle cx='50' cy='102' r='1.6' fill='#111'/>`;
+}
+function pantsArt(color) {
+    return `<rect x='31' y='96' width='17' height='38' rx='3' fill='${color}'/><rect x='52' y='96' width='17' height='38' rx='3' fill='${color}'/><rect x='29' y='132' width='21' height='7' rx='3' fill='#1b1b1b'/><rect x='50' y='132' width='21' height='7' rx='3' fill='#1b1b1b'/>`;
+}
+shopAdd({ id: "shirt_basic",  cat: "shirt", name: "Grey Tee",       price: 0,   free: true, art: shirtArt("#8a8f98") });
+shopAdd({ id: "shirt_white",  cat: "shirt", name: "White Shirt",    price: 150, art: shirtArt("#f2f2f2", "<path d='M50 60 V102' stroke='#cfcfcf' stroke-width='1.2'/>") });
+shopAdd({ id: "shirt_red",    cat: "shirt", name: "Red Shirt",      price: 150, art: shirtArt("#c62828") });
+shopAdd({ id: "shirt_blue",   cat: "shirt", name: "Blue Shirt",     price: 150, art: shirtArt("#1e63c9") });
+shopAdd({ id: "shirt_green",  cat: "shirt", name: "Green Shirt",    price: 150, art: shirtArt("#2e7d32") });
+shopAdd({ id: "shirt_stripe", cat: "shirt", name: "Striped Shirt",  price: 170, art: shirtArt("#f2f2f2", "<g stroke='#c62828' stroke-width='3'><path d='M28 68 H72 M28 78 H72 M28 88 H72 M28 98 H72'/><path d='M15 70 H29 M15 80 H29 M71 70 H85 M71 80 H85'/></g>") });
+shopAdd({ id: "shirt_hawaii", cat: "shirt", name: "Hawaiian Shirt", price: 200, art: shirtArt("#17a2b8", "<g fill='#ffd23f'><circle cx='36' cy='70' r='3'/><circle cx='56' cy='76' r='3'/><circle cx='42' cy='88' r='3'/><circle cx='64' cy='94' r='3'/></g><g fill='#ff6b9d'><circle cx='62' cy='67' r='2.6'/><circle cx='34' cy='82' r='2.6'/><circle cx='52' cy='96' r='2.6'/></g>") });
+
+shopAdd({ id: "suit_black",     cat: "suit", name: "Black Suit",     price: 350, art: suitArt("#1b1b22", "#b3001b", "#101015") });
+shopAdd({ id: "suit_navy",      cat: "suit", name: "Navy Suit",      price: 380, art: suitArt("#16264a", "#e8e8e8", "#0e1a35") });
+shopAdd({ id: "suit_white",     cat: "suit", name: "White Suit",     price: 400, art: suitArt("#ececec", "#111111", "#d0d0d0") });
+shopAdd({ id: "suit_pinstripe", cat: "suit", name: "Pinstripe Suit", price: 450, art: suitArt("#2a2a33", "#c9a227", "#1c1c23") + "<g stroke='#6b6b78' stroke-width='.8'><path d='M32 62 V104 M38 62 V104 M62 62 V104 M68 62 V104'/></g>" });
+shopAdd({ id: "suit_red",       cat: "suit", name: "Crimson Suit",   price: 500, art: suitArt("#9d0f1c", "#111111", "#7a0b15") });
+
+shopAdd({ id: "pants_basic", cat: "pants", name: "Grey Trousers", price: 0,   free: true, art: pantsArt("#3c4048") });
+shopAdd({ id: "pants_jeans", cat: "pants", name: "Blue Jeans",    price: 200, art: pantsArt("#2b4f8f") });
+shopAdd({ id: "pants_black", cat: "pants", name: "Black Pants",   price: 200, art: pantsArt("#17171a") });
+shopAdd({ id: "pants_khaki", cat: "pants", name: "Khaki Pants",   price: 200, art: pantsArt("#b59d6b") });
+shopAdd({ id: "pants_white", cat: "pants", name: "White Pants",   price: 220, art: pantsArt("#e6e6e6") });
+shopAdd({ id: "pants_red",   cat: "pants", name: "Red Pants",     price: 250, art: pantsArt("#a31d1d") });
+
+/* ----- Hats (the fedora is drawn; the rest are emoji) ----- */
+shopAdd({ id: "hat_cap",     cat: "hat", name: "Cap",         price: 150, emoji: { t: "🧢", x: 50, y: 27, s: 34 } });
+shopAdd({ id: "hat_grad",    cat: "hat", name: "Graduate",    price: 200, emoji: { t: "🎓", x: 50, y: 25, s: 36 } });
+shopAdd({ id: "hat_fedora",  cat: "hat", name: "Fedora",      price: 250, art: "<ellipse cx='50' cy='23' rx='31' ry='7' fill='#2f2f2f'/><path d='M33 23 Q33 3 50 3 Q67 3 67 23Z' fill='#444'/><rect x='33' y='16' width='34' height='5' fill='#a02020'/>" });
+shopAdd({ id: "hat_helmet",  cat: "hat", name: "Helmet",      price: 250, emoji: { t: "🪖", x: 50, y: 28, s: 36 } });
+shopAdd({ id: "hat_tophat",  cat: "hat", name: "Top Hat",     price: 300, emoji: { t: "🎩", x: 50, y: 26, s: 38 } });
+shopAdd({ id: "hat_crown",   cat: "hat", name: "Golden Crown", price: 800, emoji: { t: "👑", x: 50, y: 24, s: 34 } });
+
+/* ----- Masks (emoji over the face) ----- */
+shopAdd({ id: "mask_surgical", cat: "mask", name: "Face Mask",    price: 300, emoji: { t: "😷", x: 50, y: 48, s: 38 } });
+shopAdd({ id: "mask_theatre",  cat: "mask", name: "Theatre Mask", price: 300, emoji: { t: "🎭", x: 50, y: 47, s: 38 } });
+shopAdd({ id: "mask_clown",    cat: "mask", name: "Clown Mask",   price: 350, emoji: { t: "🤡", x: 50, y: 48, s: 38 } });
+shopAdd({ id: "mask_oni",      cat: "mask", name: "Oni Mask",     price: 400, emoji: { t: "👹", x: 50, y: 48, s: 38 } });
+shopAdd({ id: "mask_robot",    cat: "mask", name: "Robot Mask",   price: 400, emoji: { t: "🤖", x: 50, y: 48, s: 38 } });
+shopAdd({ id: "mask_skull",    cat: "mask", name: "Skull Mask",   price: 450, emoji: { t: "💀", x: 50, y: 48, s: 38 } });
+
+/* ----- Accessories (emoji) ----- */
+shopAdd({ id: "acc_rose",       cat: "accessory", name: "Red Rose",    price: 120, emoji: { t: "🌹", x: 80, y: 102, s: 22 } });
+shopAdd({ id: "acc_bow",        cat: "accessory", name: "Bow",         price: 130, emoji: { t: "🎀", x: 50, y: 70, s: 20 } });
+shopAdd({ id: "acc_scarf",      cat: "accessory", name: "Scarf",       price: 150, emoji: { t: "🧣", x: 50, y: 70, s: 28 } });
+shopAdd({ id: "acc_shades",     cat: "accessory", name: "Sunglasses",  price: 200, emoji: { t: "🕶️", x: 50, y: 41, s: 26 } });
+shopAdd({ id: "acc_headphones", cat: "accessory", name: "Headphones",  price: 250, emoji: { t: "🎧", x: 50, y: 43, s: 40 } });
+shopAdd({ id: "acc_chain",      cat: "accessory", name: "Gold Chain",  price: 300, emoji: { t: "🔗", x: 50, y: 74, s: 16 } });
+shopAdd({ id: "acc_gem",        cat: "accessory", name: "Diamond Pin", price: 400, emoji: { t: "💎", x: 61, y: 74, s: 14 } });
+
+/* ----- Name tags (colors / symbols are in client.js TIER_INFO) ----- */
+shopAdd({ id: "tag_red",     cat: "tag", name: "Red Tag",     price: 150, tier: "red" });
+shopAdd({ id: "tag_gold",    cat: "tag", name: "Gold Tag",    price: 200, tier: "gold" });
+shopAdd({ id: "tag_diamond", cat: "tag", name: "Diamond Tag", price: 300, tier: "diamond" });
+shopAdd({ id: "tag_elite",   cat: "tag", name: "Elite Tag",   price: 400, tier: "elite" });
+shopAdd({ id: "tag_legend",  cat: "tag", name: "Legend Tag",  price: 500, tier: "legend" });
+
+/* ----- Wallpapers -----
+   Put YOUR image in  public/wallpapers/<base>.jpg  (.png / .webp also work).
+   The file name must match "base" below. To add a new wallpaper, add one line. */
+shopAdd({ id: "wp_midnight", cat: "wallpaper", name: "Midnight Blue", price: 200, base: "midnight-blue" });
+shopAdd({ id: "wp_frozen",   cat: "wallpaper", name: "Frozen Night",  price: 300, base: "frozen-night" });
+shopAdd({ id: "wp_emerald",  cat: "wallpaper", name: "Emerald Noir",  price: 350, base: "emerald-noir" });
+shopAdd({ id: "wp_city",     cat: "wallpaper", name: "City Lights",   price: 400, base: "city-lights" });
+shopAdd({ id: "wp_blood",    cat: "wallpaper", name: "Blood Moon",    price: 500, base: "blood-moon" });
+shopAdd({ id: "wp_gold",     cat: "wallpaper", name: "Golden Hour",   price: 500, base: "golden-hour" });
+shopAdd({ id: "wp_neon",     cat: "wallpaper", name: "Neon Vice",     price: 500, base: "neon-vice" });
+
+/* ----- Logos -----
+   Put YOUR image in  public/logos/<base>.png  (.jpg / .webp also work).
+   A bought + equipped logo replaces the main Mafia Wars logo for that player. */
+shopAdd({ id: "logo_skull",  cat: "logo", name: "Red Skull",     price: 300, base: "red-skull" });
+shopAdd({ id: "logo_crown",  cat: "logo", name: "Gold Crown",    price: 400, base: "gold-crown" });
+shopAdd({ id: "logo_rose",   cat: "logo", name: "Black Rose",    price: 400, base: "black-rose" });
+shopAdd({ id: "logo_dagger", cat: "logo", name: "Silver Dagger", price: 500, base: "silver-dagger" });
+shopAdd({ id: "logo_mask",   cat: "logo", name: "Neon Mask",     price: 600, base: "neon-mask" });
+shopAdd({ id: "logo_fist",   cat: "logo", name: "Iron Fist",     price: 600, base: "iron-fist" });
+shopAdd({ id: "logo_viper",  cat: "logo", name: "Purple Viper",  price: 700, base: "purple-viper" });
+
+/* ----- Sounds (the client plays a built-in synth sound with the same id;
+   or add  file: "/sounds/x.mp3"  to use your own file from /public) ----- */
+shopAdd({ id: "snd_chime",     cat: "sound", name: "Soft Chime",    price: 250, icon: "🔔" });
+shopAdd({ id: "snd_coin",      cat: "sound", name: "Coin Drop",     price: 250, icon: "💰" });
+shopAdd({ id: "snd_horn",      cat: "sound", name: "Car Horn",      price: 300, icon: "📯" });
+shopAdd({ id: "snd_heartbeat", cat: "sound", name: "Heartbeat",     price: 350, icon: "💓" });
+shopAdd({ id: "snd_bell",      cat: "sound", name: "Church Bell",   price: 350, icon: "⛪" });
+shopAdd({ id: "snd_siren",     cat: "sound", name: "Police Siren",  price: 350, icon: "🚨" });
+shopAdd({ id: "snd_gunshot",   cat: "sound", name: "Gunshot",       price: 350, icon: "💥" });
+
+const SHOP_ITEMS = new Map(SHOP_CATALOG.map(item => [item.id, item]));
+
+function ensureShopDb() {
+    if (!accountsDb.shop || typeof accountsDb.shop !== "object") accountsDb.shop = {};
+    if (!accountsDb.shop.prices || typeof accountsDb.shop.prices !== "object") accountsDb.shop.prices = {};
+    return accountsDb.shop;
+}
+
+/* The CURRENT price: Owner override if there is one, else the default. */
+function shopPriceOf(item) {
+    if (!item || item.free) return 0;
+    const override = Number(ensureShopDb().prices[item.id]);
+    if (Number.isFinite(override) && override >= 0) return Math.floor(override);
+    return item.price;
+}
+
+/* Finds the image the Owner dropped into public/<folder>/<base>.<ext>.
+   If no file exists yet it still returns the .jpg / .png path, so the item
+   works the moment the file is added. */
+const SHOP_FILE_DIRS = { wallpaper: ["wallpapers", "wallpaper"], logo: ["logos", "logo"] };
+const SHOP_FILE_EXTS = ["jpg", "jpeg", "png", "webp", "gif", "avif"];
+
+/* "Midnight Blue.JPG", "midnight_blue.png", "midnight-blue.webp" all become "midnightblue". */
+function shopNorm(value) {
+    return String(value || "").toLowerCase().replace(/\.[a-z0-9]+$/, "").replace(/[^a-z0-9]/g, "");
+}
+
+function shopFileUrl(item) {
+    const dirs = SHOP_FILE_DIRS[item.cat];
+    if (!dirs) return null;
+
+    // The names that are allowed to match this item's picture file.
+    const wanted = [item.base, item.name, String(item.id || "").replace(/^[a-z]+_/, "")]
+        .map(shopNorm).filter(Boolean);
+
+    // express.static("public") is relative to where the server was started,
+    // so look there AND next to server.js.
+    const roots = Array.from(new Set([path.resolve("public"), path.join(__dirname, "public")]));
+
+    for (const dir of dirs) {
+        for (const root of roots) {
+            let files = [];
+            try { files = fs.readdirSync(path.join(root, dir)); } catch (_) { continue; }
+
+            for (const name of wanted) {
+                const hit = files.find(file => shopNorm(file) === name && SHOP_FILE_EXTS.includes(file.split(".").pop().toLowerCase()));
+                if (hit) return `/${dir}/${encodeURIComponent(hit)}`;
+            }
+        }
+    }
+
+    // Nothing found yet: still return the normal path so it works once the file is added.
+    return `/${dirs[0]}/${item.base}.${item.cat === "logo" ? "png" : "jpg"}`;
+}
+
+/* Prints (when the server starts) which wallpaper / logo pictures were found and which are missing. */
+(function logShopPictures() {
+    try {
+        const roots = Array.from(new Set([path.resolve("public"), path.join(__dirname, "public")]));
+        console.log("[shop] looking for pictures in: " + roots.map(r => path.join(r, "wallpapers|logos")).join("  and  "));
+        SHOP_CATALOG.filter(item => item.base).forEach(item => {
+            const url = shopFileUrl(item);
+            const found = roots.some(root => fs.existsSync(path.join(root, decodeURIComponent(url))));
+            console.log(`[shop] ${found ? "OK     " : "MISSING"} ${item.cat.padEnd(9)} ${item.name.padEnd(15)} -> ${found ? url : "put a file named " + item.base + ".jpg/.png in public" + url.replace(/[^/]+$/, "")}`);
+        });
+    } catch (error) {
+        console.log("[shop] picture check failed:", error.message);
+    }
+})();
+
+function publicShopItem(item) {
+    const out = {
+        id: item.id,
+        cat: item.cat,
+        name: item.name,
+        price: shopPriceOf(item),
+        free: Boolean(item.free)
+    };
+    ["skin", "art", "emoji", "css", "tier", "icon"].forEach(key => {
+        if (item[key] !== undefined) out[key] = item[key];
+    });
+    if (item.file) out.url = item.file;
+    else if (item.base) out.url = shopFileUrl(item);
+    return out;
+}
+
+function currentShopPrices() {
+    const prices = {};
+    SHOP_CATALOG.forEach(item => { if (!item.free) prices[item.id] = shopPriceOf(item); });
+    return prices;
+}
+
+function shopOwns(user, item) {
+    if (!item) return false;
+    if (item.free) return true;
+    return ensureProgress(user).shop.owned.includes(item.id);
+}
+
+function defaultLook() {
+    return { face: "face_basic", hair: null, shirt: "shirt_basic", suit: null, pants: "pants_basic", hat: null, mask: null, accessory: null };
+}
+
+/* The character a player is wearing. Always valid: unowned / unknown items fall back to the default. */
+function getLookOfUser(user) {
+    const look = defaultLook();
+    if (!user) return look;
+
+    const saved = ensureProgress(user).equipped.character || {};
+
+    CHARACTER_SLOTS.forEach(slot => {
+        const item = SHOP_ITEMS.get(saved[slot]);
+        if (item && item.cat === slot && shopOwns(user, item)) look[slot] = item.id;
+    });
+
+    return look;
+}
+
+function getLookOfPlayer(player) {
+    const user = player && player.account ? accountsDb.users[player.account] : null;
+    return user ? getLookOfUser(user) : null;
+}
+
+/* Tags the player has BOUGHT (or kept from before the shop existed). */
+function getOwnedTiers(user) {
+    const owned = ensureProgress(user).shop.owned;
+    return TIERS.filter(tier => owned.includes("tag_" + tier.key));
+}
+
+/* Called once per finished game. winnerTest(player) -> true for the winning side. */
+function grantGameRewards(room, winnerTest) {
+    if (!room) return;
+
+    room.players.forEach(player => {
+        if (!player || !player.account || !player.role || player.connected === false) return;
+
+        const user = accountsDb.users[player.account];
+        if (!user) return;
+
+        const won = Boolean(winnerTest && winnerTest(player));
+        const earned = SHOP_POINTS_PER_GAME + (won ? SHOP_POINTS_WIN_BONUS : 0);
+        const shop = ensureProgress(user).shop;
+
+        shop.points += earned;
+        shop.earned += earned;
+
+        io.to(player.id).emit("shopReward", {
+            earned,
+            won,
+            bonus: won ? SHOP_POINTS_WIN_BONUS : 0,
+            balance: shop.points
+        });
+    });
+
+    saveAccounts();
 }
 
 /* =========================================================
@@ -1066,6 +1416,7 @@ function getPublicPlayers(room, viewer) {
                 name: player.name,
                 badge: getBadgeOf(player.id),
                 tier: getTierOfPlayer(player),
+                look: getLookOfPlayer(player),
                 alive: player.alive,
                 role: visibleRole,
                 connected: true
@@ -1556,6 +1907,7 @@ function checkWinner(roomCode) {
 
         // Permanent stat: Jester win.
         recordStat(deadJester, "jesterWins");
+        grantGameRewards(room, p => p === deadJester);
 
         announce(
             roomCode,
@@ -1600,6 +1952,7 @@ function checkWinner(roomCode) {
 
         // Permanent stat: Civilian team win (everyone except Mafia team + Jester).
         awardTeamWin(room, "civilians");
+        grantGameRewards(room, p => !isMafiaTeam(p.role) && p.role !== "Jester");
 
         announce(
             roomCode,
@@ -1633,6 +1986,7 @@ function checkWinner(roomCode) {
 
         // Permanent stat: Mafia team win (every Mafia-team member).
         awardTeamWin(room, "mafia");
+        grantGameRewards(room, p => isMafiaTeam(p.role));
 
         announce(
             roomCode,
@@ -3161,6 +3515,7 @@ io.on(
                 badge: user.badge || "member",
                 tier: getEquippedTierKey(user),
                 level: levelInfo(ensureProgress(user).xp).level,
+                look: getLookOfUser(user),
                 points: totalStats(user.stats),
                 stats: { ...emptyStats(), ...(user.stats || {}) }
             });
@@ -3222,16 +3577,170 @@ io.on(
             if (!ctx) return reply({ ok: false, error: "Sign in first." });
 
             const choice = String(data?.tier || "");
-            const points = totalStats(ctx.user.stats);
             const allowed = choice === "auto" || choice === "none" ||
-                getUnlockedTiers(points).some(tier => tier.key === choice);
+                getOwnedTiers(ctx.user).some(tier => tier.key === choice);
 
-            if (!allowed) return reply({ ok: false, error: "That rank is not unlocked yet." });
+            if (!allowed) return reply({ ok: false, error: "Buy that tag in the Shop first." });
 
             ensureProgress(ctx.user).equipped.tier = choice;
             saveAccounts();
             sendProgress(ctx, false);
             reply({ ok: true });
+        });
+
+        /* =================================================
+           SHOP: catalog, buying, equipping, Owner prices
+           Everything is checked here on the server.
+        ================================================= */
+
+        function refreshLookInRoom() {
+            for (const [code, room] of Object.entries(rooms)) {
+                if (room.phase === "lobby" && room.players.some(pl => pl.id === socket.id)) {
+                    emitLobby(code);
+                    break;
+                }
+            }
+        }
+
+        socket.on("getShopCatalog", callback => {
+            if (typeof callback !== "function") return;
+            callback({
+                ok: true,
+                categories: SHOP_CATEGORIES,
+                slots: CHARACTER_SLOTS,
+                items: SHOP_CATALOG.map(publicShopItem),
+                pointsPerGame: SHOP_POINTS_PER_GAME,
+                winBonus: SHOP_POINTS_WIN_BONUS
+            });
+        });
+
+        socket.on("shopBuy", (data, callback) => {
+            const ctx = progressionUser();
+            const reply = typeof callback === "function" ? callback : () => {};
+            if (!ctx) return reply({ ok: false, error: "Sign in to buy items." });
+
+            const item = SHOP_ITEMS.get(String(data?.id || ""));
+            if (!item || item.free) return reply({ ok: false, error: "That item is not for sale." });
+
+            const shop = ensureProgress(ctx.user).shop;
+            if (shop.owned.includes(item.id)) return reply({ ok: false, error: "You already own this item." });
+
+            const price = shopPriceOf(item);   // always the CURRENT price, never one sent by the browser
+            if (shop.points < price) {
+                return reply({ ok: false, error: `Not enough points. You need ${price - shop.points} more.` });
+            }
+
+            shop.points -= price;
+            shop.owned.push(item.id);
+
+            saveAccounts();
+            sendProgress(ctx, false);
+            reply({ ok: true, id: item.id, price, balance: shop.points });
+        });
+
+        socket.on("equipCharacter", (data, callback) => {
+            const ctx = progressionUser();
+            const reply = typeof callback === "function" ? callback : () => {};
+            if (!ctx) return reply({ ok: false, error: "Sign in first." });
+
+            const slot = String(data?.slot || "");
+            if (!CHARACTER_SLOTS.includes(slot)) return reply({ ok: false, error: "Unknown item slot." });
+
+            const p = ensureProgress(ctx.user);
+            const id = data?.id ? String(data.id) : null;
+
+            if (id) {
+                const item = SHOP_ITEMS.get(id);
+                if (!item || item.cat !== slot || !shopOwns(ctx.user, item)) {
+                    return reply({ ok: false, error: "You do not own that item." });
+                }
+                p.equipped.character[slot] = id;
+            } else {
+                // Unequip. Face / shirt / pants fall back to the free default.
+                p.equipped.character[slot] = REQUIRED_SLOT_DEFAULTS[slot] || null;
+            }
+
+            saveAccounts();
+            sendProgress(ctx, false);
+            refreshLookInRoom();
+            reply({ ok: true });
+        });
+
+        socket.on("equipShopSound", (data, callback) => {
+            const ctx = progressionUser();
+            const reply = typeof callback === "function" ? callback : () => {};
+            if (!ctx) return reply({ ok: false, error: "Sign in first." });
+
+            const item = SHOP_ITEMS.get(String(data?.id || ""));
+            const event = String(data?.event || "");
+
+            if (!item || item.cat !== "sound" || !shopOwns(ctx.user, item)) {
+                return reply({ ok: false, error: "You do not own that sound." });
+            }
+            if (!SOUND_EVENTS.includes(event)) return reply({ ok: false, error: "Choose a game event." });
+
+            const p = ensureProgress(ctx.user);
+
+            if (data?.equip === false) {
+                if (p.equipped.sounds[event] === item.id) delete p.equipped.sounds[event];
+            } else {
+                p.equipped.sounds[event] = item.id;
+            }
+
+            saveAccounts();
+            sendProgress(ctx, false);
+            reply({ ok: true });
+        });
+
+        socket.on("equipLogo", (data, callback) => {
+            const ctx = progressionUser();
+            const reply = typeof callback === "function" ? callback : () => {};
+            if (!ctx) return reply({ ok: false, error: "Sign in first." });
+
+            const p = ensureProgress(ctx.user);
+            const id = data?.id ? String(data.id) : null;
+
+            if (id) {
+                const item = SHOP_ITEMS.get(id);
+                if (!item || item.cat !== "logo" || !shopOwns(ctx.user, item)) {
+                    return reply({ ok: false, error: "You do not own that logo." });
+                }
+            }
+
+            p.equipped.logo = id;
+            saveAccounts();
+            sendProgress(ctx, false);
+            reply({ ok: true });
+        });
+
+        /* OWNER ONLY: change (or reset) the point price of any shop item.
+           The check uses the badge stored on the server-side socket, so the
+           browser cannot fake it. */
+        socket.on("ownerSetPrice", (data, callback) => {
+            const reply = typeof callback === "function" ? callback : () => {};
+
+            if (socket.badge !== "owner" || !getSocketAccountKey(socket)) {
+                return reply({ ok: false, error: "Only the signed-in Owner can change prices." });
+            }
+
+            const item = SHOP_ITEMS.get(String(data?.id || ""));
+            if (!item || item.free) return reply({ ok: false, error: "That item has no price." });
+
+            const shopDb = ensureShopDb();
+
+            if (data?.reset) {
+                delete shopDb.prices[item.id];
+            } else {
+                const price = Math.floor(Number(data?.price));
+                if (!Number.isFinite(price) || price < 0 || price > MAX_SHOP_PRICE) {
+                    return reply({ ok: false, error: `Price must be a number from 0 to ${MAX_SHOP_PRICE}.` });
+                }
+                shopDb.prices[item.id] = price;
+            }
+
+            saveAccounts();
+            io.emit("shopPricesUpdated", { prices: currentShopPrices() });
+            reply({ ok: true, id: item.id, price: shopPriceOf(item) });
         });
 
         socket.on("uploadSound", (data, callback) => {
@@ -3240,9 +3749,8 @@ io.on(
             if (!ctx) return reply({ ok: false, error: "Sign in first." });
 
             const p = ensureProgress(ctx.user);
-            if (totalStats(ctx.user.stats) < SOUND_UNLOCK_POINTS) {
-                return reply({ ok: false, error: `Custom sounds unlock at ${SOUND_UNLOCK_POINTS} points.` });
-            }
+            // Custom sound uploads are disabled for everyone.
+            return reply({ ok: false, error: "Custom sounds are not available." });
 
             const event = String(data?.event || "");
             if (!SOUND_EVENTS.includes(event)) return reply({ ok: false, error: "Choose a game event." });
@@ -3317,9 +3825,8 @@ io.on(
             if (!ctx) return reply({ ok: false, error: "Sign in first." });
 
             const p = ensureProgress(ctx.user);
-            if (totalStats(ctx.user.stats) < WALLPAPER_UNLOCK_POINTS) {
-                return reply({ ok: false, error: `Custom wallpapers unlock at ${WALLPAPER_UNLOCK_POINTS} points.` });
-            }
+            // Custom wallpaper uploads are disabled for everyone.
+            return reply({ ok: false, error: "Custom wallpapers are not available." });
             if (p.wallpapers.length >= MAX_CUSTOM_WALLPAPERS) return reply({ ok: false, error: `You can keep up to ${MAX_CUSTOM_WALLPAPERS} wallpapers. Delete one first.` });
 
             const bytes = Buffer.isBuffer(data?.bytes) ? data.bytes : (data?.bytes ? Buffer.from(data.bytes) : null);
@@ -3355,7 +3862,12 @@ io.on(
             const p = ensureProgress(ctx.user);
             const id = data?.id ? String(data.id) : null;
 
-            if (id && !p.wallpapers.some(w => w.id === id)) return reply({ ok: false, error: "Wallpaper not found." });
+            if (id && !p.wallpapers.some(w => w.id === id)) {
+                const shopItem = SHOP_ITEMS.get(id);
+                if (!shopItem || shopItem.cat !== "wallpaper" || !shopOwns(ctx.user, shopItem)) {
+                    return reply({ ok: false, error: "Wallpaper not found." });
+                }
+            }
 
             p.equipped.wallpaper = id;
             saveAccounts();
