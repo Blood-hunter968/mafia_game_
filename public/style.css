@@ -31,7 +31,7 @@ body {
             rgba(0, 0, 0, 0.48),
             rgba(0, 0, 0, 0.88)
         ),
-        url("background.png") center / cover fixed no-repeat;
+        url("/images/backgrounds/background.png") center / cover fixed no-repeat;
 
     overflow-x: hidden;
 }
@@ -5569,7 +5569,7 @@ html[data-mafia-theme="blood"] body {
     background:
         radial-gradient(circle at 50% 18%, rgba(190,0,0,.28), transparent 38%),
         linear-gradient(180deg, rgba(18,0,0,.52), rgba(0,0,0,.92)),
-        url("background.png") center / cover fixed no-repeat;
+        url("/images/backgrounds/background.png") center / cover fixed no-repeat;
 }
 
 /* =========================================================
@@ -6646,7 +6646,7 @@ html[data-mafia-theme="white"] {
 html[data-mafia-theme="white"] body {
     background:
         linear-gradient(180deg, rgba(255, 255, 255, .15), rgba(255, 255, 255, .35)),
-        url("background-white.png") center / cover fixed no-repeat,
+        url("/images/backgrounds/background-white.png") center / cover fixed no-repeat,
         linear-gradient(180deg, #f6f6f8, #dcdce2);
 }
 
@@ -6788,7 +6788,7 @@ html[data-mafia-theme="white"] .lobby-container {
 /* no white wash over the wallpaper */
 html[data-mafia-theme="white"] body {
     background:
-        url("background-white.png") center / cover fixed no-repeat,
+        url("/images/backgrounds/background-white.png") center / cover fixed no-repeat,
         #05070d !important;
 }
 html[data-mafia-theme="white"] body::after {
@@ -7011,3 +7011,32 @@ html[data-mafia-theme="white"] .voice-picker-actions button:first-child {
     background: linear-gradient(180deg, #4a82ff, #0b3fbf);
 }
 html[data-mafia-theme="white"] .voice-picker-actions button:hover { border-color: #6a9bff; }
+
+/* =========================================================
+   LOBBY — COPY ROOM CODE BUTTON
+========================================================= */
+
+#copyRoomCode {
+    display: block;
+    width: min(260px, 100%);
+    margin: 0 auto 12px;
+    padding: 10px 18px;
+
+    border: 1px solid #6f2525;
+    border-radius: 4px;
+    background: linear-gradient(180deg, #242424, #0d0d0d);
+    color: #f1f1f1;
+
+    font-family: "Arial Black", Arial, sans-serif;
+    font-size: 13px;
+    font-weight: 900;
+    letter-spacing: 2px;
+
+    transition: transform 0.2s, background 0.2s, border-color 0.2s;
+}
+
+#copyRoomCode:hover {
+    transform: translateY(-2px);
+    background: linear-gradient(180deg, #3a3a3a, #151515);
+    border-color: #a33a3a;
+}
