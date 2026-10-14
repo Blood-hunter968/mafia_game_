@@ -255,7 +255,10 @@ const TIERS = [
 
 const SOUND_UNLOCK_POINTS = 0;      // no point requirement anymore
 const WALLPAPER_UNLOCK_POINTS = 0;  // no point requirement anymore
-const SOUND_EVENTS = ["roundStart", "turnStart", "turnOver", "votingStart", "gameEnd", "playerDeath"];
+const SOUND_EVENTS = ["buttonClick", "roundStart", "turnStart", "turnOver", "votingStart", "last10", "gameEnd", "playerDeath"];
+/* The game's ORIGINAL sounds. A player can also pick these for any moment
+   (for example use the Button Click sound for a new round). Files live in public/sounds/. */
+const DEFAULT_SOUND_IDS = ["def_button", "def_death", "def_newround", "def_last10", "def_turnover"];
 const MAX_CUSTOM_SOUNDS = 12;
 const MAX_CUSTOM_WALLPAPERS = 12;
 const MAX_SOUND_BYTES = 1200 * 1024;
@@ -535,6 +538,15 @@ shopAdd({ id: "hair_spiky",  cat: "hair", name: "Spiky Blond", price: 100, art: 
 shopAdd({ id: "hair_long",   cat: "hair", name: "Long Brown",  price: 120, art: "<path d='M28 42 Q25 11 50 12 Q75 11 72 42 L72 64 Q65 62 65 52 L65 31 Q50 21 35 31 L35 52 Q35 62 28 64Z' fill='#6b3f1f'/>" });
 shopAdd({ id: "hair_curly",  cat: "hair", name: "Curly",       price: 120, art: "<g fill='#2b1d14'><circle cx='36' cy='21' r='8'/><circle cx='50' cy='15' r='9'/><circle cx='64' cy='21' r='8'/><circle cx='29' cy='30' r='6'/><circle cx='71' cy='30' r='6'/></g>" });
 shopAdd({ id: "hair_mohawk", cat: "hair", name: "Red Mohawk",  price: 150, art: "<path d='M43 22 L45 4 L50 12 L55 3 L57 22Z' fill='#d62828'/>" });
+shopAdd({ id: "hair_buzz",     cat: "hair", name: "Buzz Cut",      price: 100, art: "<path d='M31 34 Q30 16 50 16 Q70 16 69 34 Q62 26 50 26 Q38 26 31 34Z' fill='#3a3a3a'/>" });
+shopAdd({ id: "hair_sidepart", cat: "hair", name: "Side Part",     price: 110, art: "<path d='M29 37 Q26 12 50 12 Q74 12 71 37 Q66 23 52 22 Q40 21 29 37Z' fill='#7a4a22'/><path d='M40 15 Q36 22 33 28' stroke='#4d2e12' stroke-width='1.6' fill='none' stroke-linecap='round'/>" });
+shopAdd({ id: "hair_afro",     cat: "hair", name: "Afro",          price: 150, art: "<g fill='#1a1210'><circle cx='34' cy='19' r='9'/><circle cx='50' cy='12' r='10'/><circle cx='66' cy='19' r='9'/><circle cx='27' cy='31' r='7'/><circle cx='73' cy='31' r='7'/><circle cx='42' cy='13' r='8'/><circle cx='58' cy='13' r='8'/></g>" });
+shopAdd({ id: "hair_ponytail", cat: "hair", name: "Ponytail",      price: 130, art: "<path d='M30 36 Q28 13 50 13 Q72 13 70 36 Q64 24 50 24 Q36 24 30 36Z' fill='#8b5a2b'/><path d='M68 26 Q88 28 83 58 Q79 46 70 40Z' fill='#8b5a2b'/><circle cx='69' cy='28' r='2.6' fill='#d62828'/>" });
+shopAdd({ id: "hair_manbun",   cat: "hair", name: "Man Bun",       price: 140, art: "<path d='M29 37 Q27 11 52 12 Q73 13 71 37 Q66 22 50 21 Q36 21 29 37Z' fill='#2b1d14'/><circle cx='50' cy='8' r='7' fill='#2b1d14'/><rect x='46' y='13' width='8' height='2.6' rx='1.3' fill='#d62828'/>" });
+shopAdd({ id: "hair_pinkbob",  cat: "hair", name: "Pink Bob",      price: 160, art: "<path d='M28 46 Q24 11 50 12 Q76 11 72 46 L66 48 L66 30 Q50 20 34 30 L34 48 Z' fill='#ff5fa2'/>" });
+shopAdd({ id: "hair_silver",   cat: "hair", name: "Silver Slick",  price: 180, art: "<path d='M29 37 Q27 11 52 12 Q73 13 71 37 Q66 22 50 21 Q36 21 29 37Z' fill='#d9d9e3'/><path d='M38 19 Q52 14 65 21' stroke='#fff' stroke-width='1.6' fill='none' stroke-linecap='round'/>" });
+shopAdd({ id: "hair_blue",     cat: "hair", name: "Blue Spikes",   price: 150, art: "<path d='M30 36 L27 14 L38 24 L42 7 L50 22 L58 7 L62 24 L73 14 L70 36 Q60 24 50 24 Q40 24 30 36Z' fill='#2f7bff'/>" });
+shopAdd({ id: "hair_braids",   cat: "hair", name: "Long Braids",   price: 200, art: "<path d='M29 38 Q27 12 50 12 Q73 12 71 38 Q64 24 50 24 Q36 24 29 38Z' fill='#1a1210'/><path d='M30 34 L30 72 M34 36 L34 74 M66 36 L66 74 M70 34 L70 72' stroke='#1a1210' stroke-width='4' stroke-linecap='round'/>" });
 
 /* ----- Shirts / Suits / Pants ----- */
 function shirtArt(color, extra) {
@@ -553,6 +565,16 @@ shopAdd({ id: "shirt_blue",   cat: "shirt", name: "Blue Shirt",     price: 150, 
 shopAdd({ id: "shirt_green",  cat: "shirt", name: "Green Shirt",    price: 150, art: shirtArt("#2e7d32") });
 shopAdd({ id: "shirt_stripe", cat: "shirt", name: "Striped Shirt",  price: 170, art: shirtArt("#f2f2f2", "<g stroke='#c62828' stroke-width='3'><path d='M28 68 H72 M28 78 H72 M28 88 H72 M28 98 H72'/><path d='M15 70 H29 M15 80 H29 M71 70 H85 M71 80 H85'/></g>") });
 shopAdd({ id: "shirt_hawaii", cat: "shirt", name: "Hawaiian Shirt", price: 200, art: shirtArt("#17a2b8", "<g fill='#ffd23f'><circle cx='36' cy='70' r='3'/><circle cx='56' cy='76' r='3'/><circle cx='42' cy='88' r='3'/><circle cx='64' cy='94' r='3'/></g><g fill='#ff6b9d'><circle cx='62' cy='67' r='2.6'/><circle cx='34' cy='82' r='2.6'/><circle cx='52' cy='96' r='2.6'/></g>") });
+shopAdd({ id: "shirt_black",   cat: "shirt", name: "Black Tee",      price: 150, art: shirtArt("#18181b") });
+shopAdd({ id: "shirt_yellow",  cat: "shirt", name: "Yellow Shirt",   price: 150, art: shirtArt("#e8b923") });
+shopAdd({ id: "shirt_purple",  cat: "shirt", name: "Purple Shirt",   price: 150, art: shirtArt("#6a2fb5") });
+shopAdd({ id: "shirt_orange",  cat: "shirt", name: "Orange Shirt",   price: 150, art: shirtArt("#e8661a") });
+shopAdd({ id: "shirt_pink",    cat: "shirt", name: "Pink Shirt",     price: 150, art: shirtArt("#ff6fa5") });
+shopAdd({ id: "shirt_plaid",   cat: "shirt", name: "Plaid Shirt",    price: 180, art: shirtArt("#a82828", "<g stroke='#1b1b1b' stroke-width='2.4' opacity='.75'><path d='M28 70 H72 M28 84 H72 M28 98 H72 M38 60 V102 M50 60 V102 M62 60 V102'/><path d='M15 72 H29 M15 82 H29 M71 72 H85 M71 82 H85'/></g>") });
+shopAdd({ id: "shirt_skull",   cat: "shirt", name: "Skull Tee",      price: 220, art: shirtArt("#18181b", "<ellipse cx='50' cy='78' rx='9' ry='8' fill='#f2f2f2'/><rect x='45' y='83' width='10' height='6' rx='1.5' fill='#f2f2f2'/><circle cx='46' cy='78' r='2.4' fill='#18181b'/><circle cx='54' cy='78' r='2.4' fill='#18181b'/><path d='M49 84 V88 M51 84 V88' stroke='#18181b' stroke-width='.9'/>") });
+shopAdd({ id: "shirt_jersey",  cat: "shirt", name: "Sport Jersey",   price: 220, art: shirtArt("#1e63c9", "<path d='M28 66 H72' stroke='#f2f2f2' stroke-width='3'/><path d='M15 68 H29 M71 68 H85' stroke='#f2f2f2' stroke-width='3'/><text x='50' y='92' text-anchor='middle' font-family='Arial Black, Arial, sans-serif' font-weight='900' font-size='20' fill='#f2f2f2'>10</text>") });
+shopAdd({ id: "shirt_hoodie",  cat: "shirt", name: "Grey Hoodie",    price: 250, art: shirtArt("#6b7078", "<path d='M38 60 Q50 72 62 60 Q50 66 38 60Z' fill='#4f535a'/><path d='M46 66 V80 M54 66 V80' stroke='#e8e8e8' stroke-width='1.6' stroke-linecap='round'/><path d='M36 90 H64 L61 101 H39Z' fill='#585c63'/>") });
+shopAdd({ id: "shirt_leather", cat: "shirt", name: "Leather Jacket", price: 320, art: shirtArt("#17171a", "<path d='M50 60 V102' stroke='#8a8a94' stroke-width='1.6'/><path d='M42 60 L50 76 L36 74Z M58 60 L50 76 L64 74Z' fill='#2a2a30'/><path d='M34 90 H44' stroke='#8a8a94' stroke-width='1.4'/><path d='M30 66 Q34 64 38 66' stroke='#3a3a42' stroke-width='1.2' fill='none'/>") });
 
 shopAdd({ id: "suit_black",     cat: "suit", name: "Black Suit",     price: 350, art: suitArt("#1b1b22", "#b3001b", "#101015") });
 shopAdd({ id: "suit_navy",      cat: "suit", name: "Navy Suit",      price: 380, art: suitArt("#16264a", "#e8e8e8", "#0e1a35") });
@@ -566,6 +588,14 @@ shopAdd({ id: "pants_black", cat: "pants", name: "Black Pants",   price: 200, ar
 shopAdd({ id: "pants_khaki", cat: "pants", name: "Khaki Pants",   price: 200, art: pantsArt("#b59d6b") });
 shopAdd({ id: "pants_white", cat: "pants", name: "White Pants",   price: 220, art: pantsArt("#e6e6e6") });
 shopAdd({ id: "pants_red",   cat: "pants", name: "Red Pants",     price: 250, art: pantsArt("#a31d1d") });
+shopAdd({ id: "pants_navy",    cat: "pants", name: "Navy Pants",    price: 200, art: pantsArt("#16264a") });
+shopAdd({ id: "pants_brown",   cat: "pants", name: "Brown Pants",   price: 200, art: pantsArt("#6b4423") });
+shopAdd({ id: "pants_olive",   cat: "pants", name: "Army Green",    price: 220, art: pantsArt("#5a6b34") });
+shopAdd({ id: "pants_purple",  cat: "pants", name: "Purple Pants",  price: 230, art: pantsArt("#5b2a91") });
+shopAdd({ id: "pants_camo",    cat: "pants", name: "Camo Pants",    price: 260, art: pantsArt("#5a6b34") + "<g fill='#33401d'><ellipse cx='38' cy='106' rx='5' ry='3'/><ellipse cx='42' cy='122' rx='4' ry='3'/><ellipse cx='60' cy='108' rx='5' ry='3'/><ellipse cx='58' cy='124' rx='4' ry='3'/></g><g fill='#8a7a4a'><ellipse cx='36' cy='118' rx='3' ry='2'/><ellipse cx='63' cy='116' rx='3' ry='2'/></g>" });
+shopAdd({ id: "pants_pinstripe", cat: "pants", name: "Pinstripe Pants", price: 280, art: pantsArt("#2a2a33") + "<g stroke='#6b6b78' stroke-width='.8'><path d='M36 96 V132 M42 96 V132 M58 96 V132 M64 96 V132'/></g>" });
+shopAdd({ id: "pants_leather", cat: "pants", name: "Leather Pants", price: 300, art: pantsArt("#101012") + "<g stroke='#4a4a54' stroke-width='1.4' stroke-linecap='round'><path d='M36 102 V118'/><path d='M57 102 V118'/></g>" });
+shopAdd({ id: "pants_gold",   cat: "pants", name: "Golden Pants",  price: 500, art: pantsArt("#c9a227") });
 
 /* ----- Hats (the fedora is drawn; the rest are emoji) ----- */
 shopAdd({ id: "hat_cap",     cat: "hat", name: "Cap",         price: 150, emoji: { t: "🧢", x: 50, y: 27, s: 34 } });
@@ -591,6 +621,17 @@ shopAdd({ id: "acc_shades",     cat: "accessory", name: "Sunglasses",  price: 20
 shopAdd({ id: "acc_headphones", cat: "accessory", name: "Headphones",  price: 250, emoji: { t: "🎧", x: 50, y: 43, s: 40 } });
 shopAdd({ id: "acc_chain",      cat: "accessory", name: "Gold Chain",  price: 300, emoji: { t: "🔗", x: 50, y: 74, s: 16 } });
 shopAdd({ id: "acc_gem",        cat: "accessory", name: "Diamond Pin", price: 400, emoji: { t: "💎", x: 61, y: 74, s: 14 } });
+shopAdd({ id: "acc_glasses",    cat: "accessory", name: "Round Glasses", price: 150, emoji: { t: "👓", x: 50, y: 41, s: 26 } });
+shopAdd({ id: "acc_eyepatch",   cat: "accessory", name: "Eye Patch",   price: 160, art: "<path d='M33 26 L64 40' stroke='#111' stroke-width='1.6'/><ellipse cx='57' cy='35' rx='6.5' ry='5.5' fill='#111'/>" });
+shopAdd({ id: "acc_watch",      cat: "accessory", name: "Watch",       price: 180, emoji: { t: "⌚", x: 17, y: 86, s: 14 } });
+shopAdd({ id: "acc_beads",      cat: "accessory", name: "Beads",       price: 200, emoji: { t: "📿", x: 50, y: 72, s: 22 } });
+shopAdd({ id: "acc_belt",       cat: "accessory", name: "Gold Buckle Belt", price: 220, art: "<rect x='30' y='93' width='40' height='5' fill='#3b2a1a'/><rect x='45' y='92' width='10' height='7' rx='1' fill='#d4af37'/><rect x='47.5' y='94' width='5' height='3' fill='#3b2a1a'/>" });
+shopAdd({ id: "acc_bowtie",     cat: "accessory", name: "Bow Tie",     price: 220, art: "<path d='M50 64 L38 58 L38 70 Z M50 64 L62 58 L62 70 Z' fill='#b3001b'/><circle cx='50' cy='64' r='3' fill='#7a0012'/>" });
+shopAdd({ id: "acc_badge",      cat: "accessory", name: "Gold Badge",  price: 250, emoji: { t: "⭐", x: 62, y: 74, s: 15 } });
+shopAdd({ id: "acc_medal",      cat: "accessory", name: "Medal",       price: 300, emoji: { t: "🏅", x: 50, y: 78, s: 18 } });
+shopAdd({ id: "acc_briefcase",  cat: "accessory", name: "Briefcase",   price: 320, emoji: { t: "💼", x: 17, y: 108, s: 26 } });
+shopAdd({ id: "acc_knife",      cat: "accessory", name: "Dagger",      price: 380, emoji: { t: "🗡️", x: 83, y: 104, s: 24 } });
+shopAdd({ id: "acc_gloves",     cat: "accessory", name: "Boxing Gloves", price: 350, emoji: { t: "🥊", x: 82, y: 92, s: 22 } });
 
 /* ----- Name tags (colors / symbols are in client.js TIER_INFO) ----- */
 shopAdd({ id: "tag_red",     cat: "tag", name: "Red Tag",     price: 150, tier: "red" });
@@ -621,15 +662,17 @@ shopAdd({ id: "logo_mask",   cat: "logo", name: "Neon Mask",     price: 600, bas
 shopAdd({ id: "logo_fist",   cat: "logo", name: "Iron Fist",     price: 600, base: "iron-fist" });
 shopAdd({ id: "logo_viper",  cat: "logo", name: "Purple Viper",  price: 700, base: "purple-viper" });
 
-/* ----- Sounds (the client plays a built-in synth sound with the same id;
-   or add  file: "/sounds/x.mp3"  to use your own file from /public) ----- */
-shopAdd({ id: "snd_chime",     cat: "sound", name: "Soft Chime",    price: 250, icon: "🔔" });
-shopAdd({ id: "snd_coin",      cat: "sound", name: "Coin Drop",     price: 250, icon: "💰" });
-shopAdd({ id: "snd_horn",      cat: "sound", name: "Car Horn",      price: 300, icon: "📯" });
-shopAdd({ id: "snd_heartbeat", cat: "sound", name: "Heartbeat",     price: 350, icon: "💓" });
-shopAdd({ id: "snd_bell",      cat: "sound", name: "Church Bell",   price: 350, icon: "⛪" });
-shopAdd({ id: "snd_siren",     cat: "sound", name: "Police Siren",  price: 350, icon: "🚨" });
-shopAdd({ id: "snd_gunshot",   cat: "sound", name: "Gunshot",       price: 350, icon: "💥" });
+/* ----- Sounds -----
+   These use YOUR own sound files. Put each file in  public/sounds/<base>.mp3
+   (.wav / .ogg / .m4a / .webm also work; the server finds whichever one you used).
+     braan.mp3   gunshot.mp3   police-siren.mp3   power-down.mp3   shock.mp3   train.mp3
+   To add a new sound, add one line here with its file name (without extension) as "base". */
+shopAdd({ id: "snd_braan",     cat: "sound", name: "Braan",        price: 300, base: "braan",        icon: "📯" });
+shopAdd({ id: "snd_gunshot",   cat: "sound", name: "Gunshot",      price: 350, base: "gunshot",      icon: "💥" });
+shopAdd({ id: "snd_siren",     cat: "sound", name: "Police Siren", price: 350, base: "police-siren", icon: "🚨" });
+shopAdd({ id: "snd_powerdown", cat: "sound", name: "Power Down",   price: 300, base: "power-down",   icon: "🔋" });
+shopAdd({ id: "snd_shock",     cat: "sound", name: "Shock",        price: 350, base: "shock",        icon: "⚡" });
+shopAdd({ id: "snd_train",     cat: "sound", name: "Train",        price: 400, base: "train",        icon: "🚆" });
 
 const SHOP_ITEMS = new Map(SHOP_CATALOG.map(item => [item.id, item]));
 
@@ -650,8 +693,11 @@ function shopPriceOf(item) {
 /* Finds the image the Owner dropped into public/<folder>/<base>.<ext>.
    If no file exists yet it still returns the .jpg / .png path, so the item
    works the moment the file is added. */
-const SHOP_FILE_DIRS = { wallpaper: ["wallpapers", "wallpaper"], logo: ["logos", "logo"] };
+const SHOP_FILE_DIRS = { wallpaper: ["wallpapers", "wallpaper"], logo: ["logos", "logo"], sound: ["sounds", "sound"] };
 const SHOP_FILE_EXTS = ["jpg", "jpeg", "png", "webp", "gif", "avif"];
+const SHOP_SOUND_EXTS = ["mp3", "wav", "ogg", "m4a", "webm", "aac"];
+const shopExtsFor = item => (item.cat === "sound" ? SHOP_SOUND_EXTS : SHOP_FILE_EXTS);
+const shopDefaultExt = item => (item.cat === "sound" ? "mp3" : item.cat === "logo" ? "png" : "jpg");
 
 /* "Midnight Blue.JPG", "midnight_blue.png", "midnight-blue.webp" all become "midnightblue". */
 function shopNorm(value) {
@@ -676,14 +722,14 @@ function shopFileUrl(item) {
             try { files = fs.readdirSync(path.join(root, dir)); } catch (_) { continue; }
 
             for (const name of wanted) {
-                const hit = files.find(file => shopNorm(file) === name && SHOP_FILE_EXTS.includes(file.split(".").pop().toLowerCase()));
+                const hit = files.find(file => shopNorm(file) === name && shopExtsFor(item).includes(file.split(".").pop().toLowerCase()));
                 if (hit) return `/${dir}/${encodeURIComponent(hit)}`;
             }
         }
     }
 
     // Nothing found yet: still return the normal path so it works once the file is added.
-    return `/${dirs[0]}/${item.base}.${item.cat === "logo" ? "png" : "jpg"}`;
+    return `/${dirs[0]}/${item.base}.${shopDefaultExt(item)}`;
 }
 
 /* Prints (when the server starts) which wallpaper / logo pictures were found and which are missing. */
@@ -694,7 +740,7 @@ function shopFileUrl(item) {
         SHOP_CATALOG.filter(item => item.base).forEach(item => {
             const url = shopFileUrl(item);
             const found = roots.some(root => fs.existsSync(path.join(root, decodeURIComponent(url))));
-            console.log(`[shop] ${found ? "OK     " : "MISSING"} ${item.cat.padEnd(9)} ${item.name.padEnd(15)} -> ${found ? url : "put a file named " + item.base + ".jpg/.png in public" + url.replace(/[^/]+$/, "")}`);
+            console.log(`[shop] ${found ? "OK     " : "MISSING"} ${item.cat.padEnd(9)} ${item.name.padEnd(15)} -> ${found ? url : "put a file named " + item.base + (item.cat === "sound" ? ".mp3" : ".jpg/.png") + " in public" + url.replace(/[^/]+$/, "")}`);
         });
     } catch (error) {
         console.log("[shop] picture check failed:", error.message);
@@ -3663,6 +3709,35 @@ io.on(
             saveAccounts();
             sendProgress(ctx, false);
             refreshLookInRoom();
+            reply({ ok: true });
+        });
+
+        /* Edit a sound: set EXACTLY which game moments it plays on (can be changed any time).
+           Works for bought shop sounds and for the game's original sounds. */
+        socket.on("setSoundEvents", (data, callback) => {
+            const ctx = progressionUser();
+            const reply = typeof callback === "function" ? callback : () => {};
+            if (!ctx) return reply({ ok: false, error: "Sign in first." });
+
+            const id = String(data?.id || "");
+            const isDefault = DEFAULT_SOUND_IDS.includes(id);
+            const item = SHOP_ITEMS.get(id);
+
+            if (!isDefault && (!item || item.cat !== "sound" || !shopOwns(ctx.user, item))) {
+                return reply({ ok: false, error: "You do not own that sound." });
+            }
+
+            const chosen = Array.isArray(data?.events) ? data.events.map(String) : [];
+            if (chosen.some(ev => !SOUND_EVENTS.includes(ev))) return reply({ ok: false, error: "Choose a game event." });
+
+            const p = ensureProgress(ctx.user);
+            SOUND_EVENTS.forEach(ev => {
+                if (chosen.includes(ev)) p.equipped.sounds[ev] = id;
+                else if (p.equipped.sounds[ev] === id) delete p.equipped.sounds[ev];
+            });
+
+            saveAccounts();
+            sendProgress(ctx, false);
             reply({ ok: true });
         });
 
