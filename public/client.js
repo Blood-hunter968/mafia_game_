@@ -110,11 +110,11 @@ document.addEventListener("click", event => {
     // Home navigation buttons get a guaranteed click sound even if
     // the optional /sounds/button-click.mp3 file is not present.
     if (["createRoom", "joinRoom", "quickStart"].includes(button.id)) {
-        playGameSound(gameSounds.button);
+        playEventSound("buttonClick", gameSounds.button);
         return;
     }
 
-    playGameSound(gameSounds.button);
+    playEventSound("buttonClick", gameSounds.button);
 }, true);
 
 let roomCode = "";
@@ -1554,6 +1554,7 @@ let last10SoundStopped = false;
 
 function stopLast10Sound() {
     last10SoundStopped = true;
+    if (typeof stopSlotSound === "function") stopSlotSound("last10");   // also stop a sound the player picked for this moment
     const sound = gameSounds.last10;
     if (!sound) return;
     try {
@@ -1673,7 +1674,7 @@ function updateNightTurnOverlay(turn, endsAt) {
                 /* Sound #4 — one heartbeat/beep for every last-10-second tick */
                 if (!last10SoundStopped && lastNightWarningSecond !== seconds) {
                     lastNightWarningSecond = seconds;
-                    playGameSound(gameSounds.last10);
+                    playEventSound("last10", gameSounds.last10);
                 }
             } else {
                 timer.classList.remove("night-turn-timer-warning");
@@ -6207,10 +6208,12 @@ const TIER_INFO = {
 const TIER_ORDER = ["red", "gold", "diamond", "elite", "legend"];
 
 const SOUND_EVENT_LABELS = {
+    buttonClick: "Button Click",
     roundStart: "Round Start",
     turnStart: "Turn Start",
     turnOver: "Turn Over",
     votingStart: "Voting Start",
+    last10: "Last 10 Seconds",
     gameEnd: "Game End",
     playerDeath: "Player Death"
 };
@@ -6445,15 +6448,28 @@ function getEquippedSoundUrl(event) {
     return item ? item.url : null;
 }
 
-function playCustomSound(url) {
+/* One sound per game moment ("slot"): when the same moment fires again (every button click,
+   every last-10 tick) the previous one is stopped first, so long sounds never pile up. */
+const slotAudio = {};
+
+function stopSlotSound(slot) {
+    const old = slotAudio[slot];
+    if (!old) return;
+    try { old.audio.pause(); clearTimeout(old.timer); } catch (_) {}
+    delete slotAudio[slot];
+}
+
+function playCustomSound(url, slot) {
     try {
+        if (slot) stopSlotSound(slot);
         const audio = new Audio(url);
         const settings = getAudioSettings();
         audio.volume = settings.masterVolume * settings.soundEffectsVolume;
         const promise = audio.play();
         if (promise) promise.catch(() => {});
         // Hard 5-second limit, even if a longer file somehow got through.
-        setTimeout(() => { try { audio.pause(); } catch (_) {} }, 5000);
+        const timer = setTimeout(() => { try { audio.pause(); } catch (_) {} }, 5000);
+        if (slot) slotAudio[slot] = { audio, timer };
     } catch (error) {
         console.warn("Custom sound error:", error);
     }
@@ -6463,12 +6479,12 @@ function playCustomSound(url) {
 function playEventSound(event, fallback) {
     const shopSound = (typeof getEquippedShopSound === "function") ? getEquippedShopSound(event) : null;
     if (shopSound) {
-        playShopSound(shopSound);
+        playShopSound(shopSound, event);
         return;
     }
     const url = getEquippedSoundUrl(event);
     if (url) {
-        playCustomSound(url);
+        playCustomSound(url, event);
         return;
     }
     if (fallback) playGameSound(fallback);
@@ -7012,9 +7028,23 @@ const SHOP_SYNTH = {
     }
 };
 
-function playShopSound(item) {
+/* The game's ORIGINAL sounds. Players can pick these for any moment too
+   (for example use the Button Click sound for a new round). */
+const DEFAULT_SOUND_ITEMS = [
+    { id: "def_button",   cat: "sound", name: "Button Click",    icon: "🖱️", url: "/sounds/button-click.mp3",       original: "buttonClick" },
+    { id: "def_death",    cat: "sound", name: "Player Dead",     icon: "💀", url: "/sounds/player-dead.mp3",        original: "playerDeath" },
+    { id: "def_newround", cat: "sound", name: "New Round",       icon: "🌙", url: "/sounds/new-round.mp3",          original: "roundStart" },
+    { id: "def_last10",   cat: "sound", name: "Last 10 Seconds", icon: "⏱️", url: "/sounds/last-10-heartbeat.mp3",  original: "last10" },
+    { id: "def_turnover", cat: "sound", name: "Turn Over",       icon: "🔔", url: "/sounds/turn-over.mp3",          original: "turnOver" }
+];
+
+function defaultSoundItem(id) {
+    return DEFAULT_SOUND_ITEMS.find(item => item.id === id) || null;
+}
+
+function playShopSound(item, slot) {
     if (!item) return;
-    if (item.url) { playCustomSound(item.url); return; }
+    if (item.url) { playCustomSound(item.url, slot); return; }
 
     const synth = SHOP_SYNTH[item.id];
     const ctx = synth ? shopAudio() : null;
@@ -7031,6 +7061,7 @@ function playShopSound(item) {
 function getEquippedShopSound(event) {
     if (!myProgress || !authState?.username) return null;
     const id = myProgress.equipped?.sounds?.[event];
+    if (id && String(id).startsWith("def_")) return defaultSoundItem(id);   // original game sounds need no purchase
     const item = id && String(id).startsWith("snd_") ? shopItem(id) : null;
     return item && shopOwned(item.id) ? item : null;
 }
@@ -7089,6 +7120,8 @@ socket.on("shopReward", data => {
 /* ---------- "Where should this sound play?" popup (right after buying a sound) ---------- */
 
 const SOUND_EVENT_HINTS = {
+    buttonClick: "You press any button",
+    last10: "The last 10 seconds of a turn",
     roundStart: "A new round begins",
     turnStart: "The next turn starts",
     turnOver: "A turn ends",
@@ -7097,22 +7130,28 @@ const SOUND_EVENT_HINTS = {
     playerDeath: "A player dies"
 };
 
-function openSoundEventPopup(item) {
+/* editMode = true  -> opened from the ✏️ Edit button (can be used again and again; boxes show where it plays now)
+   editMode = false -> opened right after buying.
+   Works for bought sounds AND the game's original sounds. */
+function openSoundEventPopup(item, editMode) {
     closeSoundEventPopup();
     const events = (myProgress?.soundEvents && myProgress.soundEvents.length) ? myProgress.soundEvents : Object.keys(SOUND_EVENT_LABELS);
+    const equipped = myProgress?.equipped?.sounds || {};
+    // An original sound that nobody replaced is still playing on its own moment, so show that box ticked.
+    const isOn = ev => equipped[ev] === item.id || (Boolean(item.original) && item.original === ev && !equipped[ev]);
 
     const overlay = document.createElement("div");
     overlay.id = "soundEventPopup";
     overlay.className = "mw-modal-overlay";
     overlay.innerHTML = `
         <div class="mw-modal" role="dialog" aria-modal="true">
-            <h3>${escapeHtml(item.icon || "🔊")} ${escapeHtml(item.name)} is yours!</h3>
-            <p class="settings-muted">When should this sound play? Pick one or more.</p>
+            <h3>${escapeHtml(item.icon || "🔊")} ${editMode ? "Edit " + escapeHtml(item.name) : escapeHtml(item.name) + " is yours!"}</h3>
+            <p class="settings-muted">${editMode ? "Choose where this sound plays. You can change it any time." : "When should this sound play? Pick one or more."}</p>
             <div class="mw-modal-list">
                 ${events.map(ev => `
                     <label class="mw-modal-option">
-                        <input type="checkbox" value="${ev}">
-                        <span><strong>${escapeHtml(SOUND_EVENT_LABELS[ev] || ev)}</strong><small>${escapeHtml(SOUND_EVENT_HINTS[ev] || "")}</small></span>
+                        <input type="checkbox" value="${ev}" ${editMode && isOn(ev) ? "checked" : ""}>
+                        <span><strong>${escapeHtml(SOUND_EVENT_LABELS[ev] || ev)}</strong><small>${escapeHtml(SOUND_EVENT_HINTS[ev] || "")}${equipped[ev] && equipped[ev] !== item.id ? " · now: " + escapeHtml((shopItem(equipped[ev]) || defaultSoundItem(equipped[ev]) || {}).name || "another sound") : ""}</small></span>
                     </label>`).join("")}
             </div>
             <div class="mw-modal-message" id="soundEventPopupMsg"></div>
@@ -7135,21 +7174,17 @@ function openSoundEventPopup(item) {
         } else if (btn.dataset.popup === "save") {
             const chosen = Array.from(overlay.querySelectorAll("input[type=checkbox]:checked")).map(box => box.value);
             const msg = overlay.querySelector("#soundEventPopupMsg");
-            if (!chosen.length) { msg.textContent = "Pick at least one moment, or press Later."; return; }
+            if (!chosen.length && !editMode) { msg.textContent = "Pick at least one moment, or press Later."; return; }
 
             btn.disabled = true;
-            let pending = chosen.length;
-            let failed = null;
-            chosen.forEach(ev => {
-                socket.emit("equipShopSound", { id: item.id, event: ev, equip: true }, result => {
-                    if (!result?.ok) failed = result?.error || "Could not save.";
-                    if (--pending === 0) {
-                        if (failed) { msg.textContent = failed; btn.disabled = false; return; }
-                        closeSoundEventPopup();
-                        shopNotice(`🔊 ${item.name} will play on: ${chosen.map(ev => SOUND_EVENT_LABELS[ev] || ev).join(", ")}.`);
-                        showShopToast(`🔊 ${item.name} saved`);
-                    }
-                });
+            // One call sets exactly where this sound plays (anything unticked is removed from this sound).
+            socket.emit("setSoundEvents", { id: item.id, events: chosen }, result => {
+                if (!result?.ok) { msg.textContent = result?.error || "Could not save."; btn.disabled = false; return; }
+                closeSoundEventPopup();
+                const text = chosen.length ? `🔊 ${item.name} will play on: ${chosen.map(ev => SOUND_EVENT_LABELS[ev] || ev).join(", ")}.` : `🔊 ${item.name} is not used on any moment now.`;
+                if (typeof shopNotice === "function") shopNotice(text);
+                if (typeof inventoryNotice === "function") inventoryNotice(text);
+                showShopToast(`🔊 ${item.name} saved`);
             });
         }
     });
@@ -7490,18 +7525,20 @@ function renderSoundsTab(p) {
                     <div><strong>${escapeHtml(item.icon || "🔊")} ${escapeHtml(item.name)}</strong><small>${active.length ? "✅ Active on: " + active.map(ev => SOUND_EVENT_LABELS[ev] || ev).join(", ") : "Not used yet"}</small></div>
                     <div class="inv-actions">
                         <button class="inv-btn" type="button" data-inv="shop-play" data-id="${item.id}">▶ Play</button>
-                        <select id="invEvt_${item.id}" class="inv-btn">${events.map(ev => `<option value="${ev}">${SOUND_EVENT_LABELS[ev] || ev}</option>`).join("")}</select>
-                        <button class="inv-btn primary" type="button" data-inv="equip-shop-sound" data-id="${item.id}" data-equip="1">Use</button>
-                        ${active.length ? `<button class="inv-btn" type="button" data-inv="equip-shop-sound" data-id="${item.id}" data-equip="0">Stop</button>` : ""}
+                        <button class="inv-btn primary" type="button" data-inv="edit-sound" data-id="${item.id}">✏️ Edit</button>
                     </div>
                 </div>`;
         }).join("") || `<div class="settings-muted">You haven't bought any sounds yet. Visit 🛍️ Shop.</div>`;
 
-        shopPart = `<div class="settings-card"><h3>🔊 My Sounds</h3>${rows}<small class="settings-muted">Pick the game event, then press Use. Only you hear your sounds.</small></div>`;
+        shopPart = `<div class="settings-card"><h3>🔊 My Sounds</h3>${rows}<small class="settings-muted">Press ✏️ Edit to choose where a sound plays. You can change it any time. Only you hear your sounds.</small></div>`;
     }
 
-    const defaultSounds = [["Button Click", "/sounds/button-click.mp3"], ["Player Dead", "/sounds/player-dead.mp3"], ["New Round", "/sounds/new-round.mp3"], ["Last 10 Seconds", "/sounds/last-10-heartbeat.mp3"], ["Turn Over", "/sounds/turn-over.mp3"]];
-    const defaultPart = `<div class="settings-card"><h3>🔊 Default Sounds</h3>${defaultSounds.map(([name, url]) => `<div class="inv-row"><div><strong>${name}</strong><small>Built-in game sound</small></div><div class="inv-actions"><button class="inv-btn" type="button" data-inv="play-sound" data-url="${url}">▶ Play</button></div></div>`).join("")}</div>`;
+    const soundEquip = p.equipped?.sounds || {};
+    const defaultPart = `<div class="settings-card"><h3>🔊 Default Sounds</h3>${DEFAULT_SOUND_ITEMS.map(item => {
+        const moments = (p.soundEvents || []).filter(ev => soundEquip[ev] === item.id || (item.original === ev && !soundEquip[ev]));
+        const status = moments.length ? "✅ Plays on: " + moments.map(ev => SOUND_EVENT_LABELS[ev] || ev).join(", ") : "Not used right now";
+        return `<div class="inv-row"><div><strong>${escapeHtml(item.icon)} ${escapeHtml(item.name)}</strong><small>Built-in game sound · ${escapeHtml(status)}</small></div><div class="inv-actions"><button class="inv-btn" type="button" data-inv="play-sound" data-url="${item.url}">▶ Play</button><button class="inv-btn primary" type="button" data-inv="edit-sound" data-id="${item.id}">✏️ Edit</button></div></div>`;
+    }).join("")}</div>`;
 
     return defaultPart + shopPart;
 }
@@ -7675,6 +7712,8 @@ function handleShopClick(event) {
         inventoryEmit("equipLogo", { id: target.dataset.id || null }, "Logo updated.");
     } else if (action === "equip-char") {
         inventoryEmit("equipCharacter", { slot: target.dataset.slot, id: target.dataset.id || null }, "Character updated.");
+    } else if (action === "edit-sound") {
+        openSoundEventPopup(shopItem(target.dataset.id) || defaultSoundItem(target.dataset.id), true);
     } else if (action === "equip-shop-sound") {
         const equip = target.dataset.equip === "1";
         const select = $("invEvt_" + target.dataset.id);
