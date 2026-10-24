@@ -7040,3 +7040,21 @@ html[data-mafia-theme="white"] .voice-picker-actions button:hover { border-color
     background: linear-gradient(180deg, #3a3a3a, #151515);
     border-color: #a33a3a;
 }
+
+/* Character style selector and Minecraft skin placeholders */
+.shop-style-switch{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 14px}
+.minecraft-skin-thumb{min-height:110px;display:flex;align-items:center;justify-content:center}
+.minecraft-skin-thumb img{max-width:100%;max-height:150px;object-fit:contain}
+.minecraft-skin-thumb span{font-size:36px}
+
+/* Minecraft Skin shop: image cards and explicit Try On preview */
+.shop-style-switch{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 14px}
+.minecraft-skin-thumb{position:relative;display:flex;align-items:center;justify-content:center;min-height:130px;overflow:hidden}
+.minecraft-skin-thumb img{max-width:100%;max-height:170px;width:auto;object-fit:contain;image-rendering:pixelated}
+.minecraft-skin-thumb span{font-size:36px}
+.minecraft-selected-preview{display:flex;align-items:center;justify-content:center;gap:14px;flex-wrap:wrap;width:100%;padding:8px}
+.minecraft-selected-preview img{width:auto;height:150px;max-width:130px;object-fit:contain;image-rendering:pixelated}
+.minecraft-selected-preview>div{min-width:120px}
+
+/* Pixel-art skin textures must stay crisp. */
+.minecraft-skin-thumb img { image-rendering: pixelated; object-fit: contain; }
