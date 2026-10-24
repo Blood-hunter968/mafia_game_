@@ -321,6 +321,7 @@ function ensureProgress(user) {
     p.shop.points = Math.max(0, Math.floor(Number(p.shop.points) || 0));
     p.shop.earned = Math.max(0, Math.floor(Number(p.shop.earned) || 0));
     if (!Array.isArray(p.shop.owned)) p.shop.owned = [];
+    if (!Array.isArray(p.shop.ownedMinecraftSkins)) p.shop.ownedMinecraftSkins = [];
 
     if (!p.shop.tagsMigrated) {
         p.shop.tagsMigrated = true;
@@ -440,6 +441,8 @@ function buildProgressPayload(accountKey, user) {
         shopPoints: p.shop.points,
         shopEarned: p.shop.earned,
         ownedItems: p.shop.owned.slice(),
+        ownedMinecraftSkins: p.shop.ownedMinecraftSkins.slice(),
+        equippedMinecraftSkin: p.equipped.minecraftSkin || null,
         look: getLookOfUser(user),
         level: info.level,
         xp: Math.floor(p.xp),
@@ -607,11 +610,18 @@ shopAdd({ id: "hat_crown",   cat: "hat", name: "Golden Crown", price: 800, emoji
 
 /* ----- Masks (emoji over the face) ----- */
 shopAdd({ id: "mask_surgical", cat: "mask", name: "Face Mask",    price: 300, emoji: { t: "😷", x: 50, y: 48, s: 38 } });
-shopAdd({ id: "mask_theatre",  cat: "mask", name: "Theatre Mask", price: 300, emoji: { t: "🎭", x: 50, y: 47, s: 38 } });
-shopAdd({ id: "mask_clown",    cat: "mask", name: "Clown Mask",   price: 350, emoji: { t: "🤡", x: 50, y: 48, s: 38 } });
-shopAdd({ id: "mask_oni",      cat: "mask", name: "Oni Mask",     price: 400, emoji: { t: "👹", x: 50, y: 48, s: 38 } });
-shopAdd({ id: "mask_robot",    cat: "mask", name: "Robot Mask",   price: 400, emoji: { t: "🤖", x: 50, y: 48, s: 38 } });
-shopAdd({ id: "mask_skull",    cat: "mask", name: "Skull Mask",   price: 450, emoji: { t: "💀", x: 50, y: 48, s: 38 } });
+shopAdd({ id: "mask_theatre",  cat: "mask", name: "Theatre Mask", price: 300, emoji: { t: "🎭", x: 50, y: 49, s: 50 } });
+shopAdd({ id: "mask_clown",    cat: "mask", name: "Clown Mask",   price: 350, emoji: { t: "🤡", x: 50, y: 49, s: 50 } });
+shopAdd({ id: "mask_oni",      cat: "mask", name: "Oni Mask",     price: 400, emoji: { t: "👹", x: 50, y: 49, s: 50 } });
+shopAdd({ id: "mask_robot",    cat: "mask", name: "Robot Mask",   price: 400, emoji: { t: "🤖", x: 50, y: 49, s: 50 } });
+shopAdd({ id: "mask_skull",    cat: "mask", name: "Skull Mask",   price: 450, emoji: { t: "💀", x: 50, y: 49, s: 50 } });
+shopAdd({ id: "mask_vendetta", cat: "mask", name: "Vendetta Mask", price: 500, emoji: { t: "🎭", x: 50, y: 49, s: 50 } });
+shopAdd({ id: "mask_demon", cat: "mask", name: "Demon Mask", price: 550, emoji: { t: "👺", x: 50, y: 49, s: 50 } });
+
+shopAdd({ id: "hat_crown", cat: "hat", name: "Royal Crown", price: 450, emoji: { t: "👑", x: 50, y: 12, s: 30 } });
+shopAdd({ id: "hat_top_hat", cat: "hat", name: "Top Hat", price: 300, emoji: { t: "🎩", x: 50, y: 15, s: 30 } });
+shopAdd({ id: "suit_tuxedo", cat: "suit", name: "Classic Tuxedo", price: 500, art: "<path d=\"M34 51 L50 65 L66 51 L72 94 L28 94 Z\" fill=\"#111827\"/><path d=\"M43 55 L50 65 L57 55 L53 82 L47 82 Z\" fill=\"#f5f5f5\"/>" });
+shopAdd({ id: "suit_red", cat: "suit", name: "Crimson Suit", price: 550, art: "<path d=\"M34 51 L50 63 L66 51 L72 94 L28 94 Z\" fill=\"#791b25\"/><path d=\"M43 55 L50 63 L57 55 L53 82 L47 82 Z\" fill=\"#eeeeee\"/>" });
 
 /* ----- Accessories (emoji) ----- */
 shopAdd({ id: "acc_rose",       cat: "accessory", name: "Red Rose",    price: 120, emoji: { t: "🌹", x: 80, y: 102, s: 22 } });
@@ -3658,6 +3668,66 @@ io.on(
                 pointsPerGame: SHOP_POINTS_PER_GAME,
                 winBonus: SHOP_POINTS_WIN_BONUS
             });
+        });
+
+        // Minecraft skins are server-authoritative: price and ownership are never trusted from the browser.
+        const MINECRAFT_SKIN_SHOP = {
+            clownpierce: { name: "ClownPierce", price: 100 },
+            flamefrags: { name: "FlameFrags", price: 100 },
+            "gloden king": { name: "Golden King", price: 100 },
+            jaden_man: { name: "Jaden Man", price: 100 },
+            jamatop: { name: "Jamatop", price: 100 },
+            maifa: { name: "Mafia", price: 100 },
+            manepear: { name: "ManePear", price: 100 },
+            minetech: { name: "MineTech", price: 100 },
+            ninja: { name: "Ninja", price: 100 },
+            parrot: { name: "Parrot", price: 100 },
+            "parrotx2 king": { name: "ParrotX2 King", price: 100 },
+            spoke: { name: "Spoke", price: 100 },
+            steve: { name: "Steve", price: 100 },
+            technoblade: { name: "Technoblade", price: 100 },
+            theobalthebird: { name: "TheobaldTheBird", price: 100 },
+            warroir: { name: "Warrior", price: 100 },
+            "wemmbu tech": { name: "Wemmbu Tech", price: 100 },
+            wemmbu: { name: "Wemmbu", price: 100 },
+            wifize: { name: "Wifize", price: 100 },
+            wizerd: { name: "Wizard", price: 100 }
+        };
+
+        socket.on("minecraftSkinBuy", (data, callback) => {
+            const ctx = progressionUser();
+            const reply = typeof callback === "function" ? callback : () => {};
+            if (!ctx) return reply({ ok: false, error: "Sign in to buy skins." });
+            const file = String(data?.file || "");
+            const skin = MINECRAFT_SKIN_SHOP[file];
+            if (!skin) return reply({ ok: false, error: "Unknown Minecraft skin." });
+            const progress = ensureProgress(ctx.user);
+            if (progress.shop.ownedMinecraftSkins.includes(file)) {
+                return reply({ ok: false, error: "You already own this skin." });
+            }
+            const price = skin.price;
+            if (progress.shop.points < price) {
+                return reply({ ok: false, error: `Not enough shop points. You need ${price - progress.shop.points} more.` });
+            }
+            progress.shop.points -= price;
+            progress.shop.ownedMinecraftSkins.push(file);
+            progress.equipped.minecraftSkin = file;
+            saveAccounts();
+            sendProgress(ctx, false);
+            return reply({ ok: true, file, name: skin.name, price, balance: progress.shop.points, ownedMinecraftSkins: progress.shop.ownedMinecraftSkins.slice() });
+        });
+
+        socket.on("minecraftSkinEquip", (data, callback) => {
+            const ctx = progressionUser();
+            const reply = typeof callback === "function" ? callback : () => {};
+            if (!ctx) return reply({ ok: false, error: "Sign in first." });
+            const file = String(data?.file || "");
+            const progress = ensureProgress(ctx.user);
+            if (!progress.shop.ownedMinecraftSkins.includes(file)) return reply({ ok: false, error: "Buy this skin before equipping it." });
+            progress.equipped.minecraftSkin = file;
+            saveAccounts();
+            sendProgress(ctx, false);
+            return reply({ ok: true, file });
         });
 
         socket.on("shopBuy", (data, callback) => {
