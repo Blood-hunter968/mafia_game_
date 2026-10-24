@@ -6817,6 +6817,15 @@ var shopCatalog = null;                 // { items, categories, slots, ... } fro
 var shopItemMap = new Map();
 var shopGroup = "character";            // Shop tab: character | tag | wallpaper | sound
 var shopSlot = "face";                  // Shop: which character category is open
+var shopCharacterStyle = "current";      // current | minecraft
+var minecraftSkinSelection = null;        // skin being tried on in the shop
+const MINECRAFT_SKINS = [
+    ["clownpierce", "ClownPierce"], ["flamefrags", "FlameFrags"], ["gloden king", "Golden King"],
+    ["jaden_man", "Jaden Man"], ["jamatop", "Jamatop"], ["mafia", "Mafia"], ["manepear", "ManePear"],
+    ["minetech", "MineTech"], ["ninja", "Ninja"], ["parrot", "Parrot"], ["parrotx2 king", "ParrotX2 King"],
+    ["spoke", "Spoke"], ["steve", "Steve"], ["technoblade", "Technoblade"], ["theobalthebird", "TheobaldTheBird"],
+    ["warroir", "Warrior"], ["wemmbu tech", "Wemmbu Tech"], ["wemmbu", "Wemmbu"], ["wifize", "Wifize"], ["wizerd", "Wizard"]
+];
 var shopPreviewLook = null;             // "Try on" preview (never saved)
 var shopMessage = "";
 var inventorySlot = "face";             // Inventory: which character category is open
@@ -7379,9 +7388,23 @@ function renderRewardsShopPage(page) {
         let top = "";
 
         if (shopGroup === "character") {
-            const slots = (shopCatalog.categories || []).filter(c => c.group === "character");
+            const slots = (shopCatalog.categories || []).filter(c => c.group === "character" && c.key !== "accessory");
             if (!slots.some(c => c.key === shopSlot)) shopSlot = slots[0]?.key || "face";
-            top = `
+            const styleSwitch = `<div class="shop-style-switch"><button class="shop-chip ${shopCharacterStyle === "current" ? "active" : ""}" type="button" data-inv="shop-character-style" data-style="current">Current Style</button><button class="shop-chip ${shopCharacterStyle === "minecraft" ? "active" : ""}" type="button" data-inv="shop-character-style" data-style="minecraft">Minecraft Style</button></div>`;
+            if (shopCharacterStyle === "minecraft") {
+                const selectedSkin = MINECRAFT_SKINS.find(([file]) => file === minecraftSkinSelection);
+                const selectedPreview = selectedSkin ? `<div class="minecraft-selected-preview"><img src="/skins/${encodeURIComponent(selectedSkin[0])}.png" alt="${escapeHtml(selectedSkin[1])} preview" onerror="this.style.display='none';this.nextElementSibling.style.display='block'"><span style="display:none">🧍</span><div><strong>${escapeHtml(selectedSkin[1])}</strong><br><small class="settings-muted">Try-on preview only; not purchased or equipped.</small></div><button class="inv-btn" type="button" data-inv="minecraft-skin-reset">Reset preview</button></div>` : `<div class="minecraft-selected-preview"><div class="minecraft-skin-placeholder">🧍</div><div><strong>Minecraft Character</strong><br><small class="settings-muted">Select Try On to preview a skin. Add images under public/skins/.</small></div></div>`;
+                top = `${styleSwitch}<div class="settings-card"><div class="shop-preview">${selectedPreview}</div></div><div class="shop-chips"><button class="shop-chip active" type="button" disabled>🧍 Skin</button></div>`;
+                const ownedMinecraftSkins = new Set(myProgress?.ownedMinecraftSkins || []);
+                const skinCards = MINECRAFT_SKINS.map(([file, name]) => {
+                    const owned = ownedMinecraftSkins.has(file);
+                    const equipped = myProgress?.equippedMinecraftSkin === file;
+                    const price = 100;
+                    return `<div class="shop-card ${minecraftSkinSelection === file ? "owned" : ""}"><div class="shop-thumb minecraft-skin-thumb"><img src="/skins/${encodeURIComponent(file)}.png" alt="${escapeHtml(name)}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='block'"><span style="display:none">🧍</span></div><strong>${escapeHtml(name)}</strong><small>${equipped ? "Equipped" : owned ? "Owned" : `🪙 ${price} points`}</small><div class="shop-actions"><button class="inv-btn" type="button" data-inv="minecraft-skin-try" data-file="${escapeHtml(file)}">${minecraftSkinSelection === file ? "Trying on" : "Try On"}</button>${owned ? `<button class="inv-btn ${equipped ? "" : "primary"}" type="button" data-inv="minecraft-skin-equip" data-file="${escapeHtml(file)}" ${equipped ? "disabled" : ""}>${equipped ? "Equipped" : "Equip"}</button>` : `<button class="inv-btn primary" type="button" data-inv="minecraft-skin-buy" data-file="${escapeHtml(file)}">Buy · ${price}</button>`}</div></div>`;
+                }).join("");
+                body = `${top}<div class="settings-card"><div class="shop-grid">${skinCards}</div></div>`;
+            } else {
+            top = `${styleSwitch}` + `
                 <div class="settings-card">
                     <div class="shop-preview">
                         ${avatarHtml(previewBase, 96, false)}
@@ -7393,12 +7416,17 @@ function renderRewardsShopPage(page) {
                 </div>
                 <div class="shop-chips">${slots.map(c => `<button class="shop-chip ${shopSlot === c.key ? "active" : ""}" type="button" data-inv="shop-slot" data-key="${c.key}">${c.icon} ${c.label}</button>`).join("")}</div>`;
             items = shopItemsIn(shopSlot);
+            const cards = items.map(item => renderShopCard(item, signedIn, wallet, username, previewBase)).join("") || `<div class="settings-muted">Nothing here yet.</div>`;
+            body = `${top}<div class="settings-card"><div class="shop-grid">${cards}</div></div>`;
+            }
         } else {
             items = shopItemsIn(shopGroup);
         }
 
-        const cards = items.map(item => renderShopCard(item, signedIn, wallet, username, previewBase)).join("") || `<div class="settings-muted">Nothing here yet.</div>`;
-        body = `${top}<div class="settings-card"><div class="shop-grid">${cards}</div></div>`;
+        if (shopGroup !== "character") {
+            const cards = items.map(item => renderShopCard(item, signedIn, wallet, username, previewBase)).join("") || `<div class="settings-muted">Nothing here yet.</div>`;
+            body = `${top}<div class="settings-card"><div class="shop-grid">${cards}</div></div>`;
+        }
     }
 
     page.innerHTML = settingsHeader("🛍️ SHOP") + `
@@ -7454,7 +7482,7 @@ function renderTagsTab(p) {
 function renderCharacterTab(p) {
     if (!shopCatalog) return `<div class="settings-card"><p class="settings-muted">Loading your character…</p></div>`;
 
-    const slots = (shopCatalog.categories || []).filter(c => c.group === "character");
+    const slots = (shopCatalog.categories || []).filter(c => c.group === "character" && c.key !== "accessory");
     if (!slots.some(c => c.key === inventorySlot)) inventorySlot = slots[0]?.key || "face";
 
     const look = myLook();
@@ -7671,7 +7699,34 @@ function handleShopClick(event) {
     if (!target) return;
     const action = target.dataset.inv;
 
-    if (action === "shop-group") {
+    if (action === "shop-character-style") {
+        shopCharacterStyle = target.dataset.style === "minecraft" ? "minecraft" : "current";
+        shopPreviewLook = null;
+        if (shopCharacterStyle === "current") minecraftSkinSelection = null;
+        shopMessage = "";
+        renderSettingsPage("rewards");
+    } else if (action === "minecraft-skin-try") {
+        minecraftSkinSelection = target.dataset.file || null;
+        shopMessage = minecraftSkinSelection ? "Skin preview selected. This does not purchase or equip the skin." : "";
+        renderSettingsPage("rewards");
+    } else if (action === "minecraft-skin-reset") {
+        minecraftSkinSelection = null;
+        renderSettingsPage("rewards");
+    } else if (action === "minecraft-skin-buy") {
+        target.disabled = true;
+        socket.emit("minecraftSkinBuy", { file: target.dataset.file }, result => {
+            shopNotice(result?.ok ? `✅ Purchased ${result.name}! You can equip it now.` : (result?.error || "Could not buy this skin."));
+            if (result?.ok) { minecraftSkinSelection = target.dataset.file; }
+            else target.disabled = false;
+            renderSettingsPage("rewards");
+        });
+    } else if (action === "minecraft-skin-equip") {
+        socket.emit("minecraftSkinEquip", { file: target.dataset.file }, result => {
+            shopNotice(result?.ok ? "✅ Minecraft skin equipped." : (result?.error || "Could not equip skin."));
+            if (result?.ok) minecraftSkinSelection = target.dataset.file;
+            renderSettingsPage("rewards");
+        });
+    } else if (action === "shop-group") {
         shopGroup = target.dataset.key;
         shopMessage = "";
         renderSettingsPage("rewards");
