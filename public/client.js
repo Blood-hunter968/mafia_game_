@@ -123,6 +123,7 @@ let players = [];
 
 /* Voice chat permission state (sent by the server). */
 let voiceChatAllowedSetting = true;
+let detectiveCheckAnnounceSetting = true;
 let voicePlayerIds = [];
 let voicePermitted = true;
 let voiceAutoDisabled = false;
@@ -913,6 +914,7 @@ function getCurrentHostId() {
 function updateHostUI() {
 
     ensureVoiceHostSetting();
+    ensureDetectiveHostSetting();
     updateVoiceHostButton();
 
     const hostSettings =
@@ -4029,9 +4031,28 @@ function ensureVoicePanel() {
             <div class="voice-controls">
                 <button id="voiceMuteButton" class="voice-control-button" type="button" disabled>🎤 UNMUTE</button>
                 <button id="voiceSpeakerButton" class="voice-control-button" type="button">🔊 SPEAKER</button>
+                <button id="voiceMusicButton" class="voice-control-button" type="button">🎵 MUSIC</button>
                 <button id="voiceReconnectButton" class="voice-control-button" type="button">🔄 RECONNECT</button>
             </div>
             <div id="voiceSpeakerPanel" class="voice-speaker-panel" style="display:none;"></div>
+            <div id="voiceMusicPanel" class="voice-speaker-panel voice-music-panel" style="display:none;">
+                <div class="vm-row">
+                    <span id="voiceMusicSong" class="vm-song">🎵 Music</span>
+                    <button id="voiceMusicToggle" class="vm-toggle" type="button">ON</button>
+                </div>
+                <div class="vm-row">
+                    <span class="vm-label">🔊 Volume</span>
+                    <input id="voiceMusicVolume" type="range" min="0" max="100" step="1" value="50" aria-label="Music volume">
+                    <span id="voiceMusicVolumeText" class="vm-pct">50%</span>
+                </div>
+                <div class="vm-row">
+                    <span class="vm-label">🔁 Loop song</span>
+                    <span class="mw-yesno">
+                        <label><input type="radio" name="voiceMusicLoop" data-music-loop="yes"> Yes</label>
+                        <label><input type="radio" name="voiceMusicLoop" data-music-loop="no"> No</label>
+                    </span>
+                </div>
+            </div>
         </div>
     `;
 
@@ -4042,6 +4063,23 @@ function ensureVoicePanel() {
     $("voiceMuteButton")?.addEventListener("click", toggleVoiceMute);
     $("voiceReconnectButton")?.addEventListener("click", reconnectVoice);
     $("voiceSpeakerButton")?.addEventListener("click", toggleSpeakerPanel);
+    $("voiceMusicButton")?.addEventListener("click", toggleMusicPanel);
+    $("voiceMusicToggle")?.addEventListener("click", () => {
+        setMusicSetting("musicOn", !loadMafiaSettings().musicOn);
+    });
+    $("voiceMusicVolume")?.addEventListener("input", event => {
+        setMusicSetting("musicVolume", Number(event.target.value) / 100);
+    });
+    panel.querySelectorAll("input[name='voiceMusicLoop']").forEach(input => {
+        input.addEventListener("change", () => setMusicSetting("musicLoop", input.dataset.musicLoop === "yes"));
+    });
+    // The bottom-right music box would sit underneath this panel, so it hides
+    // while the voice panel is on screen (music lives in the Music button instead).
+    try {
+        new MutationObserver(() => syncMusicDock()).observe(panel, { attributes: true, attributeFilter: ["style"] });
+    } catch (_) { /* ignore */ }
+    syncMusicDock();
+    updateMusicControl();
     $("voiceCollapseButton")?.addEventListener("click", () => {
         const body = $("voiceBody");
         const button = $("voiceCollapseButton");
@@ -4391,7 +4429,26 @@ function toggleSpeakerPanel() {
     panel.style.display = open ? "" : "none";
     $("voiceSpeakerButton")?.classList.toggle("voice-control-active", open);
 
-    if (open) renderSpeakerPanel(true);
+    if (open) {
+        const musicPanel = $("voiceMusicPanel");
+        if (musicPanel && musicPanel.style.display !== "none") toggleMusicPanel();   // one menu at a time
+        renderSpeakerPanel(true);
+    }
+}
+
+function toggleMusicPanel() {
+    const panel = $("voiceMusicPanel");
+    if (!panel) return;
+
+    const open = panel.style.display === "none";
+    panel.style.display = open ? "" : "none";
+    $("voiceMusicButton")?.classList.toggle("voice-control-active", open);
+
+    if (open) {
+        const speakerPanel = $("voiceSpeakerPanel");
+        if (speakerPanel && speakerPanel.style.display !== "none") toggleSpeakerPanel();   // one menu at a time
+        updateMusicControl();
+    }
 }
 
 function applyPeerAudio(peerId) {
@@ -5602,7 +5659,11 @@ const defaultMafiaSettings = {
     microphoneVolume: 1,
     microphoneMuted: false,
     soundEffectsVolume: 1,
-    notificationSoundsVolume: 1
+    notificationSoundsVolume: 1,
+    musicOn: true,
+    musicVolume: 0.5,
+    musicInMatch: true,
+    musicLoop: true
 };
 
 function clampAudioSetting(value, fallback = 1) {
@@ -5640,6 +5701,9 @@ function applyAudioSettings() {
     if (voiceMicGainNode) {
         voiceMicGainNode.gain.value = audio.microphoneMuted ? 0 : audio.microphoneVolume;
     }
+
+    // Music follows the Master volume too.
+    if (typeof applyMusicVolume === "function") applyMusicVolume();
 }
 
 function updateAudioSetting(key, value) {
@@ -6810,7 +6874,7 @@ if (authState?.username) setTimeout(requestMyProgress, 500);
      new items are added in server.js only (one line each).
 ========================================================= */
 
-const DEFAULT_LOOK = { face: "face_basic", hair: null, shirt: "shirt_basic", suit: null, pants: "pants_basic", hat: null, mask: null, accessory: null };
+const DEFAULT_LOOK = { face: "face_basic", hair: null, shirt: "shirt_basic", suit: null, pants: "pants_basic", shoes: "shoes_basic", hat: null, mask: null, accessory: null };
 const OPTIONAL_SLOTS = ["hair", "suit", "hat", "mask", "accessory"];
 
 var shopCatalog = null;                 // { items, categories, slots, ... } from the server
@@ -6890,6 +6954,14 @@ function avatarLayer(item) {
     return "";
 }
 
+/* Roblox-style 3D block: a light top face + a dark side face drawn next to a front face. */
+function blockEdges(x, y, w, h, d, sideOnly) {
+    d = d || 4;
+    const top = sideOnly ? "" : `<polygon points="${x},${y} ${x + w},${y} ${x + w + d},${y - d} ${x + d},${y - d}" fill="#fff" opacity=".24"/>`;
+    const side = `<polygon points="${x + w},${y} ${x + w + d},${y - d} ${x + w + d},${y + h - d} ${x + w},${y + h}" fill="#000" opacity=".32"/>`;
+    return top + side;
+}
+
 function avatarMarkup(look, bust) {
     const wear = Object.assign({}, DEFAULT_LOOK, look || {});
     const face = shopItem(wear.face) || shopItem("face_basic");
@@ -6897,10 +6969,15 @@ function avatarMarkup(look, bust) {
 
     const parts = [
         avatarLayer(shopItem(wear.pants) || shopItem("pants_basic")),
-        `<rect x="17" y="62" width="11" height="40" rx="5.5" fill="${skin}"/><rect x="72" y="62" width="11" height="40" rx="5.5" fill="${skin}"/><rect x="44" y="50" width="12" height="14" fill="${skin}"/>`,
+        blockEdges(31, 96, 17, 36, 4) + blockEdges(52, 96, 17, 36, 4),
+        avatarLayer(shopItem(wear.shoes) || shopItem("shoes_basic")),
+        blockEdges(50, 130, 21, 9, 3, true),
+        `<rect x="17" y="62" width="11" height="40" rx="2" fill="${skin}"/><rect x="72" y="62" width="11" height="40" rx="2" fill="${skin}"/><rect x="44" y="50" width="12" height="14" fill="${skin}"/>`,
         avatarLayer(shopItem(wear.shirt) || shopItem("shirt_basic")),
         avatarLayer(shopItem(wear.suit)),
-        `<circle cx="30" cy="38" r="4.5" fill="${skin}"/><circle cx="70" cy="38" r="4.5" fill="${skin}"/><circle cx="50" cy="36" r="20" fill="${skin}"/>`,
+        `<rect x="28" y="60" width="5" height="42" fill="#fff" opacity=".12"/><rect x="66" y="60" width="6" height="42" fill="#000" opacity=".22"/>` +
+            blockEdges(71, 62, 14, 24, 4) + blockEdges(15, 62, 14, 24, 4) + blockEdges(72, 86, 11, 16, 4, true),
+        `<rect x="30" y="16" width="40" height="40" rx="5" fill="${skin}"/>` + blockEdges(30, 16, 40, 40, 5),
         avatarLayer(face),
         avatarLayer(shopItem(wear.hair)),
         avatarLayer(shopItem(wear.mask)),
@@ -6909,6 +6986,15 @@ function avatarMarkup(look, bust) {
     ];
 
     const viewBox = bust ? "8 -4 84 88" : "0 -8 100 148";
+
+    /* Minecraft style: show the skin picture instead of the normal character.
+       If the picture cannot load, the normal character is shown instead. */
+    if (wear.minecraft) {
+        const src = "/skins/" + encodeURIComponent(String(wear.minecraft)) + ".png";
+        const box = bust ? 'x="8" y="-4" width="84" height="88" preserveAspectRatio="xMidYMin slice"' : 'x="0" y="-8" width="100" height="148" preserveAspectRatio="xMidYMid meet"';
+        return `<svg viewBox="${viewBox}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><g class="mc-fallback" style="display:none">${parts.join("")}</g><image href="${src}" ${box} style="image-rendering:pixelated" onerror="var g=this.parentNode.querySelector('.mc-fallback');if(g)g.style.display='';this.remove()"/></svg>`;
+    }
+
     return `<svg viewBox="${viewBox}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">${parts.join("")}</svg>`;
 }
 
@@ -6962,6 +7048,15 @@ function tierPriceText(key) {
 function myLook() {
     return Object.assign({}, DEFAULT_LOOK, myProgress?.look || {});
 }
+
+/* The normal character without the Minecraft skin (used when previewing normal items). */
+function myNormalLook() {
+    const look = myLook();
+    delete look.minecraft;
+    return look;
+}
+
+var inventoryCharView = null;   // Inventory -> Character: "current" | "minecraft" (null = whatever is equipped)
 
 /* ---------- Built-in shop sounds (WebAudio, no files needed) ---------- */
 
@@ -7121,8 +7216,7 @@ function showShopToast(text) {
 
 socket.on("shopReward", data => {
     if (!data) return;
-    const bonus = data.won ? ` (includes +${data.bonus} win bonus!)` : "";
-    showShopToast(`💰 +${data.earned} shop points${bonus}`);
+    showShopToast(`💰 +${data.earned} shop points (${data.won ? "win" : "loss"})`);
     setTimeout(requestMyProgress, 800);
 });
 
@@ -7374,7 +7468,7 @@ function renderShopCard(item, signedIn, wallet, username, previewBase) {
 
 function renderRewardsShopPage(page) {
     const signedIn = Boolean(authState?.username);
-    const groups = [["character", "👤 Character"], ["tag", "🏷️ Name Tags"], ["wallpaper", "🖼️ Wallpapers"], ["sound", "🔊 Sounds"], ["logo", "📛 Logos"]];
+    const groups = [["character", "👤 Character"], ["music", "🎵 Music"], ["tag", "🏷️ Name Tags"], ["wallpaper", "🖼️ Wallpapers"], ["sound", "🔊 Sounds"], ["logo", "📛 Logos"]];
     const wallet = signedIn ? (myProgress?.shopPoints || 0) : 0;
     const username = authState?.username || "Player";
 
@@ -7383,7 +7477,7 @@ function renderRewardsShopPage(page) {
     if (!shopCatalog) {
         body = `<div class="settings-card"><p class="settings-muted">Loading the shop…</p></div>`;
     } else {
-        const previewBase = shopPreviewLook || myLook();
+        const previewBase = shopPreviewLook || myNormalLook();
         let items;
         let top = "";
 
@@ -7392,14 +7486,14 @@ function renderRewardsShopPage(page) {
             if (!slots.some(c => c.key === shopSlot)) shopSlot = slots[0]?.key || "face";
             const styleSwitch = `<div class="shop-style-switch"><button class="shop-chip ${shopCharacterStyle === "current" ? "active" : ""}" type="button" data-inv="shop-character-style" data-style="current">Current Style</button><button class="shop-chip ${shopCharacterStyle === "minecraft" ? "active" : ""}" type="button" data-inv="shop-character-style" data-style="minecraft">Minecraft Style</button></div>`;
             if (shopCharacterStyle === "minecraft") {
-                const selectedSkin = MINECRAFT_SKINS.find(([file]) => file === minecraftSkinSelection);
+                const selectedSkin = mcSkinList().find(([file]) => file === minecraftSkinSelection);
                 const selectedPreview = selectedSkin ? `<div class="minecraft-selected-preview"><img src="/skins/${encodeURIComponent(selectedSkin[0])}.png" alt="${escapeHtml(selectedSkin[1])} preview" onerror="this.style.display='none';this.nextElementSibling.style.display='block'"><span style="display:none">🧍</span><div><strong>${escapeHtml(selectedSkin[1])}</strong><br><small class="settings-muted">Try-on preview only; not purchased or equipped.</small></div><button class="inv-btn" type="button" data-inv="minecraft-skin-reset">Reset preview</button></div>` : `<div class="minecraft-selected-preview"><div class="minecraft-skin-placeholder">🧍</div><div><strong>Minecraft Character</strong><br><small class="settings-muted">Select Try On to preview a skin. Add images under public/skins/.</small></div></div>`;
                 top = `${styleSwitch}<div class="settings-card"><div class="shop-preview">${selectedPreview}</div></div><div class="shop-chips"><button class="shop-chip active" type="button" disabled>🧍 Skin</button></div>`;
                 const ownedMinecraftSkins = new Set(myProgress?.ownedMinecraftSkins || []);
-                const skinCards = MINECRAFT_SKINS.map(([file, name]) => {
+                const skinCards = mcSkinList().filter(([file, , , enabled]) => enabled || ownedMinecraftSkins.has(file)).map(([file, name, skinPrice]) => {
                     const owned = ownedMinecraftSkins.has(file);
                     const equipped = myProgress?.equippedMinecraftSkin === file;
-                    const price = 100;
+                    const price = skinPrice;
                     return `<div class="shop-card ${minecraftSkinSelection === file ? "owned" : ""}"><div class="shop-thumb minecraft-skin-thumb"><img src="/skins/${encodeURIComponent(file)}.png" alt="${escapeHtml(name)}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='block'"><span style="display:none">🧍</span></div><strong>${escapeHtml(name)}</strong><small>${equipped ? "Equipped" : owned ? "Owned" : `🪙 ${price} points`}</small><div class="shop-actions"><button class="inv-btn" type="button" data-inv="minecraft-skin-try" data-file="${escapeHtml(file)}">${minecraftSkinSelection === file ? "Trying on" : "Try On"}</button>${owned ? `<button class="inv-btn ${equipped ? "" : "primary"}" type="button" data-inv="minecraft-skin-equip" data-file="${escapeHtml(file)}" ${equipped ? "disabled" : ""}>${equipped ? "Equipped" : "Equip"}</button>` : `<button class="inv-btn primary" type="button" data-inv="minecraft-skin-buy" data-file="${escapeHtml(file)}">Buy · ${price}</button>`}</div></div>`;
                 }).join("");
                 body = `${top}<div class="settings-card"><div class="shop-grid">${skinCards}</div></div>`;
@@ -7415,17 +7509,22 @@ function renderRewardsShopPage(page) {
                     </div>
                 </div>
                 <div class="shop-chips">${slots.map(c => `<button class="shop-chip ${shopSlot === c.key ? "active" : ""}" type="button" data-inv="shop-slot" data-key="${c.key}">${c.icon} ${c.label}</button>`).join("")}</div>`;
-            items = shopItemsIn(shopSlot);
+            items = shopItemsIn(shopSlot).filter(it => it.enabled !== false || shopOwned(it.id));
             const cards = items.map(item => renderShopCard(item, signedIn, wallet, username, previewBase)).join("") || `<div class="settings-muted">Nothing here yet.</div>`;
             body = `${top}<div class="settings-card"><div class="shop-grid">${cards}</div></div>`;
             }
         } else {
-            items = shopItemsIn(shopGroup);
+            items = shopItemsIn(shopGroup).filter(it => it.enabled !== false || shopOwned(it.id));
         }
 
         if (shopGroup !== "character") {
-            const cards = items.map(item => renderShopCard(item, signedIn, wallet, username, previewBase)).join("") || `<div class="settings-muted">Nothing here yet.</div>`;
-            body = `${top}<div class="settings-card"><div class="shop-grid">${cards}</div></div>`;
+            const cards = shopGroup === "music"
+                ? renderMusicShopCards(signedIn, wallet)
+                : (items.map(item => renderShopCard(item, signedIn, wallet, username, previewBase)).join("") || `<div class="settings-muted">Nothing here yet.</div>`);
+            const musicNote = shopGroup === "music"
+                ? `<small class="settings-muted" style="display:block;margin-top:10px">Songs you buy stay yours forever. Choose your song in Inventory → Music.</small>`
+                : "";
+            body = `${top}<div class="settings-card"><div class="shop-grid">${cards}</div>${musicNote}</div>`;
         }
     }
 
@@ -7433,7 +7532,7 @@ function renderRewardsShopPage(page) {
         <div class="settings-card">
             <div class="shop-wallet">
                 <div><small class="settings-muted">Your shop points</small><br><strong>💰 ${signedIn ? wallet.toLocaleString() : "—"}</strong></div>
-                <small class="settings-muted">Earn +${shopCatalog?.pointsPerGame ?? 20} for every finished game and +${shopCatalog?.winBonus ?? 30} more for a win.<br>Spending shop points never lowers your rank.</small>
+                <small class="settings-muted">Earn +${shopCatalog?.winPoints ?? 20} shop points for a win and +${shopCatalog?.losePoints ?? 10} for a loss.<br>Spending shop points never lowers your rank.</small>
             </div>
             ${signedIn ? "" : `<p class="settings-muted" style="margin-top:8px">👻 Guests can look around. Sign in or create an account to earn points and buy items.</p>`}
         </div>
@@ -7486,6 +7585,27 @@ function renderCharacterTab(p) {
     if (!slots.some(c => c.key === inventorySlot)) inventorySlot = slots[0]?.key || "face";
 
     const look = myLook();
+
+    /* Normal character <-> Minecraft style switch */
+    const charView = inventoryCharView || p.characterStyle || "current";
+    const styleSwitch = `<div class="shop-style-switch"><button class="shop-chip ${charView === "current" ? "active" : ""}" type="button" data-inv="inv-char-style" data-style="current">👤 Normal Character</button><button class="shop-chip ${charView === "minecraft" ? "active" : ""}" type="button" data-inv="inv-char-style" data-style="minecraft">⛏️ Minecraft Style</button></div>`;
+
+    if (charView === "minecraft") {
+        const ownedSkins = new Set(p.ownedMinecraftSkins || []);
+        const usingMc = p.characterStyle === "minecraft";
+        const skinCards = mcSkinList().filter(([file]) => ownedSkins.has(file)).map(([file, name]) => {
+            const equipped = usingMc && p.equippedMinecraftSkin === file;
+            return `<div class="shop-card ${equipped ? "equipped" : ""}"><div class="shop-thumb minecraft-skin-thumb"><img src="/skins/${encodeURIComponent(file)}.png" alt="${escapeHtml(name)}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='block'"><span style="display:none">🧍</span></div><strong>${escapeHtml(name)}</strong><small>${equipped ? "Equipped" : "Owned"}</small><div class="shop-actions"><button class="inv-btn ${equipped ? "" : "primary"}" type="button" data-inv="inv-mc-equip" data-file="${escapeHtml(file)}" ${equipped ? "disabled" : ""}>${equipped ? "Equipped" : "Equip"}</button></div></div>`;
+        }).join("");
+        const mcHint = skinCards ? `<small class="settings-muted">With a Minecraft skin, hairstyles, shirts, suits, pants, hats and masks are not used. Switch back to Normal Character to use them again.</small>` : `<p class="settings-muted">You don't own any Minecraft skins yet. Visit 🛍️ Shop → Character → Minecraft Style to buy one.</p>`;
+        return `
+        <div class="settings-card">
+            <div class="shop-preview">${avatarHtml(look, 110, false)}<div><strong>${escapeHtml(authState.username)}</strong><br><small class="settings-muted">This is how other players see you.</small></div></div>
+        </div>
+        ${styleSwitch}
+        <div class="settings-card">${skinCards ? `<div class="shop-grid">${skinCards}</div>` : ""}${mcHint}</div>`;
+    }
+
     const items = shopItemsIn(inventorySlot).filter(item => shopOwned(item.id));
     const optional = OPTIONAL_SLOTS.includes(inventorySlot);
 
@@ -7515,6 +7635,7 @@ function renderCharacterTab(p) {
         <div class="settings-card">
             <div class="shop-preview">${avatarHtml(look, 110, false)}<div><strong>${escapeHtml(authState.username)}</strong><br><small class="settings-muted">This is how other players see you.</small></div></div>
         </div>
+        ${styleSwitch}
         <div class="shop-chips">${slots.map(c => `<button class="shop-chip ${inventorySlot === c.key ? "active" : ""}" type="button" data-inv="inv-slot" data-key="${c.key}">${c.icon} ${c.label}</button>`).join("")}</div>
         <div class="settings-card"><div class="shop-grid">${cards.join("")}</div>${hint}</div>`;
 }
@@ -7616,7 +7737,7 @@ function renderLogosTab(p) {
 }
 
 function renderInventoryPage(page) {
-    const tabs = [["character", "👤 Character"], ["tags", "🏷️ Tags"], ["sounds", "🔊 Sounds"], ["wallpapers", "🖼️ Wallpapers"], ["logos", "📛 Logos"], ["rewards", "🏅 Medals"]];
+    const tabs = [["character", "👤 Character"], ["tags", "🏷️ Tags"], ["sounds", "🔊 Sounds"], ["wallpapers", "🖼️ Wallpapers"], ["logos", "📛 Logos"], ["music", "🎵 Music"], ["skins", "⛏️ Minecraft Skins"], ["rewards", "🏅 Medals"]];
     if (!tabs.some(([key]) => key === inventoryTab)) inventoryTab = "character";
 
     let body;
@@ -7631,6 +7752,10 @@ function renderInventoryPage(page) {
         body = renderWallpapersTab(myProgress);
     } else if (inventoryTab === "logos") {
         body = renderLogosTab(myProgress);
+    } else if (inventoryTab === "music") {
+        body = renderMusicTab(myProgress);
+    } else if (inventoryTab === "skins") {
+        body = renderSkinsTab(myProgress);
     } else if (inventoryTab === "rewards") {
         body = renderRewardsTab(myProgress);
     } else if (inventoryTab === "tags") {
@@ -7716,14 +7841,14 @@ function handleShopClick(event) {
         target.disabled = true;
         socket.emit("minecraftSkinBuy", { file: target.dataset.file }, result => {
             shopNotice(result?.ok ? `✅ Purchased ${result.name}! You can equip it now.` : (result?.error || "Could not buy this skin."));
-            if (result?.ok) { minecraftSkinSelection = target.dataset.file; }
+            if (result?.ok) { minecraftSkinSelection = target.dataset.file; inventoryCharView = null; }
             else target.disabled = false;
             renderSettingsPage("rewards");
         });
     } else if (action === "minecraft-skin-equip") {
         socket.emit("minecraftSkinEquip", { file: target.dataset.file }, result => {
             shopNotice(result?.ok ? "✅ Minecraft skin equipped." : (result?.error || "Could not equip skin."));
-            if (result?.ok) minecraftSkinSelection = target.dataset.file;
+            if (result?.ok) { minecraftSkinSelection = target.dataset.file; inventoryCharView = null; }
             renderSettingsPage("rewards");
         });
     } else if (action === "shop-group") {
@@ -7765,6 +7890,22 @@ function handleShopClick(event) {
         else renderSettingsPage("inventory");
     } else if (action === "equip-logo") {
         inventoryEmit("equipLogo", { id: target.dataset.id || null }, "Logo updated.");
+    } else if (action === "inv-char-style") {
+        if (target.dataset.style === "minecraft") {
+            inventoryCharView = "minecraft";
+            const file = myProgress?.equippedMinecraftSkin;
+            if (file && (myProgress.ownedMinecraftSkins || []).includes(file)) {
+                inventoryEmit("characterStyleSet", { style: "minecraft", file }, "Minecraft style on.");
+            } else {
+                renderSettingsPage("inventory");
+            }
+        } else {
+            inventoryCharView = "current";
+            inventoryEmit("characterStyleSet", { style: "current" }, "Normal character on.");
+        }
+    } else if (action === "inv-mc-equip") {
+        inventoryCharView = "minecraft";
+        inventoryEmit("characterStyleSet", { style: "minecraft", file: target.dataset.file }, "Minecraft skin equipped.");
     } else if (action === "equip-char") {
         inventoryEmit("equipCharacter", { slot: target.dataset.slot, id: target.dataset.id || null }, "Character updated.");
     } else if (action === "edit-sound") {
@@ -7875,6 +8016,10 @@ function readVoiceSettings(data) {
         voiceChatAllowedSetting = data.voiceChatAllowed !== false;
     }
 
+    if (data.detectiveCheckAnnounce !== undefined) {
+        detectiveCheckAnnounceSetting = data.detectiveCheckAnnounce !== false;
+    }
+
     if (Array.isArray(data.voicePlayerIds)) {
         voicePlayerIds = data.voicePlayerIds.slice();
     }
@@ -7932,6 +8077,67 @@ function ensureVoiceHostSetting() {
         hint.textContent = voiceChatAllowedSetting
             ? `You will pick the voice-chat players when you press START GAME.`
             : "Voice chat is disabled for everyone.";
+    }
+}
+
+/* "Detective Check: YES / NO" inside the host's Role Settings.
+   YES = the morning announcement adds "The detective knows one of the mafia."
+   An example of the announcement is shown under the option. */
+function ensureDetectiveHostSetting() {
+    if (!isHost) return;
+
+    let box = $("detectiveCheckSetting");
+
+    if (!box) {
+        const hostSettings = $("hostSettings");
+        if (!hostSettings) return;
+
+        box = document.createElement("div");
+        box.id = "detectiveCheckSetting";
+        box.className = "grandma-setting voice-allow-setting";
+        box.innerHTML = `
+            <p>🕵️ Detective Check</p>
+            <label><input type="radio" name="detectiveCheckChoice" id="detectiveCheckYes"> Yes</label>
+            <label><input type="radio" name="detectiveCheckChoice" id="detectiveCheckNo"> No</label>
+            <small id="detectiveCheckHint" class="voice-allow-hint"></small>
+        `;
+
+        const voiceBox = $("voiceAllowSetting");
+        if (voiceBox && voiceBox.parentNode === hostSettings) {
+            hostSettings.insertBefore(box, voiceBox.nextSibling);
+        } else {
+            const heading = hostSettings.querySelector("h2");
+            if (heading && heading.nextSibling) {
+                hostSettings.insertBefore(box, heading.nextSibling);
+            } else {
+                hostSettings.insertBefore(box, hostSettings.firstChild);
+            }
+        }
+    }
+
+    if (!box.dataset.bound) {
+        box.dataset.bound = "1";
+
+        const send = enabled => {
+            detectiveCheckAnnounceSetting = enabled;
+            socket.emit("setDetectiveCheckSetting", { roomCode, enabled });
+            ensureDetectiveHostSetting();
+        };
+
+        $("detectiveCheckYes")?.addEventListener("change", () => { if ($("detectiveCheckYes").checked) send(true); });
+        $("detectiveCheckNo")?.addEventListener("change", () => { if ($("detectiveCheckNo").checked) send(false); });
+    }
+
+    const yes = $("detectiveCheckYes");
+    const no = $("detectiveCheckNo");
+    if (yes) yes.checked = detectiveCheckAnnounceSetting;
+    if (no) no.checked = !detectiveCheckAnnounceSetting;
+
+    const hint = $("detectiveCheckHint");
+    if (hint) {
+        hint.textContent = detectiveCheckAnnounceSetting
+            ? "Example: ☀️ Ahmed was killed. The doctor saved the wrong person. The detective knows one of the mafia."
+            : "Example: ☀️ Ahmed was killed. The doctor saved the wrong person.";
     }
 }
 
@@ -8059,3 +8265,854 @@ function openVoicePicker(mode, startPayload) {
     overlay.style.display = "flex";
 }
 
+
+
+/* =========================================================
+   MUSIC SYSTEM + OWNER SHOP MANAGEMENT
+   - 7 songs (1 free + 6 paid). Files live in public/music/.
+   - Starts at 50% volume, loops forever, ON/OFF + volume control
+     at the bottom-right, Settings -> Music, Shop -> Music,
+     Inventory -> Music / Minecraft Skins.
+   - Prices, ownership, the free song and enabled items are all
+     decided by the SERVER (server.js). This block only shows them.
+========================================================= */
+
+var musicState = {
+    audio: null,
+    currentUrl: "",
+    blockedHooked: false,
+    previewAudio: null,
+    previewTimer: null,
+    previewId: null,
+    ended: false,
+    ctx: null,
+    volumeSettable: undefined,
+    clickInstalled: false
+};
+
+const FALLBACK_FREE_SONG = {
+    id: "song_funk",
+    name: "FUNK CRIMINAL",
+    url: "/music/FUNK%20CRIMINAL.mp3",
+    seconds: 83.25,
+    price: 0,
+    free: true,
+    enabled: true
+};
+
+var musicReady = true;   // the music block has loaded; earlier callers (page start-up) must wait for this
+
+/* Minecraft skins now come from the server so the Owner can add / price / hide them. */
+function mcSkinList() {
+    if (shopCatalog && Array.isArray(shopCatalog.skins)) {
+        return shopCatalog.skins.map(s => [s.file, s.name, Number(s.price) || 0, s.enabled !== false, Boolean(s.custom)]);
+    }
+    return MINECRAFT_SKINS.map(([file, name]) => [file, name, 100, true, false]);
+}
+
+/* ---------- Song helpers ---------- */
+
+function musicSongList() {
+    return (shopCatalog && Array.isArray(shopCatalog.songs) && shopCatalog.songs.length)
+        ? shopCatalog.songs
+        : [FALLBACK_FREE_SONG];
+}
+
+function musicFreeId() {
+    return (shopCatalog && shopCatalog.freeSong) || (myProgress && myProgress.freeSong) || FALLBACK_FREE_SONG.id;
+}
+
+function musicSong(id) {
+    return musicSongList().find(song => song.id === id) || null;
+}
+
+function musicOwnedIds() {
+    if (authState && authState.username && myProgress && Array.isArray(myProgress.ownedSongs)) {
+        return myProgress.ownedSongs.slice();
+    }
+    return [musicFreeId()];
+}
+
+function musicSelectedId() {
+    const owned = musicOwnedIds();
+    const chosen = authState && authState.username && myProgress ? myProgress.equippedSong : null;
+    if (chosen && owned.includes(chosen) && musicSong(chosen)) return chosen;
+    return owned.includes(musicFreeId()) ? musicFreeId() : owned[0];
+}
+
+function musicFormatTime(seconds) {
+    const total = Math.round(Number(seconds) || 0);
+    return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
+
+function musicVolumeSetting(st) {
+    const v = Number(st.musicVolume);
+    return Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0.5;
+}
+
+function musicInMatchNow() {
+    return currentPhase === "night" || currentPhase === "day";
+}
+
+/* Music plays when it is ON, except inside a match if the player chose "No" for match music. */
+function musicAllowedNow(st) {
+    return Boolean(st.musicOn) && !(musicInMatchNow() && st.musicInMatch === false);
+}
+
+/* Loop: Yes (default) = the song restarts every time it ends. No = it plays once and stops. */
+function musicLoopOn(st) {
+    return st.musicLoop !== false;
+}
+
+/* Volume: the slider is turned into a perceptual curve (so 50% really sounds about half as
+   loud, instead of nearly full) and multiplied by the Master volume from Settings -> Sound. */
+function musicScaled(st) {
+    const v = musicVolumeSetting(st);
+    const master = clampAudioSetting(st.masterVolume, 1);
+    return Math.max(0, Math.min(1, v * v * master));
+}
+
+function musicPlayVolume(st) {
+    return st.musicOn ? musicScaled(st) : 0;      // OFF = silent
+}
+
+function musicPreviewVolume(st) {
+    return Math.max(0.15, musicScaled(st));       // a preview stays audible even at 0%
+}
+
+/* iPhone / iPad ignore audio.volume (it is always 100%). There the music is routed through a
+   Web Audio GainNode instead, which does work. Desktop and Android keep using audio.volume. */
+function musicVolumeSettable() {
+    if (musicState.volumeSettable !== undefined) return musicState.volumeSettable;
+    let ok = true;
+    try {
+        const probe = new Audio();
+        probe.volume = 0.5;
+        ok = Math.abs(probe.volume - 0.5) < 0.001;
+    } catch (_) { ok = true; }
+    musicState.volumeSettable = ok;
+    return ok;
+}
+
+function musicResumeCtx() {
+    const ctx = musicState.ctx;
+    if (ctx && ctx.state !== "running") {
+        try { const promise = ctx.resume(); if (promise) promise.catch(() => {}); } catch (_) { /* ignore */ }
+    }
+}
+
+function musicGainFor(audio) {
+    if (audio._mwGain) return audio._mwGain;
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return null;
+    try {
+        if (!musicState.ctx) {
+            musicState.ctx = new Ctx();
+            // iOS keeps the audio engine suspended until a tap, so wake it on any touch / click / key.
+            ["pointerdown", "touchend", "click", "keydown"].forEach(name =>
+                document.addEventListener(name, musicResumeCtx, true));
+        }
+        const source = musicState.ctx.createMediaElementSource(audio);
+        const gain = musicState.ctx.createGain();
+        source.connect(gain);
+        gain.connect(musicState.ctx.destination);
+        audio._mwGain = gain;
+        audio.volume = 1;
+        return gain;
+    } catch (_) {
+        return null;
+    }
+}
+
+function setMusicElementVolume(audio, value) {
+    if (!audio) return;
+    const v = Math.max(0, Math.min(1, Number(value) || 0));
+
+    if (musicVolumeSettable()) {
+        audio.volume = v;
+        return;
+    }
+
+    const gain = musicGainFor(audio);
+    if (gain) {
+        musicResumeCtx();
+        gain.gain.value = v;
+    } else {
+        try { audio.volume = v; } catch (_) { /* ignore */ }
+    }
+}
+
+function applyMusicVolume() {
+    if (!musicReady) return;
+    const st = loadMafiaSettings();
+    if (musicState.audio) setMusicElementVolume(musicState.audio, musicPlayVolume(st));
+    if (musicState.previewAudio) setMusicElementVolume(musicState.previewAudio, musicPreviewVolume(st));
+}
+
+/* ---------- Playback ---------- */
+
+function ensureMusicAudio() {
+    if (musicState.audio) return musicState.audio;
+
+    const audio = new Audio();
+    audio.preload = "auto";
+    audio.loop = musicLoopOn(loadMafiaSettings());
+
+    // With Loop = Yes the song restarts from the beginning. With Loop = No it simply stops.
+    audio.addEventListener("ended", () => {
+        if (musicLoopOn(loadMafiaSettings())) {
+            try {
+                audio.currentTime = 0;
+                const promise = audio.play();
+                if (promise) promise.catch(() => {});
+            } catch (_) { /* ignore */ }
+        } else {
+            musicState.ended = true;
+            updateMusicControl();
+        }
+    });
+
+    musicState.audio = audio;
+    return audio;
+}
+
+/* Browsers block sound until the player clicks / presses something once. */
+function hookMusicUnlock() {
+    if (musicState.blockedHooked) return;
+    musicState.blockedHooked = true;
+
+    const events = ["pointerdown", "keydown", "touchstart"];
+    const retry = () => {
+        events.forEach(name => document.removeEventListener(name, retry, true));
+        musicState.blockedHooked = false;
+        applyMusic();
+    };
+
+    events.forEach(name => document.addEventListener(name, retry, true));
+}
+
+function applyMusic() {
+    const st = loadMafiaSettings();
+    const audio = ensureMusicAudio();
+    const song = musicSong(musicSelectedId());
+    const loop = musicLoopOn(st);
+
+    if (song && musicState.currentUrl !== song.url) {
+        musicState.currentUrl = song.url;
+        musicState.ended = false;          // a different song starts fresh
+        audio.src = song.url;
+    }
+
+    if (loop) musicState.ended = false;    // switching Loop back to Yes restarts the song
+    audio.loop = loop;
+    applyMusicVolume();
+
+    if (song && musicAllowedNow(st) && !musicState.previewId && !musicState.ended) {
+        if (audio.paused) {
+            musicResumeCtx();
+            const promise = audio.play();
+            if (promise) promise.catch(() => hookMusicUnlock());
+        }
+    } else if (!audio.paused) {
+        audio.pause();
+    }
+
+    updateMusicControl();
+}
+
+function setMusicSetting(key, value) {
+    const st = loadMafiaSettings();
+    const wasOn = Boolean(st.musicOn);
+
+    st[key] = value;
+
+    // Moving the volume slider while music is OFF turns it back on.
+    if (key === "musicVolume" && value > 0 && !st.musicOn) st.musicOn = true;
+
+    // Turning music ON again starts the song from the beginning if it had finished.
+    if (!wasOn && st.musicOn) musicState.ended = false;
+
+    saveMafiaSettings(st);
+    applyMusic();
+}
+
+/* ---------- Preview (Shop / Inventory) ---------- */
+
+function stopMusicPreview() {
+    clearTimeout(musicState.previewTimer);
+    musicState.previewTimer = null;
+
+    if (musicState.previewAudio) {
+        try { musicState.previewAudio.pause(); } catch (_) { /* ignore */ }
+        musicState.previewAudio = null;
+    }
+
+    musicState.previewId = null;
+}
+
+function musicPreview(id) {
+    const same = musicState.previewId === id;
+    stopMusicPreview();
+
+    if (same) {
+        applyMusic();
+        return;
+    }
+
+    const song = musicSong(id);
+    if (!song) return;
+
+    const st = loadMafiaSettings();
+    const audio = new Audio(song.url);
+    musicState.previewAudio = audio;
+    setMusicElementVolume(audio, musicPreviewVolume(st));
+
+    musicState.previewId = id;
+
+    if (musicState.audio && !musicState.audio.paused) musicState.audio.pause();
+
+    const promise = audio.play();
+    if (promise) promise.catch(() => { stopMusicPreview(); applyMusic(); });
+
+    // 10-second preview, then the normal background music comes back.
+    musicState.previewTimer = setTimeout(() => {
+        stopMusicPreview();
+        applyMusic();
+    }, 10000);
+}
+
+/* ---------- Bottom-right control ---------- */
+
+(function injectMusicCss() {
+    if (document.getElementById("musicCss")) return;
+    const style = document.createElement("style");
+    style.id = "musicCss";
+    style.textContent = `
+        .mw-music { position: fixed; right: 14px; bottom: 14px; z-index: 99985; width: min(262px, calc(100vw - 28px)); box-sizing: border-box; padding: 10px 12px; border-radius: 14px; background: rgba(18,10,10,.94); color: #f3e9e9; border: 1px solid rgba(255,60,60,.55); box-shadow: 0 10px 30px rgba(0,0,0,.55), 0 0 18px rgba(200,0,0,.2); font-family: Arial, sans-serif; }
+        .mw-music-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+        .mw-music-title { font-size: 12px; font-weight: 800; letter-spacing: .4px; }
+        .mw-music-buttons { display: flex; align-items: center; gap: 6px; }
+        .mw-music button { font: inherit; cursor: pointer; }
+        #musicToggleButton { min-width: 52px; padding: 4px 10px; border-radius: 999px; border: 0; background: #c1121f; color: #fff; font-size: 12px; font-weight: 800; }
+        #musicToggleButton.off { background: #4a4a4a; }
+        #musicCollapseButton { width: 24px; height: 24px; border-radius: 8px; border: 1px solid rgba(255,255,255,.25); background: rgba(255,255,255,.08); color: inherit; line-height: 1; }
+        .mw-music-song { margin-top: 6px; font-size: 12px; opacity: .88; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .mw-music-vol { display: flex; align-items: center; gap: 8px; margin-top: 7px; }
+        .mw-music-vol input { flex: 1; min-width: 0; accent-color: #c1121f; }
+        .mw-music-vol span { width: 62px; text-align: right; font-size: 12px; font-weight: 700; }
+        .mw-music.collapsed .mw-music-song, .mw-music.collapsed .mw-music-vol { display: none; }
+        html[data-mafia-theme="white"] .mw-music { background: rgba(255,255,255,.97); color: #10264d; border-color: #2f7bff; box-shadow: 0 10px 30px rgba(20,60,140,.25); }
+        html[data-mafia-theme="white"] #musicToggleButton { background: #2f7bff; }
+        html[data-mafia-theme="white"] #musicToggleButton.off { background: #9aa7bd; }
+        html[data-mafia-theme="white"] .mw-music-vol input { accent-color: #2f7bff; }
+        html[data-mafia-theme="white"] #musicCollapseButton { border-color: rgba(47,123,255,.4); background: rgba(47,123,255,.08); }
+        .mw-yesno { display: flex; gap: 14px; }
+        .mw-music.docked-hidden { display: none; }
+        .voice-music-panel { padding: 6px 2px; }
+        .vm-row { display: flex; align-items: center; gap: 10px; padding: 8px 4px; }
+        .vm-song { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 800; }
+        .vm-label { font-size: 12px; font-weight: 700; white-space: nowrap; }
+        .vm-pct { width: 62px; text-align: right; font-size: 12px; font-weight: 700; }
+        .vm-row input[type=range] { flex: 1; min-width: 0; accent-color: #c1121f; }
+        .vm-toggle { min-width: 52px; padding: 5px 10px; border-radius: 999px; border: 0; background: #c1121f; color: #fff; font-size: 12px; font-weight: 800; cursor: pointer; }
+        .vm-toggle.off { background: #4a4a4a; }
+        .voice-music-panel .mw-yesno { margin-left: auto; font-size: 13px; }
+        .mw-yesno label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+        .mw-admin-note { font-size: .85em; opacity: .75; margin-top: 6px; }
+        .mw-admin-add { display: grid; gap: 8px; }
+        .mw-admin-add input { padding: 9px 10px; border-radius: 9px; border: 1px solid rgba(255,255,255,.25); background: rgba(0,0,0,.25); color: inherit; font: inherit; }
+        .shop-admin-row input[type=text] { width: 150px; padding: 7px 9px; border-radius: 8px; border: 1px solid rgba(255,255,255,.25); background: rgba(0,0,0,.25); color: inherit; font: inherit; }
+    `;
+    document.head.appendChild(style);
+})();
+
+function ensureMusicControl() {
+    if ($("musicControl")) return;
+
+    const box = document.createElement("div");
+    box.id = "musicControl";
+    box.className = "mw-music";
+    box.innerHTML = `
+        <div class="mw-music-head">
+            <span class="mw-music-title">🎵 Background Music</span>
+            <span class="mw-music-buttons">
+                <button id="musicToggleButton" type="button">ON</button>
+                <button id="musicCollapseButton" type="button" title="Minimize">−</button>
+            </span>
+        </div>
+        <div class="mw-music-song" id="musicSongLabel">Selected song</div>
+        <div class="mw-music-vol">
+            <input id="musicVolumeSlider" type="range" min="0" max="100" step="1" value="50" aria-label="Music volume">
+            <span id="musicVolumeText">50%</span>
+        </div>
+    `;
+    document.body.appendChild(box);
+
+    $("musicToggleButton").addEventListener("click", () => {
+        const st = loadMafiaSettings();
+        setMusicSetting("musicOn", !st.musicOn);
+    });
+
+    $("musicVolumeSlider").addEventListener("input", event => {
+        setMusicSetting("musicVolume", Number(event.target.value) / 100);
+    });
+
+    $("musicCollapseButton").addEventListener("click", () => {
+        const collapsed = box.classList.toggle("collapsed");
+        $("musicCollapseButton").textContent = collapsed ? "+" : "−";
+    });
+
+    syncMusicDock();
+}
+
+/* The bottom-right music box hides while the Voice Chat panel is showing (it would be hidden
+   underneath it anyway). Music is then controlled with the 🎵 MUSIC button inside Voice Chat. */
+function syncMusicDock() {
+    const dock = $("musicControl");
+    if (!dock) return;
+    const voice = $("voiceChatPanel");
+    const voiceShown = Boolean(voice) && voice.style.display !== "none";
+    dock.classList.toggle("docked-hidden", voiceShown);
+}
+
+function musicStatusText(st) {
+    if (st.musicOn && musicInMatchNow() && st.musicInMatch === false) return "Paused in match";
+    if (musicState.ended && !musicLoopOn(st)) return "Finished";
+    return musicLoopOn(st) ? "Loop on" : "Loop off";
+}
+
+function updateMusicControl() {
+    if (!musicReady) return;
+    const st = loadMafiaSettings();
+    const song = musicSong(musicSelectedId());
+    const pct = Math.round(musicVolumeSetting(st) * 100);
+    const loop = musicLoopOn(st);
+    const volumeText = st.musicOn ? `${pct}%` : "OFF · 0%";
+
+    const labelText = `${song ? song.name : "No song"} · ${musicStatusText(st)}`;
+    const label = $("musicSongLabel");
+    if (label) label.textContent = labelText;
+    const voiceSong = $("voiceMusicSong");
+    if (voiceSong) voiceSong.textContent = `🎵 ${labelText}`;
+
+    ["musicToggleButton", "voiceMusicToggle"].forEach(id => {
+        const toggle = $(id);
+        if (!toggle) return;
+        toggle.textContent = st.musicOn ? "ON" : "OFF";
+        toggle.classList.toggle("off", !st.musicOn);
+    });
+
+    const slider = $("musicVolumeSlider");
+    if (slider) slider.value = String(pct);
+    const voiceSlider = $("voiceMusicVolume");
+    if (voiceSlider && document.activeElement !== voiceSlider) voiceSlider.value = String(pct);
+
+    const text = $("musicVolumeText");
+    if (text) text.textContent = volumeText;
+    const voiceText = $("voiceMusicVolumeText");
+    if (voiceText) voiceText.textContent = volumeText;
+
+    // Loop Yes / No radios (Settings -> Music and Voice Chat -> Music stay in step).
+    document.querySelectorAll("input[data-music-loop]").forEach(input => {
+        input.checked = (input.dataset.musicLoop === "yes") === loop;
+    });
+
+    // Keep the Settings -> Music page in step with the other controls.
+    const settingsOn = $("musicSettingsOn");
+    if (settingsOn) settingsOn.checked = Boolean(st.musicOn);
+    const settingsVolume = $("musicSettingsVolume");
+    if (settingsVolume && document.activeElement !== settingsVolume) settingsVolume.value = String(pct);
+    const settingsValue = $("musicSettingsVolumeValue");
+    if (settingsValue) settingsValue.textContent = `${pct}%`;
+    const settingsInfo = $("musicSettingsSongInfo");
+    if (settingsInfo && song) settingsInfo.textContent = `${musicFormatTime(song.seconds)} · ${musicStatusText(st)} · ${song.free ? "Free song" : "Owned"}`;
+}
+
+function initMusic() {
+    ensureMusicControl();
+    applyMusic();
+}
+
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initMusic);
+else initMusic();
+
+/* Start / refresh music when a player joins, and when the game phase changes. */
+["roomCreated", "joinedRoom", "rejoinApproved", "gameInformation", "gameRestarted"].forEach(name => {
+    socket.on(name, () => setTimeout(applyMusic, 30));
+});
+socket.on("gameOver", () => setTimeout(applyMusic, 30));
+socket.on("connect", () => setTimeout(applyMusic, 800));
+socket.on("authResult", () => setTimeout(applyMusic, 60));
+socket.on("myProgressData", () => setTimeout(applyMusic, 30));
+
+/* ---------- Shop / catalog updates from the Owner ---------- */
+
+socket.on("shopConfigUpdated", data => {
+    if (!data || !shopCatalog) return;
+
+    shopCatalog.songs = Array.isArray(data.songs) ? data.songs : [];
+    shopCatalog.skins = Array.isArray(data.skins) ? data.skins : [];
+    shopCatalog.freeSong = data.freeSong;
+    shopCatalog.disabled = data.disabled || {};
+
+    (shopCatalog.items || []).forEach(item => {
+        item.enabled = !shopCatalog.disabled[item.id];
+    });
+
+    applyMusic();
+
+    if (progressSettingsOpen && ["inventory", "rewards", "shopadmin", "music"].includes(settingsView)) {
+        renderSettingsPage(settingsView);
+    }
+});
+
+/* ---------- Shop: Music tab ---------- */
+
+function renderMusicShopCards(signedIn, wallet) {
+    const owned = new Set(musicOwnedIds());
+
+    // Same card layout as the wallpapers: picture on top, name, price, then the buttons.
+    return musicSongList()
+        .filter(song => song.enabled !== false || owned.has(song.id))
+        .map(song => {
+            const have = owned.has(song.id);
+            const priceText = song.free ? "Free" : `💰 ${Number(song.price).toLocaleString()}`;
+            let action;
+
+            if (song.free) action = `<span class="shop-price">🎁 Free</span>`;
+            else if (have) action = `<span class="shop-price">✅ Owned</span>`;
+            else if (!signedIn) action = `<button class="inv-btn" type="button" disabled>Sign in to buy</button>`;
+            else {
+                const afford = wallet >= song.price;
+                action = `<button class="inv-btn ${afford ? "primary" : ""}" type="button" data-mu="buy" data-id="${escapeHtml(song.id)}" ${afford ? "" : "disabled"}>${afford ? "Buy" : "Need " + (song.price - wallet)} · ${Number(song.price).toLocaleString()}</button>`;
+            }
+
+            return `<div class="shop-card ${have ? "owned" : ""}">
+                <div class="shop-thumb sound">🎵</div>
+                <strong>${escapeHtml(song.name)}</strong>
+                <small>${musicFormatTime(song.seconds)} · ${priceText}</small>
+                <div class="shop-actions">
+                    <button class="inv-btn" type="button" data-mu="preview" data-id="${escapeHtml(song.id)}">${musicState.previewId === song.id ? "■ Stop" : "▶ Preview"}</button>
+                    ${action}
+                </div>
+            </div>`;
+        }).join("");
+}
+
+/* ---------- Inventory: Music + Minecraft Skins ---------- */
+
+function renderMusicTab() {
+    const owned = new Set(musicOwnedIds());
+    const selected = musicSelectedId();
+    const songs = musicSongList();
+
+    const rows = songs.filter(song => owned.has(song.id)).map(song => {
+        const on = selected === song.id;
+        return `<div class="inv-row">
+            <div><strong>🎵 ${escapeHtml(song.name)}</strong><small>${musicFormatTime(song.seconds)} · ${on ? (musicLoopOn(loadMafiaSettings()) ? "✅ Selected · loops" : "✅ Selected · plays once") : (song.free ? "Free song" : "Owned")}</small></div>
+            <div class="inv-actions">
+                <button class="inv-btn" type="button" data-mu="preview" data-id="${escapeHtml(song.id)}">${musicState.previewId === song.id ? "■ Stop" : "▶ Preview"}</button>
+                <button class="inv-btn ${on ? "" : "primary"}" type="button" data-mu="equip" data-id="${escapeHtml(song.id)}" ${on ? "disabled" : ""}>${on ? "Selected" : "Select"}</button>
+            </div>
+        </div>`;
+    }).join("");
+
+    const locked = songs.filter(song => !owned.has(song.id) && song.enabled !== false).length;
+    const hint = locked
+        ? `<p class="settings-muted" style="margin-top:10px">${locked} more song${locked === 1 ? "" : "s"} to unlock in 🛍️ Shop → Music.</p>`
+        : "";
+
+    return `<div class="settings-card"><h3>🎵 My Music</h3>${rows || '<div class="settings-muted">No songs yet.</div>'}${hint}<small class="settings-muted">Turn Loop on or off in Settings → Music or in Voice Chat → Music. Use the music control (bottom-right, or the 🎵 Music button in Voice Chat) to turn music ON/OFF or change the volume.</small></div>`;
+}
+
+function renderSkinsTab(p) {
+    const ownedSet = new Set(p.ownedMinecraftSkins || []);
+    const usingMc = p.characterStyle === "minecraft";
+    const list = mcSkinList().filter(([file]) => ownedSet.has(file));
+
+    const cards = list.map(([file, name]) => {
+        const equipped = usingMc && p.equippedMinecraftSkin === file;
+        return `<div class="shop-card ${equipped ? "equipped" : ""}"><div class="shop-thumb minecraft-skin-thumb"><img src="/skins/${encodeURIComponent(file)}.png" alt="${escapeHtml(name)}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='block'"><span style="display:none">🧍</span></div><strong>${escapeHtml(name)}</strong><small>${equipped ? "Equipped" : "Owned"}</small><div class="shop-actions"><button class="inv-btn ${equipped ? "" : "primary"}" type="button" data-inv="inv-mc-equip" data-file="${escapeHtml(file)}" ${equipped ? "disabled" : ""}>${equipped ? "Equipped" : "Equip"}</button></div></div>`;
+    }).join("");
+
+    const normalCard = `<div class="shop-card ${usingMc ? "" : "equipped"}"><div class="shop-thumb">${avatarHtml(Object.assign({}, myNormalLook()), 58, false)}</div><strong>Normal Character</strong><small>${usingMc ? "Roblox-style" : "Equipped"}</small><div class="shop-actions"><button class="inv-btn ${usingMc ? "primary" : ""}" type="button" data-inv="inv-char-style" data-style="current" ${usingMc ? "" : "disabled"}>${usingMc ? "Equip" : "Equipped"}</button></div></div>`;
+
+    const hint = list.length ? "" : `<p class="settings-muted" style="margin-top:10px">You don't own any Minecraft skins yet. Visit 🛍️ Shop → Character → Minecraft Style.</p>`;
+
+    return `
+        <div class="settings-card">
+            <div class="shop-preview">${avatarHtml(myLook(), 110, false)}<div><strong>${escapeHtml(authState.username)}</strong><br><small class="settings-muted">This is how other players see you.</small></div></div>
+        </div>
+        <div class="settings-card"><h3>⛏️ My Minecraft Skins</h3><div class="shop-grid">${normalCard}${cards}</div>${hint}</div>`;
+}
+
+/* ---------- Settings -> Music ---------- */
+
+function renderMusicSettingsPage(page) {
+    const st = loadMafiaSettings();
+    const song = musicSong(musicSelectedId());
+    const pct = Math.round(musicVolumeSetting(st) * 100);
+    const signedIn = Boolean(authState && authState.username);
+    const matchYes = st.musicInMatch !== false;
+
+    page.innerHTML = settingsHeader("🎵 MUSIC") + `
+        <div class="settings-card">
+            <div class="settings-row"><div><strong>Background Music</strong><small>OFF stops the music. ON plays it at your chosen volume. Master volume also affects it.</small></div><input id="musicSettingsOn" class="settings-switch" type="checkbox" ${st.musicOn ? "checked" : ""}></div>
+            <div class="settings-row sound-setting-row">
+                <div><strong>🔊 Music Volume</strong><small>Starts at 50%. You can also use the control at the bottom-right.</small></div>
+                <div class="settings-slider-wrap"><input id="musicSettingsVolume" class="settings-range" type="range" min="0" max="100" step="1" value="${pct}"><span id="musicSettingsVolumeValue" class="settings-value">${pct}%</span></div>
+            </div>
+        </div>
+        <div class="settings-card">
+            <h3>🎮 Play music in match</h3>
+            <div class="settings-row">
+                <div><strong>Play music in match</strong><small>If you choose No, background music pauses while a match is running. Your normal lobby music and controls stay separate.</small></div>
+                <div class="mw-yesno">
+                    <label><input type="radio" name="musicInMatch" value="yes" ${matchYes ? "checked" : ""}> Yes</label>
+                    <label><input type="radio" name="musicInMatch" value="no" ${matchYes ? "" : "checked"}> No</label>
+                </div>
+            </div>
+        </div>
+        <div class="settings-card">
+            <h3>🎶 Selected song</h3>
+            <div class="settings-row"><div><strong>${escapeHtml(song ? song.name : "—")}</strong><small id="musicSettingsSongInfo">${song ? musicFormatTime(song.seconds) : ""} · ${musicStatusText(st)} · ${song && song.free ? "Free song" : "Owned"}</small></div></div>
+            <div class="settings-row">
+                <div><strong>🔁 Loop song</strong><small>Yes: the song starts again from the beginning every time it ends. No: the song plays once and stops when it ends.</small></div>
+                <div class="mw-yesno">
+                    <label><input type="radio" name="musicLoop" data-music-loop="yes" ${musicLoopOn(st) ? "checked" : ""}> Yes</label>
+                    <label><input type="radio" name="musicLoop" data-music-loop="no" ${musicLoopOn(st) ? "" : "checked"}> No</label>
+                </div>
+            </div>
+            <small class="settings-muted">${signedIn ? "Choose another song in Inventory → Music. Buy more in Shop → Music." : "Guests can use the free song. Sign in to buy and choose more songs."}</small>
+            <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+                <button class="inv-btn" type="button" data-mu="open-inventory">🎒 Open Inventory</button>
+                <button class="inv-btn" type="button" data-mu="open-shop">🛍️ Open Shop</button>
+            </div>
+        </div>
+    `;
+
+    $("musicSettingsOn")?.addEventListener("change", event => setMusicSetting("musicOn", Boolean(event.target.checked)));
+
+    $("musicSettingsVolume")?.addEventListener("input", event => {
+        setMusicSetting("musicVolume", Number(event.target.value) / 100);
+    });
+
+    page.querySelectorAll("input[name='musicInMatch']").forEach(input => {
+        input.addEventListener("change", () => setMusicSetting("musicInMatch", input.value === "yes"));
+    });
+
+    page.querySelectorAll("input[name='musicLoop']").forEach(input => {
+        input.addEventListener("change", () => setMusicSetting("musicLoop", input.dataset.musicLoop === "yes"));
+    });
+}
+
+/* ---------- Owner: Shop Management (songs, skins, any item) ---------- */
+
+shopAdminCat = "__music";
+
+function adminToggleButton(id, enabled, label) {
+    return `<button class="inv-btn" type="button" data-mu="ad-toggle" data-id="${escapeHtml(id)}" data-enabled="${enabled ? 0 : 1}">${enabled ? "Disable" : "Enable"}${label || ""}</button>`;
+}
+
+function adminMusicHtml() {
+    const rows = musicSongList().map(song => `
+        <div class="shop-admin-row" data-song="${escapeHtml(song.id)}">
+            <div><strong>🎵 ${escapeHtml(song.name)}</strong> ${song.free ? "<small>(FREE song)</small>" : ""} ${song.enabled === false ? "<small>(disabled)</small>" : ""}<br>
+                <small class="settings-muted">${musicFormatTime(song.seconds)} · ${song.free ? "Free for everyone right now" : "Current price: " + Number(song.price).toLocaleString() + " points"}</small></div>
+            <div class="shop-admin-controls">
+                <input class="mu-price" type="number" min="0" max="1000000" step="1" value="${Number(song.price) || 0}">
+                <button class="inv-btn primary" type="button" data-mu="ad-song-save" data-id="${escapeHtml(song.id)}">Save</button>
+                <button class="inv-btn" type="button" data-mu="ad-song-reset" data-id="${escapeHtml(song.id)}">Reset</button>
+                ${song.free ? "" : `<button class="inv-btn" type="button" data-mu="ad-song-free" data-id="${escapeHtml(song.id)}">Make free</button>${adminToggleButton(song.id, song.enabled !== false)}`}
+            </div>
+        </div>`).join("");
+
+    return `<div class="settings-card"><h3>🎵 Songs</h3>${rows}<div class="mw-admin-note">Exactly one song is free. Making another song free turns the current free song into a normal paid song (players who bought it keep it).</div></div>`;
+}
+
+function adminSkinsHtml() {
+    const rows = mcSkinList().map(([file, name, price, enabled]) => `
+        <div class="shop-admin-row">
+            <div><strong>⛏️ ${escapeHtml(name)}</strong> ${enabled ? "" : "<small>(disabled)</small>"}<br><small class="settings-muted">public/skins/${escapeHtml(file)}.png · ${Number(price).toLocaleString()} points</small></div>
+            <div class="shop-admin-controls">
+                <input class="mu-skin-name" type="text" maxlength="30" value="${escapeHtml(name)}">
+                <input class="mu-price" type="number" min="0" max="1000000" step="1" value="${Number(price)}">
+                <button class="inv-btn primary" type="button" data-mu="ad-skin-save" data-file="${escapeHtml(file)}">Save</button>
+                ${adminToggleButton("skin:" + file, enabled)}
+                <button class="inv-btn danger" type="button" data-mu="ad-skin-remove" data-file="${escapeHtml(file)}">Remove</button>
+            </div>
+        </div>`).join("") || `<div class="settings-muted">No skins yet.</div>`;
+
+    return `
+        <div class="settings-card">
+            <h3>➕ Add Minecraft skin</h3>
+            <div class="mw-admin-add">
+                <input id="muSkinFile" type="text" maxlength="40" placeholder="Picture file name (without .png)" autocomplete="off">
+                <input id="muSkinName" type="text" maxlength="30" placeholder="Display name" autocomplete="off">
+                <input id="muSkinPrice" type="number" min="0" max="1000000" step="1" value="100" placeholder="Price">
+                <button class="inv-btn primary" type="button" data-mu="ad-skin-add">Add skin</button>
+            </div>
+            <div class="mw-admin-note">First put the picture in <strong>public/skins/&lt;file name&gt;.png</strong>, then add it here so it appears in the Shop.</div>
+        </div>
+        <div class="settings-card"><h3>⛏️ Minecraft skins</h3>${rows}</div>`;
+}
+
+function adminItemsHtml(cat) {
+    const rows = shopItemsIn(cat).filter(item => !item.free).map(item => `
+        <div class="shop-admin-row">
+            <div><strong>${escapeHtml(item.name)}</strong> ${item.enabled === false ? "<small>(disabled)</small>" : ""}<br><small class="settings-muted" id="adminNow_${item.id}">Current price: ${Number(item.price).toLocaleString()} points</small></div>
+            <div class="shop-admin-controls">
+                <input type="number" min="0" max="1000000" step="1" id="adminPrice_${item.id}" value="${item.price}">
+                <button class="inv-btn primary" type="button" data-inv="admin-save" data-id="${item.id}">Save</button>
+                <button class="inv-btn" type="button" data-inv="admin-reset" data-id="${item.id}">Reset</button>
+                ${adminToggleButton(item.id, item.enabled !== false)}
+            </div>
+        </div>`).join("") || `<div class="settings-muted">No priced items in this category.</div>`;
+
+    return `<div class="settings-card">${rows}</div>`;
+}
+
+renderShopAdminPage = function(page) {
+    if (myBadge !== "owner") {
+        page.innerHTML = settingsHeader("💰 SHOP MANAGEMENT") + `<div class="settings-card"><p>Only the Owner can manage the shop.</p></div>`;
+        return;
+    }
+
+    if (!shopCatalog) {
+        page.innerHTML = settingsHeader("💰 SHOP MANAGEMENT") + `<div class="settings-card"><p class="settings-muted">Loading…</p></div>`;
+        return;
+    }
+
+    const cats = shopCatalog.categories;
+    const valid = ["__music", "__skins", ...cats.map(c => c.key)];
+    if (!valid.includes(shopAdminCat)) shopAdminCat = "__music";
+
+    let body;
+    if (shopAdminCat === "__music") body = adminMusicHtml();
+    else if (shopAdminCat === "__skins") body = adminSkinsHtml();
+    else body = adminItemsHtml(shopAdminCat);
+
+    page.innerHTML = settingsHeader("💰 SHOP MANAGEMENT") + `
+        <div class="settings-admin-note">Changes apply immediately for every player. Items players already bought stay theirs. The server re-checks that you are the signed-in Owner.</div>
+        <div class="settings-card">
+            <div class="settings-row"><div><strong>Category</strong></div>
+                <select id="adminCat" class="inv-btn" data-inv="admin-cat">
+                    <option value="__music" ${shopAdminCat === "__music" ? "selected" : ""}>🎵 Music songs</option>
+                    <option value="__skins" ${shopAdminCat === "__skins" ? "selected" : ""}>⛏️ Minecraft skins</option>
+                    ${cats.map(c => `<option value="${c.key}" ${c.key === shopAdminCat ? "selected" : ""}>${c.icon} ${c.label}</option>`).join("")}
+                </select>
+            </div>
+        </div>
+        ${body}
+        <div class="shop-message" id="shopAdminMessage">${escapeHtml(shopAdminMessage)}</div>
+    `;
+};
+
+/* ---------- Click handling for all the new buttons ---------- */
+
+function ownerCall(eventName, payload, okText) {
+    socket.emit(eventName, payload, result => {
+        shopAdminNotice(result && result.ok ? (okText || "✅ Saved.") : ((result && result.error) || "Could not save."));
+    });
+}
+
+function handleMusicClick(event) {
+    const target = event.target.closest("[data-mu]");
+    if (!target) return;
+
+    const action = target.dataset.mu;
+    const id = target.dataset.id;
+    const row = target.closest(".shop-admin-row");
+
+    if (action === "preview") {
+        musicPreview(id);
+        renderSettingsPage(settingsView);
+    } else if (action === "equip") {
+        stopMusicPreview();
+        socket.emit("musicEquip", { id }, result => {
+            inventoryNotice(result && result.ok ? "🎵 Song selected. It now plays on repeat." : ((result && result.error) || "Could not select that song."));
+        });
+    } else if (action === "buy") {
+        target.disabled = true;
+        socket.emit("musicBuy", { id }, result => {
+            shopNotice(result && result.ok
+                ? `✅ Bought ${result.name}! Open Inventory → Music to select it.`
+                : ((result && result.error) || "Could not buy that song."));
+            if (result && result.ok) showShopToast(`🎵 ${result.name} is yours`);
+            else target.disabled = false;
+        });
+    } else if (action === "open-inventory") {
+        inventoryTab = "music";
+        settingsNav("inventory");
+    } else if (action === "open-shop") {
+        shopGroup = "music";
+        settingsNav("rewards");
+    } else if (action === "ad-toggle") {
+        ownerCall("ownerSetEnabled", { id, enabled: target.dataset.enabled === "1" }, "✅ Updated.");
+    } else if (action === "ad-song-save") {
+        ownerCall("ownerMusicSet", { id, price: row?.querySelector(".mu-price")?.value }, "✅ Song price saved.");
+    } else if (action === "ad-song-reset") {
+        ownerCall("ownerMusicSet", { id, reset: true }, "✅ Price reset to the default.");
+    } else if (action === "ad-song-free") {
+        ownerCall("ownerMusicSet", { id, free: true }, "✅ This song is now the free song.");
+    } else if (action === "ad-skin-save") {
+        ownerCall("ownerSkinSet", {
+            file: target.dataset.file,
+            name: row?.querySelector(".mu-skin-name")?.value,
+            price: row?.querySelector(".mu-price")?.value
+        }, "✅ Skin saved.");
+    } else if (action === "ad-skin-remove") {
+        if (confirm("Remove this skin from the Shop? Players who already own it keep it.")) {
+            ownerCall("ownerSkinRemove", { file: target.dataset.file }, "✅ Skin removed from the Shop.");
+        }
+    } else if (action === "ad-skin-add") {
+        ownerCall("ownerSkinAdd", {
+            file: $("muSkinFile")?.value,
+            name: $("muSkinName")?.value,
+            price: $("muSkinPrice")?.value
+        }, "✅ Skin added to the Shop.");
+    }
+}
+
+/* ---------- Hook the Music page + button into Settings ---------- */
+
+const renderSettingsPageBeforeMusic = renderSettingsPage;
+
+renderSettingsPage = function(view) {
+    const page = $("settingsPage");
+
+    if (page && !musicState.clickInstalled) {
+        musicState.clickInstalled = true;
+        page.addEventListener("click", handleMusicClick);
+    }
+
+    if (page && view === "music") {
+        // Keep the existing Account controls safe (same rule the other pages follow).
+        const accountInfo = $("accountInfo");
+        const accountChip = $("accountChip");
+        if (accountInfo && accountChip && accountInfo.parentElement !== accountChip) {
+            accountChip.appendChild(accountInfo);
+            accountInfo.style.display = "none";
+        }
+
+        renderMusicSettingsPage(page);
+        $("settingsBack")?.addEventListener("click", () => settingsNav("main"));
+        $("settingsClose")?.addEventListener("click", closeSettings);
+        return;
+    }
+
+    renderSettingsPageBeforeMusic(view);
+
+    if (view === "main" && page) {
+        const grid = page.querySelector(".settings-grid");
+        if (grid && !grid.querySelector("[data-music-button]")) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "settings-option settings-category";
+            button.dataset.musicButton = "1";
+            button.innerHTML = `<span class="settings-icon">🎵</span><span class="settings-copy"><strong>Music</strong><span>Background music, volume and match music</span></span>`;
+            button.addEventListener("click", () => settingsNav("music"));
+            grid.appendChild(button);
+        }
+    }
+};
