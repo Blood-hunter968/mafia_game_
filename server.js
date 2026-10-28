@@ -315,6 +315,7 @@ function ensureProgress(user) {
     if (typeof p.equipped.wallpaper !== "string") p.equipped.wallpaper = null;
     if (typeof p.equipped.logo !== "string") p.equipped.logo = null;
     if (!p.equipped.character || typeof p.equipped.character !== "object") p.equipped.character = {};
+    if (p.equipped.characterStyle !== "minecraft") p.equipped.characterStyle = "current";
 
     /* Shop wallet + owned items (see the SHOP section below). */
     if (!p.shop || typeof p.shop !== "object") p.shop = {};
@@ -322,6 +323,8 @@ function ensureProgress(user) {
     p.shop.earned = Math.max(0, Math.floor(Number(p.shop.earned) || 0));
     if (!Array.isArray(p.shop.owned)) p.shop.owned = [];
     if (!Array.isArray(p.shop.ownedMinecraftSkins)) p.shop.ownedMinecraftSkins = [];
+    if (!Array.isArray(p.shop.ownedSongs)) p.shop.ownedSongs = [];
+    if (typeof p.equipped.song !== "string") p.equipped.song = null;
 
     if (!p.shop.tagsMigrated) {
         p.shop.tagsMigrated = true;
@@ -441,8 +444,12 @@ function buildProgressPayload(accountKey, user) {
         shopPoints: p.shop.points,
         shopEarned: p.shop.earned,
         ownedItems: p.shop.owned.slice(),
+        ownedSongs: ownedSongIds(user),
+        equippedSong: equippedSongId(user),
+        freeSong: freeSongId(),
         ownedMinecraftSkins: p.shop.ownedMinecraftSkins.slice(),
         equippedMinecraftSkin: p.equipped.minecraftSkin || null,
+        characterStyle: p.equipped.characterStyle,
         look: getLookOfUser(user),
         level: info.level,
         xp: Math.floor(p.xp),
@@ -480,13 +487,13 @@ function buildProgressPayload(accountKey, user) {
    - To add a new item later, add ONE line to the catalog below.
 ========================================================= */
 
-const SHOP_POINTS_PER_GAME = 20;        // earned for completing a game
-const SHOP_POINTS_WIN_BONUS = 30;       // extra points for being on the winning side
+const SHOP_POINTS_PER_GAME = 10;        // shop points for a LOSS (finished game): +10
+const SHOP_POINTS_WIN_BONUS = 10;       // extra on a WIN, so a win = 10 + 10 = +20 shop points
 const GRANDFATHER_EXISTING_TAGS = true; // players who already unlocked tags by score keep them
 const MAX_SHOP_PRICE = 1000000;
 
-const CHARACTER_SLOTS = ["face", "hair", "shirt", "suit", "pants", "hat", "mask", "accessory"];
-const REQUIRED_SLOT_DEFAULTS = { face: "face_basic", shirt: "shirt_basic", pants: "pants_basic" };
+const CHARACTER_SLOTS = ["face", "hair", "shirt", "suit", "pants", "shoes", "hat", "mask", "accessory"];
+const REQUIRED_SLOT_DEFAULTS = { face: "face_basic", shirt: "shirt_basic", pants: "pants_basic", shoes: "shoes_basic" };
 
 const SHOP_CATEGORIES = [
     { key: "face",      group: "character", label: "Faces",       icon: "🙂" },
@@ -494,6 +501,7 @@ const SHOP_CATEGORIES = [
     { key: "shirt",     group: "character", label: "Shirts",      icon: "👕" },
     { key: "suit",      group: "character", label: "Suits",       icon: "🤵" },
     { key: "pants",     group: "character", label: "Pants",       icon: "👖" },
+    { key: "shoes",     group: "character", label: "Shoes",       icon: "👟" },
     { key: "hat",       group: "character", label: "Hats",        icon: "🎩" },
     { key: "mask",      group: "character", label: "Masks",       icon: "🎭" },
     { key: "accessory", group: "character", label: "Accessories", icon: "🕶️" },
@@ -559,7 +567,11 @@ function suitArt(color, tie, trim) {
     return `<rect x='26' y='59' width='48' height='46' rx='6' fill='${color}'/><rect x='13' y='61' width='15' height='32' rx='7' fill='${color}'/><rect x='72' y='61' width='15' height='32' rx='7' fill='${color}'/><path d='M42 60 L58 60 L50 82 Z' fill='#f4f4f4'/><path d='M50 64 L46.5 70 L50 90 L53.5 70 Z' fill='${tie}'/><path d='M42 60 L33 60 L47 90 L50 82 Z' fill='${trim}'/><path d='M58 60 L67 60 L53 90 L50 82 Z' fill='${trim}'/><circle cx='50' cy='96' r='1.6' fill='#111'/><circle cx='50' cy='102' r='1.6' fill='#111'/>`;
 }
 function pantsArt(color) {
-    return `<rect x='31' y='96' width='17' height='38' rx='3' fill='${color}'/><rect x='52' y='96' width='17' height='38' rx='3' fill='${color}'/><rect x='29' y='132' width='21' height='7' rx='3' fill='#1b1b1b'/><rect x='50' y='132' width='21' height='7' rx='3' fill='#1b1b1b'/>`;
+    /* Blocky Roblox-style legs. Shoes are now their own item (see shoesArt). */
+    return `<rect x='31' y='96' width='17' height='36' rx='2' fill='${color}'/><rect x='52' y='96' width='17' height='36' rx='2' fill='${color}'/>`;
+}
+function shoesArt(color, sole) {
+    return `<rect x='29' y='130' width='21' height='9' rx='2.5' fill='${color}'/><rect x='50' y='130' width='21' height='9' rx='2.5' fill='${color}'/><rect x='29' y='136' width='21' height='3' rx='1.5' fill='${sole || "#0e0e10"}'/><rect x='50' y='136' width='21' height='3' rx='1.5' fill='${sole || "#0e0e10"}'/>`;
 }
 shopAdd({ id: "shirt_basic",  cat: "shirt", name: "Grey Tee",       price: 0,   free: true, art: shirtArt("#8a8f98") });
 shopAdd({ id: "shirt_white",  cat: "shirt", name: "White Shirt",    price: 150, art: shirtArt("#f2f2f2", "<path d='M50 60 V102' stroke='#cfcfcf' stroke-width='1.2'/>") });
@@ -599,6 +611,16 @@ shopAdd({ id: "pants_camo",    cat: "pants", name: "Camo Pants",    price: 260, 
 shopAdd({ id: "pants_pinstripe", cat: "pants", name: "Pinstripe Pants", price: 280, art: pantsArt("#2a2a33") + "<g stroke='#6b6b78' stroke-width='.8'><path d='M36 96 V132 M42 96 V132 M58 96 V132 M64 96 V132'/></g>" });
 shopAdd({ id: "pants_leather", cat: "pants", name: "Leather Pants", price: 300, art: pantsArt("#101012") + "<g stroke='#4a4a54' stroke-width='1.4' stroke-linecap='round'><path d='M36 102 V118'/><path d='M57 102 V118'/></g>" });
 shopAdd({ id: "pants_gold",   cat: "pants", name: "Golden Pants",  price: 500, art: pantsArt("#c9a227") });
+
+/* ----- Shoes (Roblox-style blocky shoes) ----- */
+shopAdd({ id: "shoes_basic",   cat: "shoes", name: "Black Shoes",    price: 0,   free: true, art: shoesArt("#1b1b1b") });
+shopAdd({ id: "shoes_white",   cat: "shoes", name: "White Sneakers", price: 120, art: shoesArt("#f2f2f2", "#9a9a9a") });
+shopAdd({ id: "shoes_red",     cat: "shoes", name: "Red Sneakers",   price: 130, art: shoesArt("#c62828", "#f2f2f2") });
+shopAdd({ id: "shoes_blue",    cat: "shoes", name: "Blue Sneakers",  price: 130, art: shoesArt("#1e63c9", "#f2f2f2") });
+shopAdd({ id: "shoes_brown",   cat: "shoes", name: "Brown Boots",    price: 160, art: shoesArt("#6b4423", "#2a1a0c") });
+shopAdd({ id: "shoes_dress",   cat: "shoes", name: "Dress Shoes",    price: 180, art: shoesArt("#0b0b0d", "#3a3a40") });
+shopAdd({ id: "shoes_green",   cat: "shoes", name: "Green Sneakers", price: 130, art: shoesArt("#2e7d32", "#f2f2f2") });
+shopAdd({ id: "shoes_gold",    cat: "shoes", name: "Golden Shoes",   price: 400, art: shoesArt("#d4af37", "#8a6d12") });
 
 /* ----- Hats (the fedora is drawn; the rest are emoji) ----- */
 shopAdd({ id: "hat_cap",     cat: "hat", name: "Cap",         price: 150, emoji: { t: "🧢", x: 50, y: 27, s: 34 } });
@@ -689,7 +711,130 @@ const SHOP_ITEMS = new Map(SHOP_CATALOG.map(item => [item.id, item]));
 function ensureShopDb() {
     if (!accountsDb.shop || typeof accountsDb.shop !== "object") accountsDb.shop = {};
     if (!accountsDb.shop.prices || typeof accountsDb.shop.prices !== "object") accountsDb.shop.prices = {};
+    if (!accountsDb.shop.disabled || typeof accountsDb.shop.disabled !== "object") accountsDb.shop.disabled = {};
+    if (!accountsDb.shop.music || typeof accountsDb.shop.music !== "object") accountsDb.shop.music = {};
+    if (!accountsDb.shop.music.prices || typeof accountsDb.shop.music.prices !== "object") accountsDb.shop.music.prices = {};
+    if (!accountsDb.shop.skins || typeof accountsDb.shop.skins !== "object") accountsDb.shop.skins = {};
     return accountsDb.shop;
+}
+
+/* =========================================================
+   MUSIC SONGS + MINECRAFT SKIN CATALOG (owner-manageable)
+   - Put the 7 song files in  public/music/  (names below, exactly).
+   - Minecraft skin pictures live in  public/skins/<file>.png
+   - The Owner can change prices, choose the free song, enable / disable
+     items and add / remove skins. Everything is saved in accounts.json.
+========================================================= */
+
+const MUSIC_URL_DIR = "/music/";
+const DEFAULT_FREE_SONG = "song_funk";
+
+const MUSIC_SONGS = [
+    { id: "song_funk",     name: "FUNK CRIMINAL",             file: "FUNK CRIMINAL.mp3",             seconds: 83.25,  price: 300 },
+    { id: "song_control",  name: "M4GN - EL CONTROL",         file: "M4GN - EL CONTROL.mp3",         seconds: 99.79,  price: 300 },
+    { id: "song_elder",    name: "MONTAGEM ELDER (SLOWED)",   file: "MONTAGEM ELDER (SLOWED).mp3",   seconds: 100.75, price: 300 },
+    { id: "song_unknown",  name: "MONTAGEM UNKNOWN",          file: "MONTAGEM UNKNOWN.mp3",          seconds: 72.10,  price: 300 },
+    { id: "song_batidao",  name: "NO BATIDÃO (Extended)",     file: "NO BATIDÃO (Extended).mp3",     seconds: 318.56, price: 500 },
+    { id: "song_semtempo", name: "Sem Tempo",                 file: "Sem Tempo.mp3",                 seconds: 98.06,  price: 300 },
+    { id: "song_chubina",  name: "ჩუბინა",                    file: "ჩუბინა.mp3",                    seconds: 90.64,  price: 300 }
+];
+
+const DEFAULT_MINECRAFT_SKINS = {
+    "clownpierce": { name: "ClownPierce", price: 100 },
+    "flamefrags": { name: "FlameFrags", price: 100 },
+    "gloden king": { name: "Golden King", price: 100 },
+    "jaden_man": { name: "Jaden Man", price: 100 },
+    "jamatop": { name: "Jamatop", price: 100 },
+    "mafia": { name: "Mafia", price: 100 },
+    "manepear": { name: "ManePear", price: 100 },
+    "minetech": { name: "MineTech", price: 100 },
+    "ninja": { name: "Ninja", price: 100 },
+    "parrot": { name: "Parrot", price: 100 },
+    "parrotx2 king": { name: "ParrotX2 King", price: 100 },
+    "spoke": { name: "Spoke", price: 100 },
+    "steve": { name: "Steve", price: 100 },
+    "technoblade": { name: "Technoblade", price: 100 },
+    "theobalthebird": { name: "TheobaldTheBird", price: 100 },
+    "warroir": { name: "Warrior", price: 100 },
+    "wemmbu tech": { name: "Wemmbu Tech", price: 100 },
+    "wemmbu": { name: "Wemmbu", price: 100 },
+    "wifize": { name: "Wifize", price: 100 },
+    "wizerd": { name: "Wizard", price: 100 }
+};
+
+function isShopDisabled(id) {
+    return Boolean(ensureShopDb().disabled[id]);
+}
+
+function freeSongId() {
+    const id = ensureShopDb().music.freeId;
+    return MUSIC_SONGS.some(song => song.id === id) ? id : DEFAULT_FREE_SONG;
+}
+
+function songPriceOf(song) {
+    if (!song || song.id === freeSongId()) return 0;
+    const override = Number(ensureShopDb().music.prices[song.id]);
+    if (Number.isFinite(override) && override >= 0) return Math.floor(override);
+    return song.price;
+}
+
+function publicSong(song) {
+    return {
+        id: song.id,
+        name: song.name,
+        url: MUSIC_URL_DIR + encodeURIComponent(song.file),
+        seconds: song.seconds,
+        price: songPriceOf(song),
+        free: song.id === freeSongId(),
+        enabled: !isShopDisabled(song.id)
+    };
+}
+
+function ownsSong(user, songId) {
+    if (songId === freeSongId()) return true;
+    return ensureProgress(user).shop.ownedSongs.includes(songId);
+}
+
+function ownedSongIds(user) {
+    return MUSIC_SONGS.filter(song => ownsSong(user, song.id)).map(song => song.id);
+}
+
+function equippedSongId(user) {
+    const chosen = ensureProgress(user).equipped.song;
+    if (chosen && MUSIC_SONGS.some(song => song.id === chosen) && ownsSong(user, chosen)) return chosen;
+    return freeSongId();
+}
+
+function getSkinInfo(file) {
+    file = String(file || "");
+    const cfg = ensureShopDb().skins[file];
+    if (cfg && cfg.removed) return null;
+
+    const base = Object.prototype.hasOwnProperty.call(DEFAULT_MINECRAFT_SKINS, file) ? DEFAULT_MINECRAFT_SKINS[file] : null;
+    if (!base && !(cfg && cfg.custom)) return null;
+
+    const price = Number(cfg && cfg.price);
+    return {
+        file,
+        name: (cfg && cfg.name) || (base && base.name) || file,
+        price: Number.isFinite(price) && price >= 0 ? Math.floor(price) : (base ? base.price : 100),
+        enabled: !isShopDisabled("skin:" + file),
+        custom: !base
+    };
+}
+
+function publicSkins() {
+    const files = new Set([...Object.keys(DEFAULT_MINECRAFT_SKINS), ...Object.keys(ensureShopDb().skins)]);
+    return Array.from(files).map(getSkinInfo).filter(Boolean);
+}
+
+function shopConfigPayload() {
+    return {
+        songs: MUSIC_SONGS.map(publicSong),
+        skins: publicSkins(),
+        freeSong: freeSongId(),
+        disabled: { ...ensureShopDb().disabled }
+    };
 }
 
 /* The CURRENT price: Owner override if there is one, else the default. */
@@ -763,7 +908,8 @@ function publicShopItem(item) {
         cat: item.cat,
         name: item.name,
         price: shopPriceOf(item),
-        free: Boolean(item.free)
+        free: Boolean(item.free),
+        enabled: !isShopDisabled(item.id)
     };
     ["skin", "art", "emoji", "css", "tier", "icon"].forEach(key => {
         if (item[key] !== undefined) out[key] = item[key];
@@ -786,7 +932,7 @@ function shopOwns(user, item) {
 }
 
 function defaultLook() {
-    return { face: "face_basic", hair: null, shirt: "shirt_basic", suit: null, pants: "pants_basic", hat: null, mask: null, accessory: null };
+    return { face: "face_basic", hair: null, shirt: "shirt_basic", suit: null, pants: "pants_basic", shoes: "shoes_basic", hat: null, mask: null, accessory: null };
 }
 
 /* The character a player is wearing. Always valid: unowned / unknown items fall back to the default. */
@@ -800,6 +946,13 @@ function getLookOfUser(user) {
         const item = SHOP_ITEMS.get(saved[slot]);
         if (item && item.cat === slot && shopOwns(user, item)) look[slot] = item.id;
     });
+
+    /* Minecraft style: other players see the equipped Minecraft skin instead of the normal character. */
+    const prog = ensureProgress(user);
+    const mcSkin = prog.equipped.minecraftSkin;
+    if (prog.equipped.characterStyle === "minecraft" && mcSkin && prog.shop.ownedMinecraftSkins.includes(mcSkin)) {
+        look.minecraft = mcSkin;
+    }
 
     return look;
 }
@@ -1505,6 +1658,9 @@ function emitLobby(roomCode) {
             voiceChatAllowed:
                 room.voiceChatAllowed !== false,
 
+            detectiveCheckAnnounce:
+                room.detectiveCheckAnnounce !== false,
+
             voicePlayerIds:
                 getVoicePlayerIds(room),
 
@@ -1822,6 +1978,9 @@ function sendGameInformation(roomCode) {
 
                 voiceChatAllowed:
                     room.voiceChatAllowed !== false,
+
+                detectiveCheckAnnounce:
+                    room.detectiveCheckAnnounce !== false,
 
                 voicePlayerIds:
                     getVoicePlayerIds(room),
@@ -2382,8 +2541,24 @@ function endNight(roomCode) {
 
     let eliminatedPlayers = [];
 
+    // Grandma reflects the attack no matter what, so a Doctor protecting
+    // her does NOT count as a save.
+    const mafiaTargetIsGrandma =
+        Boolean(
+            mafiaTarget &&
+            room.players.some(
+                p => p.id === mafiaTarget &&
+                     p.alive &&
+                     p.role === "Grandma"
+            )
+        );
+
     const doctorSavedTarget =
-        Boolean(mafiaTarget && protectedPlayers.has(mafiaTarget));
+        Boolean(
+            mafiaTarget &&
+            !mafiaTargetIsGrandma &&
+            protectedPlayers.has(mafiaTarget)
+        );
 
     if (doctorSavedTarget) {
         room.stats.successfulSaves += 1;
@@ -2499,6 +2674,20 @@ function endNight(roomCode) {
 
     room.votes = {};
 
+    // Read these BEFORE the night actions are reset.
+    // Detective: did a Detective check a real Mafia member tonight?
+    // (Godfather shows as NOT MAFIA, so he does not count.)
+    const detectiveKnowsMafia =
+        room.detectiveCheckAnnounce !== false &&
+        Object.values(room.nightActions.detective || {}).some(targetId => {
+            const checked = room.players.find(p => p.id === targetId);
+            return Boolean(checked && isDetectiveMafia(checked.role));
+        });
+
+    // Doctor: did a Doctor actually choose someone tonight?
+    const doctorActed =
+        Object.keys(room.nightActions.doctor || {}).length > 0;
+
     resetNightActions(room);
 
     const names =
@@ -2506,19 +2695,32 @@ function endNight(roomCode) {
             p => p.name
         );
 
+    const detectiveLine =
+        detectiveKnowsMafia
+            ? " The detective knows one of the mafia."
+            : "";
+
     if (doctorSavedTarget) {
 
+        // Doctor protected the attacked player.
         announce(
             roomCode,
-            "☀️ The doctor saved someone. Nobody died tonight.",
+            "☀️ Nobody was eliminated. The doctor saved the person." + detectiveLine,
             "success"
         );
 
     } else if (names.length) {
 
+        // Someone died (this includes a Grandma reflect, which is never a save).
+        const verb = names.length > 1 ? "were" : "was";
+
+        const doctorLine = doctorActed
+            ? " The doctor saved the wrong person."
+            : " The doctor did not save the person.";
+
         announce(
             roomCode,
-            `☀️ ${names.join(", ")} died. The doctor did not save the person.`,
+            `☀️ ${names.join(", ")} ${verb} killed.${doctorLine}${detectiveLine}`,
             "danger"
         );
 
@@ -2526,7 +2728,7 @@ function endNight(roomCode) {
 
         announce(
             roomCode,
-            "☀️ Nobody died tonight.",
+            "☀️ Nobody died tonight." + detectiveLine,
             "info"
         );
     }
@@ -3666,7 +3868,10 @@ io.on(
                 slots: CHARACTER_SLOTS,
                 items: SHOP_CATALOG.map(publicShopItem),
                 pointsPerGame: SHOP_POINTS_PER_GAME,
-                winBonus: SHOP_POINTS_WIN_BONUS
+                winBonus: SHOP_POINTS_WIN_BONUS,
+                winPoints: SHOP_POINTS_PER_GAME + SHOP_POINTS_WIN_BONUS,
+                losePoints: SHOP_POINTS_PER_GAME,
+                ...shopConfigPayload()
             });
         });
 
@@ -3678,6 +3883,7 @@ io.on(
             jaden_man: { name: "Jaden Man", price: 100 },
             jamatop: { name: "Jamatop", price: 100 },
             maifa: { name: "Mafia", price: 100 },
+            mafia: { name: "Mafia", price: 100 },
             manepear: { name: "ManePear", price: 100 },
             minetech: { name: "MineTech", price: 100 },
             ninja: { name: "Ninja", price: 100 },
@@ -3699,8 +3905,9 @@ io.on(
             const reply = typeof callback === "function" ? callback : () => {};
             if (!ctx) return reply({ ok: false, error: "Sign in to buy skins." });
             const file = String(data?.file || "");
-            const skin = MINECRAFT_SKIN_SHOP[file];
+            const skin = getSkinInfo(file);   // price + name always come from the server catalog
             if (!skin) return reply({ ok: false, error: "Unknown Minecraft skin." });
+            if (!skin.enabled) return reply({ ok: false, error: "This skin is not for sale right now." });
             const progress = ensureProgress(ctx.user);
             if (progress.shop.ownedMinecraftSkins.includes(file)) {
                 return reply({ ok: false, error: "You already own this skin." });
@@ -3712,8 +3919,10 @@ io.on(
             progress.shop.points -= price;
             progress.shop.ownedMinecraftSkins.push(file);
             progress.equipped.minecraftSkin = file;
+            progress.equipped.characterStyle = "minecraft";
             saveAccounts();
             sendProgress(ctx, false);
+            refreshLookInRoom();
             return reply({ ok: true, file, name: skin.name, price, balance: progress.shop.points, ownedMinecraftSkins: progress.shop.ownedMinecraftSkins.slice() });
         });
 
@@ -3725,9 +3934,32 @@ io.on(
             const progress = ensureProgress(ctx.user);
             if (!progress.shop.ownedMinecraftSkins.includes(file)) return reply({ ok: false, error: "Buy this skin before equipping it." });
             progress.equipped.minecraftSkin = file;
+            progress.equipped.characterStyle = "minecraft";
             saveAccounts();
             sendProgress(ctx, false);
+            refreshLookInRoom();
             return reply({ ok: true, file });
+        });
+
+        /* Switch between the normal character and the Minecraft skin (Inventory -> Character). */
+        socket.on("characterStyleSet", (data, callback) => {
+            const ctx = progressionUser();
+            const reply = typeof callback === "function" ? callback : () => {};
+            if (!ctx) return reply({ ok: false, error: "Sign in first." });
+            const progress = ensureProgress(ctx.user);
+            const style = data?.style === "minecraft" ? "minecraft" : "current";
+            if (style === "minecraft") {
+                const file = String(data?.file || progress.equipped.minecraftSkin || "");
+                if (!progress.shop.ownedMinecraftSkins.includes(file)) {
+                    return reply({ ok: false, error: "Buy a Minecraft skin in the Shop first." });
+                }
+                progress.equipped.minecraftSkin = file;
+            }
+            progress.equipped.characterStyle = style;
+            saveAccounts();
+            sendProgress(ctx, false);
+            refreshLookInRoom();
+            return reply({ ok: true, style });
         });
 
         socket.on("shopBuy", (data, callback) => {
@@ -3737,6 +3969,7 @@ io.on(
 
             const item = SHOP_ITEMS.get(String(data?.id || ""));
             if (!item || item.free) return reply({ ok: false, error: "That item is not for sale." });
+            if (isShopDisabled(item.id)) return reply({ ok: false, error: "That item is not for sale right now." });
 
             const shop = ensureProgress(ctx.user).shop;
             if (shop.owned.includes(item.id)) return reply({ ok: false, error: "You already own this item." });
@@ -3886,6 +4119,195 @@ io.on(
             saveAccounts();
             io.emit("shopPricesUpdated", { prices: currentShopPrices() });
             reply({ ok: true, id: item.id, price: shopPriceOf(item) });
+        });
+
+        /* =================================================
+           MUSIC: buy + choose a song (account players only)
+        ================================================= */
+
+        socket.on("musicBuy", (data, callback) => {
+            const ctx = progressionUser();
+            const reply = typeof callback === "function" ? callback : () => {};
+            if (!ctx) return reply({ ok: false, error: "Sign in to buy songs." });
+
+            const song = MUSIC_SONGS.find(s => s.id === String(data?.id || ""));
+            if (!song) return reply({ ok: false, error: "Unknown song." });
+            if (ownsSong(ctx.user, song.id)) return reply({ ok: false, error: "You already own this song." });
+            if (isShopDisabled(song.id)) return reply({ ok: false, error: "This song is not for sale right now." });
+
+            const shop = ensureProgress(ctx.user).shop;
+            const price = songPriceOf(song);   // always the CURRENT server price
+
+            if (shop.points < price) {
+                return reply({ ok: false, error: `Not enough points. You need ${price - shop.points} more.` });
+            }
+
+            shop.points -= price;
+            shop.ownedSongs.push(song.id);
+
+            saveAccounts();
+            sendProgress(ctx, false);
+            reply({ ok: true, id: song.id, name: song.name, price, balance: shop.points });
+        });
+
+        socket.on("musicEquip", (data, callback) => {
+            const ctx = progressionUser();
+            const reply = typeof callback === "function" ? callback : () => {};
+            if (!ctx) return reply({ ok: false, error: "Sign in first." });
+
+            const song = MUSIC_SONGS.find(s => s.id === String(data?.id || ""));
+            if (!song || !ownsSong(ctx.user, song.id)) {
+                return reply({ ok: false, error: "You do not own that song." });
+            }
+
+            ensureProgress(ctx.user).equipped.song = song.id;
+            saveAccounts();
+            sendProgress(ctx, false);
+            reply({ ok: true, id: song.id });
+        });
+
+        /* =================================================
+           OWNER ONLY: manage songs, skins and shop items
+           The badge is stored on the server-side socket, so the browser
+           cannot fake it.
+        ================================================= */
+
+        function requireOwner(reply) {
+            if (socket.badge !== "owner" || !getSocketAccountKey(socket)) {
+                reply({ ok: false, error: "Only the signed-in Owner can do this." });
+                return false;
+            }
+            return true;
+        }
+
+        function ownerDone(reply) {
+            saveAccounts();
+            io.emit("shopConfigUpdated", shopConfigPayload());
+            reply({ ok: true, ...shopConfigPayload() });
+        }
+
+        function validPriceInput(value) {
+            const price = Math.floor(Number(value));
+            return Number.isFinite(price) && price >= 0 && price <= MAX_SHOP_PRICE ? price : null;
+        }
+
+        /* Enable / disable ONE shop item (catalog item id, song id, or "skin:<file>"). */
+        socket.on("ownerSetEnabled", (data, callback) => {
+            const reply = typeof callback === "function" ? callback : () => {};
+            if (!requireOwner(reply)) return;
+
+            const id = String(data?.id || "");
+            const enabled = Boolean(data?.enabled);
+            const shopDb = ensureShopDb();
+
+            const catalogItem = SHOP_ITEMS.get(id);
+            const song = MUSIC_SONGS.find(s => s.id === id);
+            const skinFile = id.startsWith("skin:") ? id.slice(5) : null;
+
+            if (catalogItem) {
+                if (catalogItem.free) return reply({ ok: false, error: "A free default item cannot be disabled." });
+            } else if (song) {
+                if (!enabled && song.id === freeSongId()) return reply({ ok: false, error: "The free song cannot be disabled." });
+            } else if (skinFile !== null) {
+                if (!getSkinInfo(skinFile)) return reply({ ok: false, error: "Unknown skin." });
+            } else {
+                return reply({ ok: false, error: "Unknown shop item." });
+            }
+
+            if (enabled) delete shopDb.disabled[id];
+            else shopDb.disabled[id] = true;
+
+            ownerDone(reply);
+        });
+
+        /* Change a song price and / or choose which song is the FREE one. */
+        socket.on("ownerMusicSet", (data, callback) => {
+            const reply = typeof callback === "function" ? callback : () => {};
+            if (!requireOwner(reply)) return;
+
+            const song = MUSIC_SONGS.find(s => s.id === String(data?.id || ""));
+            if (!song) return reply({ ok: false, error: "Unknown song." });
+
+            const musicDb = ensureShopDb().music;
+
+            if (data?.reset) {
+                delete musicDb.prices[song.id];
+            } else if (data?.price !== undefined) {
+                const price = validPriceInput(data.price);
+                if (price === null) return reply({ ok: false, error: `Price must be a number from 0 to ${MAX_SHOP_PRICE}.` });
+                musicDb.prices[song.id] = price;
+            }
+
+            if (data?.free === true) {
+                musicDb.freeId = song.id;
+                delete ensureShopDb().disabled[song.id];   // the free song is always available
+            }
+
+            ownerDone(reply);
+        });
+
+        /* Skins: add a new one (picture goes in public/skins/<file>.png), edit, or remove. */
+        socket.on("ownerSkinAdd", (data, callback) => {
+            const reply = typeof callback === "function" ? callback : () => {};
+            if (!requireOwner(reply)) return;
+
+            const file = String(data?.file || "").trim().replace(/\.png$/i, "");
+            const name = String(data?.name || "").trim().slice(0, 30);
+            const price = validPriceInput(data?.price);
+
+            if (!/^[A-Za-z0-9_ \-]{1,40}$/.test(file)) {
+                return reply({ ok: false, error: "File name: 1-40 letters, numbers, spaces, _ or - (no .png)." });
+            }
+            if (!name) return reply({ ok: false, error: "Enter a skin name." });
+            if (price === null) return reply({ ok: false, error: `Price must be a number from 0 to ${MAX_SHOP_PRICE}.` });
+            if (getSkinInfo(file)) return reply({ ok: false, error: "A skin with that file name already exists." });
+
+            ensureShopDb().skins[file] = { name, price, custom: true };
+            ownerDone(reply);
+        });
+
+        socket.on("ownerSkinSet", (data, callback) => {
+            const reply = typeof callback === "function" ? callback : () => {};
+            if (!requireOwner(reply)) return;
+
+            const file = String(data?.file || "");
+            if (!getSkinInfo(file)) return reply({ ok: false, error: "Unknown skin." });
+
+            const skins = ensureShopDb().skins;
+            const cfg = skins[file] = skins[file] && typeof skins[file] === "object" ? skins[file] : {};
+
+            if (data?.name !== undefined) {
+                const name = String(data.name || "").trim().slice(0, 30);
+                if (!name) return reply({ ok: false, error: "Enter a skin name." });
+                cfg.name = name;
+            }
+
+            if (data?.reset) {
+                delete cfg.price;
+            } else if (data?.price !== undefined) {
+                const price = validPriceInput(data.price);
+                if (price === null) return reply({ ok: false, error: `Price must be a number from 0 to ${MAX_SHOP_PRICE}.` });
+                cfg.price = price;
+            }
+
+            ownerDone(reply);
+        });
+
+        socket.on("ownerSkinRemove", (data, callback) => {
+            const reply = typeof callback === "function" ? callback : () => {};
+            if (!requireOwner(reply)) return;
+
+            const file = String(data?.file || "");
+            if (!getSkinInfo(file)) return reply({ ok: false, error: "Unknown skin." });
+
+            const shopDb = ensureShopDb();
+
+            // Players who already own it keep it; it just disappears from the Shop.
+            if (Object.prototype.hasOwnProperty.call(DEFAULT_MINECRAFT_SKINS, file)) shopDb.skins[file] = { removed: true };
+            else delete shopDb.skins[file];
+
+            delete shopDb.disabled["skin:" + file];
+            ownerDone(reply);
         });
 
         socket.on("uploadSound", (data, callback) => {
@@ -4204,6 +4626,27 @@ io.on(
         });
 
         /* =================================================
+           HOST DETECTIVE-CHECK ANNOUNCEMENT OPTION
+           YES = morning message adds "The detective knows one of the mafia."
+        ================================================= */
+
+        socket.on("setDetectiveCheckSetting", data => {
+            const roomCode = String(data?.roomCode || "").trim().toUpperCase();
+            const room = rooms[roomCode];
+
+            if (!room || room.host !== socket.id) return;
+            if (typeof data?.enabled !== "boolean") return;
+
+            room.detectiveCheckAnnounce = data.enabled;
+
+            if (room.phase === "lobby") {
+                emitLobby(roomCode);
+            } else {
+                sendGameInformation(roomCode);
+            }
+        });
+
+        /* =================================================
            CREATE ROOM
         ================================================= */
 
@@ -4251,6 +4694,11 @@ io.on(
 
                     // Voice chat: host can turn it off; maximum 5 voice players.
                     voiceChatAllowed: true,
+
+                    // Host option: show "The detective knows one of the mafia"
+                    // in the morning announcement.
+                    detectiveCheckAnnounce: true,
+
                     hiddenNightTurn: false,
                     nightEndTimer: null,
 
