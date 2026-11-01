@@ -1703,3 +1703,368 @@ html[data-mafia-theme="white"] .voice-allow-setting p {
 html[data-mafia-theme="white"] .role-settings input[type="radio"] {
     accent-color: var(--wt-blue);
 }
+
+/* =========================================================
+   OWNER-MADE ACCOUNTS
+   Start page note, Forgot link, Owner account screens,
+   Settings -> Account details
+========================================================= */
+
+.auth-discord-note { margin: 6px 0 0; text-align: center; color: #aaa; font: 700 13px/1.6 Arial, sans-serif; }
+.auth-discord-note a,
+.auth-forgot a { color: #e07a7a; text-decoration: underline; }
+.auth-discord-note a:hover,
+.auth-forgot a:hover { color: #ff9c9c; }
+
+.auth-forgot { text-align: center; font: 700 13px/1.5 Arial, sans-serif; }
+.auth-forgot-box {
+    margin-top: 10px; padding: 11px 13px; text-align: left; color: #ddd;
+    border: 1px solid rgba(180, 30, 30, .42); border-radius: 2px; background: rgba(0, 0, 0, .4);
+    font-weight: 400; word-break: break-word;
+}
+
+/* Owner: Add Account / List Accounts / Edit (these pages are reached from the Shop) */
+#settingsPage .mw-admin-add { display: grid; gap: 8px; }
+#settingsPage .mw-admin-add input {
+    width: 100%; padding: 9px 10px; border-radius: 4px; border: 1px solid rgba(255, 255, 255, .25);
+    background: rgba(0, 0, 0, .25); color: inherit; font: inherit;
+}
+#settingsPage .mw-admin-add input:focus { outline: none; border-color: #d33; }
+#settingsPage .mw-admin-note { margin-top: 8px; font-size: .85em; opacity: .75; }
+#settingsPage .shop-message { margin-top: 10px; min-height: 1.2em; font-size: .92em; }
+#settingsPage .shop-admin-row {
+    display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; align-items: center;
+    padding: 9px 0; border-bottom: 1px solid rgba(255, 255, 255, .08);
+}
+#settingsPage .shop-admin-row:last-child { border-bottom: 0; }
+#settingsPage .shop-admin-controls { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+
+/* Settings -> Account details card */
+#acctDetailsCard .settings-row small { word-break: break-all; }
+#acctDetailsCard .mw-admin-add { grid-template-columns: 1fr auto; margin: 4px 0 12px; }
+#acctPwShown, #acctPinShown { letter-spacing: 2px; }
+
+@media (max-width: 640px) {
+    #settingsPage .shop-admin-row { grid-template-columns: 1fr; }
+    #acctDetailsCard .mw-admin-add { grid-template-columns: 1fr; }
+}
+
+/* Owner: View Account + Give Gift */
+#settingsPage .acct-field-label { display: block; margin-top: 4px; font-size: .85em; opacity: .8; }
+#settingsPage .mw-admin-add select {
+    width: 100%; padding: 9px 10px; border-radius: 4px; border: 1px solid rgba(255, 255, 255, .25);
+    background: rgba(0, 0, 0, .25); color: inherit; font: inherit;
+}
+#settingsPage .mw-admin-add select option { background: #141414; color: #fff; }
+#settingsPage .inv-btn:disabled { opacity: .55; cursor: default; }
+
+/* =========================================================
+   14. SOUNDBOARD
+   Lives inside the Voice Chat panel (🎛️ SOUNDBOARD button) and in
+   the host's "Soundboard Permissions" section in the lobby.
+========================================================= */
+
+#voiceChatPanel { position: fixed; }
+#soundboardToast {
+    position: absolute; right: 0; bottom: calc(100% + 8px); max-width: min(300px, calc(100vw - 36px));
+    padding: 9px 13px; border: 1px solid rgba(255, 60, 60, .6); border-radius: 10px; color: #fff;
+    background: rgba(12, 12, 18, .96); font: 700 12px Arial, sans-serif; pointer-events: none;
+    opacity: 0; transform: translateY(8px); transition: opacity .25s, transform .25s;
+}
+#soundboardToast.sb-toast-show { opacity: 1; transform: none; }
+
+#voiceSoundboardPanel.sb-panel { max-height: 380px; padding: 10px 4px 4px; }
+.sb-note { margin: 0 0 10px; font-size: 12px; line-height: 1.4; opacity: .72; }
+
+.sb-volume-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.sb-mute {
+    flex: 0 0 auto; width: 38px; height: 34px; border: 1px solid rgba(255, 60, 60, .5); border-radius: 9px;
+    background: rgba(255, 255, 255, .07); color: #fff; font-size: 17px; cursor: pointer;
+}
+.sb-mute:hover { background: rgba(255, 40, 40, .2); }
+.sb-volume-row input[type="range"] { flex: 1; min-width: 0; accent-color: #d62828; }
+.sb-volume-label { flex: 0 0 auto; min-width: 46px; text-align: right; font: 800 11px Arial, sans-serif; opacity: .8; }
+
+.sb-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.sb-sound {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+    min-height: 74px; padding: 8px 4px; border: 1px solid rgba(200, 35, 35, .55); border-radius: 12px;
+    background: rgba(255, 255, 255, .06); color: #fff; cursor: pointer; transition: .15s ease;
+}
+.sb-sound:hover:not(:disabled) { transform: translateY(-2px); border-color: rgba(255, 70, 70, .95); background: rgba(255, 40, 40, .18); }
+.sb-sound:active:not(:disabled) { transform: scale(.96); }
+.sb-sound:disabled { cursor: not-allowed; opacity: .4; }
+.sb-grid.sb-cooling .sb-sound { opacity: .55; cursor: wait; }
+.sb-emoji { font-size: 24px; line-height: 1; }
+.sb-name { font: 700 10.5px Arial, sans-serif; line-height: 1.2; text-align: center; word-break: break-word; }
+
+.sb-status { min-height: 18px; margin-top: 10px; font-size: 12px; line-height: 1.35; color: #ffb4b4; }
+
+.sb-host-box { margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(200, 35, 35, .4); }
+.sb-host-box summary { cursor: pointer; font: 800 12px Arial, sans-serif; padding: 4px 0; }
+
+/* Permissions list (lobby section + voice panel) */
+.sb-host-section {
+    margin: 14px 0; padding: 12px; border: 2px solid rgba(220, 40, 40, .85); border-radius: 8px;
+    background: rgba(128, 128, 128, .08); box-shadow: 0 0 16px rgba(255, 0, 0, .18), inset 0 0 12px rgba(255, 0, 0, .06);
+}
+.sb-host-section h3 { margin-bottom: 4px; }
+.sb-host-section p { margin-bottom: 8px; font-size: 13px; opacity: .75; }
+.sb-perm-list { max-height: 220px; overflow-y: auto; margin: 6px 0 8px; }
+.sb-perm-row {
+    display: flex; align-items: center; gap: 9px; padding: 8px 9px; margin-bottom: 5px; cursor: pointer;
+    border: 1px solid rgba(190, 35, 35, .6); border-radius: 8px; background: rgba(128, 128, 128, .1);
+}
+.sb-perm-row:hover { border-color: rgba(255, 70, 70, .9); }
+.sb-perm-row input[type="checkbox"] { width: 18px; height: 18px; flex: 0 0 auto; accent-color: #b51f1f; }
+.sb-perm-row.sb-perm-guest { opacity: .5; cursor: not-allowed; }
+.sb-perm-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 700; }
+.sb-perm-tag { flex: 0 0 auto; font-size: 10px; opacity: .7; }
+.sb-empty { padding: 10px; text-align: center; font-size: 12px; opacity: .6; }
+
+.sb-update-button {
+    display: block; width: 100%; margin-top: 6px; padding: 11px 10px; cursor: pointer;
+    border: 2px solid #d42a2a; border-radius: 8px; color: #fff;
+    background: linear-gradient(180deg, rgba(130, 20, 20, .98), rgba(45, 5, 5, .99));
+    font: 800 12px var(--font-ui); letter-spacing: 1px; box-shadow: 0 0 12px rgba(255, 0, 0, .25);
+}
+.sb-update-button:hover { background: var(--btn-hi); border-color: #ff4444; }
+
+@media (max-width: 380px) {
+    .sb-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* =========================================================
+   15. LOBBY CHAT
+   Text chat under the player list (lobby only).
+========================================================= */
+
+.lobby-chat {
+    position: relative; margin: 18px 0; overflow: hidden; text-align: left;
+    border: 1px solid rgba(170, 35, 35, .6); border-radius: 12px;
+    background: linear-gradient(180deg, rgba(22, 22, 22, .97), rgba(5, 5, 5, .98));
+    box-shadow: 0 12px 34px rgba(0, 0, 0, .65), 0 0 20px rgba(255, 0, 0, .12);
+}
+.lobby-chat::before {
+    content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 3px;
+    background: linear-gradient(90deg, transparent, #c82020, #ff3333, #c82020, transparent);
+    box-shadow: 0 0 14px rgba(255, 0, 0, .6);
+}
+.lobby-chat-header {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 14px 14px 10px; border-bottom: 1px solid rgba(150, 30, 30, .35);
+}
+.lobby-chat-title { color: #eee; font-family: var(--font-title); font-size: 19px; letter-spacing: 2px; text-shadow: 0 0 14px rgba(190, 0, 0, .4); }
+.lobby-chat-hint {
+    padding: 3px 9px; border: 1px solid rgba(255, 60, 60, .45); border-radius: 20px; color: #ff9a9a;
+    background: rgba(120, 10, 10, .3); font: 700 10px Arial, sans-serif; letter-spacing: .5px; white-space: nowrap;
+}
+
+.lobby-chat-messages {
+    display: flex; flex-direction: column; gap: 8px; height: 240px; overflow-y: auto; padding: 12px;
+    scrollbar-width: thin; scrollbar-color: #8a1515 transparent;
+}
+.lobby-chat-messages::-webkit-scrollbar { width: 6px; }
+.lobby-chat-messages::-webkit-scrollbar-thumb { background: #8a1515; border-radius: 6px; }
+
+.lc-empty { margin: auto; color: #777; font-size: 14px; font-style: italic; text-align: center; }
+.lc-msg {
+    max-width: 84%; padding: 8px 12px; border-radius: 14px; font-family: Arial, sans-serif;
+    animation: lcPop .18s ease-out;
+}
+.lc-them { align-self: flex-start; border: 1px solid rgba(255, 255, 255, .09); border-bottom-left-radius: 4px; background: #1c1c1c; color: #e8e8e8; }
+.lc-me {
+    align-self: flex-end; border: 1px solid rgba(255, 70, 70, .55); border-bottom-right-radius: 4px; color: #fff;
+    background: linear-gradient(180deg, #a51b1b, #570a0a); box-shadow: 0 0 12px rgba(255, 0, 0, .18);
+}
+.lc-meta { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 3px; }
+.lc-name { font-size: 12px; font-weight: 800; color: #ff6b6b; }
+.lc-me .lc-name { color: #ffd0d0; }
+.lc-time { font-size: 10px; opacity: .55; }
+.lc-text { font-size: 14px; line-height: 1.4; word-break: break-word; overflow-wrap: anywhere; }
+
+.lobby-chat-input-row { display: flex; gap: 8px; padding: 10px 12px 12px; border-top: 1px solid rgba(150, 30, 30, .35); background: rgba(0, 0, 0, .35); }
+.lobby-chat-input-row input {
+    flex: 1; min-width: 0; padding: 11px 14px; border: 1px solid rgba(190, 35, 35, .6); border-radius: 10px;
+    outline: none; color: #fff; background: #0d0d0d; font: 14px Arial, sans-serif;
+}
+.lobby-chat-input-row input::placeholder { color: #777; }
+.lobby-chat-input-row input:focus { border-color: #ff4444; box-shadow: 0 0 0 2px rgba(255, 40, 40, .2); }
+.lobby-chat-input-row button {
+    flex: 0 0 auto; padding: 0 20px; border: 2px solid #d42a2a; border-radius: 10px; color: #fff; cursor: pointer;
+    background: linear-gradient(180deg, rgba(130, 20, 20, .98), rgba(45, 5, 5, .99));
+    font: 800 12px var(--font-ui); letter-spacing: 1px; transition: .15s ease;
+}
+.lobby-chat-input-row button:hover { background: var(--btn-hi); border-color: #ff4444; }
+.lobby-chat-input-row button:active { transform: scale(.96); }
+.lobby-chat-error { min-height: 0; padding: 0 14px; color: #ff7777; font: 12px Arial, sans-serif; }
+.lobby-chat-error:not(:empty) { padding-bottom: 10px; }
+
+@keyframes lcPop { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+@media (max-width: 700px) {
+    .lobby-chat-messages { height: 200px; }
+    .lc-msg { max-width: 92%; }
+    .lobby-chat-hint { display: none; }
+}
+
+/* Lobby player rows: full character + host crown on the head */
+#playerList li.lobby-player { min-height: 86px; padding: 12px 14px; }
+.lobby-avatar-wrap { position: relative; display: inline-block; flex: none; vertical-align: middle; margin-right: 8px; line-height: 0; }
+.lobby-avatar-wrap .mw-avatar { margin-right: 0; }
+.host-crown-head {
+    position: absolute; left: 50%; top: -5px; z-index: 2; font-size: 19px; line-height: 1;
+    transform: translateX(-50%) rotate(-6deg); pointer-events: none;
+    filter: drop-shadow(0 0 6px rgba(240, 200, 60, .85)) drop-shadow(0 2px 2px rgba(0, 0, 0, .8));
+}
+
+/* =========================================================
+   16. VIEW ACCOUNT button + card
+========================================================= */
+
+.view-account-btn {
+    flex: none; margin-left: auto; padding: 5px 10px; cursor: pointer;
+    border: 1px solid rgba(200, 35, 35, .75); border-radius: 20px; color: #fff;
+    background: rgba(120, 12, 12, .45); font: 800 10px var(--font-ui); letter-spacing: .6px; white-space: nowrap;
+    transition: .15s ease;
+}
+.view-account-btn:hover { background: rgba(190, 25, 25, .7); border-color: #ff4444; transform: translateY(-1px); }
+
+#accountCardOverlay {
+    position: fixed; inset: 0; z-index: 2147483200; display: none; align-items: center; justify-content: center;
+    padding: 16px; background: rgba(0, 0, 0, .72); backdrop-filter: blur(6px);
+}
+.ac-card {
+    position: relative; width: min(440px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; padding: 22px 18px 18px;
+    border: 1px solid rgba(190, 35, 35, .7); border-radius: 14px; color: #eee; font-family: Arial, sans-serif;
+    background: linear-gradient(180deg, rgba(24, 24, 24, .98), rgba(5, 5, 5, .99));
+    box-shadow: 0 20px 60px rgba(0, 0, 0, .8), 0 0 28px rgba(255, 0, 0, .18);
+    animation: lcPop .2s ease-out;
+}
+.ac-card::before {
+    content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 4px; border-radius: 14px 14px 0 0;
+    background: linear-gradient(90deg, transparent, #c82020, #ff3333, #c82020, transparent); box-shadow: 0 0 15px rgba(255, 0, 0, .6);
+}
+.ac-close {
+    position: absolute; top: 12px; right: 12px; width: 30px; height: 30px; border: 1px solid rgba(255, 255, 255, .15);
+    border-radius: 8px; color: #fff; background: rgba(255, 255, 255, .07); cursor: pointer;
+}
+.ac-close:hover { background: rgba(255, 40, 40, .25); }
+.ac-loading { padding: 40px 10px; text-align: center; color: #aaa; font-size: 14px; }
+
+.ac-top { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; padding-right: 30px; }
+.ac-avatar {
+    flex: none; display: flex; align-items: center; justify-content: center; padding: 8px 12px;
+    border: 1px solid rgba(190, 35, 35, .5); border-radius: 12px; background: rgba(0, 0, 0, .4);
+}
+.ac-avatar .mw-avatar { margin: 0; }
+.ac-who { min-width: 0; }
+.ac-name { font: 22px var(--font-title); letter-spacing: 1px; word-break: break-word; }
+.ac-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.ac-tag {
+    padding: 2px 9px; border: 1px solid rgba(200, 35, 35, .7); border-radius: 20px; color: #f2d0d0;
+    background: rgba(110, 18, 18, .5); font: 800 10px Arial, sans-serif; letter-spacing: 1px;
+}
+.ac-tag-host { border-color: rgba(240, 200, 60, .8); color: #ffe27a; background: rgba(120, 90, 10, .4); }
+.ac-tag-guest { border-color: rgba(150, 150, 150, .6); color: #bbb; background: rgba(80, 80, 80, .4); }
+.ac-guest-note { padding: 14px; border: 1px dashed rgba(190, 35, 35, .55); border-radius: 10px; color: #bbb; font-size: 14px; line-height: 1.5; text-align: center; }
+
+.ac-big { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
+.ac-big-box {
+    display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 10px 6px; text-align: center;
+    border: 1px solid rgba(190, 35, 35, .55); border-radius: 10px; background: rgba(120, 12, 12, .2);
+}
+.ac-big-box span { color: #999; font: 800 9px Arial, sans-serif; letter-spacing: 1.2px; }
+.ac-big-box strong { color: #fff; font: 24px var(--font-title); letter-spacing: 1px; }
+.ac-big-box small { color: #888; font-size: 10px; }
+
+.ac-level { margin-bottom: 12px; padding: 10px 12px; border: 1px solid rgba(255, 255, 255, .1); border-radius: 10px; background: rgba(255, 255, 255, .04); }
+.ac-level-top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 7px; font-size: 12px; }
+.ac-level-top strong { letter-spacing: 1px; }
+.ac-level-top span { color: #aaa; }
+.ac-bar { height: 9px; overflow: hidden; border-radius: 9px; background: #111; border: 1px solid rgba(255, 255, 255, .08); }
+.ac-bar-fill { height: 100%; border-radius: 9px; background: linear-gradient(90deg, #8a1515, #ff3b3b); box-shadow: 0 0 10px rgba(255, 40, 40, .6); }
+
+.ac-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; }
+.ac-stat {
+    display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 9px 4px; text-align: center;
+    border: 1px solid rgba(255, 255, 255, .09); border-radius: 9px; background: rgba(255, 255, 255, .04);
+}
+.ac-stat strong { font-size: 18px; color: #fff; }
+.ac-stat span { color: #999; font-size: 10px; line-height: 1.2; }
+
+.ac-medals { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 12px; }
+.ac-medals > span:first-child { color: #999; font: 800 9px Arial, sans-serif; letter-spacing: 1.2px; margin-right: 4px; }
+.ac-medal { font-size: 22px; filter: drop-shadow(0 0 6px rgba(255, 200, 60, .45)); cursor: help; }
+.ac-since { margin-top: 12px; color: #777; font-size: 11px; text-align: center; }
+
+@media (max-width: 480px) {
+    .ac-grid { grid-template-columns: repeat(2, 1fr); }
+    .ac-big-box strong { font-size: 20px; }
+    .view-account-btn { padding: 5px 8px; font-size: 9px; }
+}
+
+/* =========================================================
+   17. GAME CHATS (Public + Mafia) - same look as the lobby chat
+   Bubbles reuse .lc-msg / .lc-me / .lc-them from section 15.
+========================================================= */
+
+#gameScreen .chat-box {
+    position: relative; overflow: hidden; border-radius: 12px !important;
+    border: 1px solid rgba(170, 35, 35, .6) !important;
+    box-shadow: 0 12px 34px rgba(0, 0, 0, .65), 0 0 20px rgba(255, 0, 0, .12);
+}
+#gameScreen .chat-box::before {
+    content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 3px;
+    background: linear-gradient(90deg, transparent, #c82020, #ff3333, #c82020, transparent);
+    box-shadow: 0 0 14px rgba(255, 0, 0, .6);
+}
+#gameScreen .mafia-chat-box { border-color: rgba(220, 40, 40, .8) !important; box-shadow: 0 12px 34px rgba(0, 0, 0, .7), 0 0 26px rgba(255, 0, 0, .22); }
+
+.game-chat-header {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    margin: -4px 0 12px; padding-bottom: 10px; border-bottom: 1px solid rgba(150, 30, 30, .35);
+}
+.game-chat-header h2 {
+    margin: 0 !important; color: #eee !important; font-family: var(--font-title) !important;
+    font-size: 19px !important; letter-spacing: 2px; text-shadow: 0 0 14px rgba(190, 0, 0, .4);
+}
+.game-chat-hint {
+    flex: none; padding: 3px 9px; border: 1px solid rgba(255, 60, 60, .45); border-radius: 20px; color: #ff9a9a;
+    background: rgba(120, 10, 10, .3); font: 700 10px Arial, sans-serif; letter-spacing: .5px; white-space: nowrap;
+}
+
+#gameScreen #chatMessages, #gameScreen #mafiaChatMessages {
+    display: flex; flex-direction: column; gap: 8px; padding: 6px 4px 6px 2px;
+    border: 0 !important; border-radius: 0; background: transparent !important;
+    scrollbar-width: thin; scrollbar-color: #8a1515 transparent;
+}
+#chatMessages::-webkit-scrollbar, #mafiaChatMessages::-webkit-scrollbar { width: 6px; }
+#chatMessages::-webkit-scrollbar-thumb, #mafiaChatMessages::-webkit-scrollbar-thumb { background: #8a1515; border-radius: 6px; }
+#chatMessages:empty::before, #mafiaChatMessages:empty::before {
+    margin: auto; color: #777; font: italic 14px Arial, sans-serif; text-align: center;
+}
+#chatMessages:empty::before { content: "No messages yet. Say hi 👋"; }
+#mafiaChatMessages:empty::before { content: "Plan your night here 🔪"; }
+
+/* Mafia chat bubbles lean darker red */
+.mafia-chat-box .lc-them { background: #241010; border-color: rgba(200, 40, 40, .35); }
+.mafia-chat-box .lc-me { background: linear-gradient(180deg, #b11e1e, #4d0808); border-color: rgba(255, 90, 90, .7); }
+
+#gameScreen .chat-box .chat-input-row { gap: 8px; padding-top: 10px; border-top: 1px solid rgba(150, 30, 30, .35); }
+#gameScreen .chat-box .chat-input-row input {
+    height: 44px; padding: 11px 14px; border: 1px solid rgba(190, 35, 35, .6) !important; border-radius: 10px;
+    background: #0d0d0d; font: 14px Arial, sans-serif;
+}
+#gameScreen .chat-box .chat-input-row input::placeholder { color: #777; }
+#gameScreen .chat-box .chat-input-row input:focus { border-color: #ff4444 !important; box-shadow: 0 0 0 2px rgba(255, 40, 40, .2); }
+#gameScreen .chat-box .chat-input-row button {
+    height: 44px; min-width: 80px; border: 2px solid #d42a2a; border-radius: 10px; letter-spacing: 1px;
+    background: linear-gradient(180deg, rgba(130, 20, 20, .98), rgba(45, 5, 5, .99)); transition: .15s ease;
+}
+#gameScreen .chat-box .chat-input-row button:hover { background: var(--btn-hi); border-color: #ff4444; }
+#gameScreen .chat-box .chat-input-row button:active { transform: scale(.96); }
+
+@media (max-width: 700px) {
+    .game-chat-hint { display: none; }
+}
