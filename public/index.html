@@ -17,7 +17,7 @@
 <body>
 
     <!-- =====================================================
-         ACCOUNT SCREEN: SIGN UP / LOGIN / SKIP
+         ACCOUNT SCREEN: LOGIN / SKIP (accounts are made by the Owner)
     ====================================================== -->
     <section id="authScreen">
         <div class="home-container auth-card">
@@ -29,14 +29,18 @@
             <h1>Mafia Wars</h1>
 
             <div id="authMenu" class="auth-buttons">
-                <button id="authSignUpBtn" class="auth-btn" type="button">SIGN UP</button>
                 <button id="authLoginBtn" class="auth-btn" type="button">SIGN IN</button>
                 <button id="authSkipBtn" class="auth-btn auth-btn-dark" type="button">SKIP</button>
+
+                <p id="authDiscordNote" class="auth-discord-note">
+                    Want to make an account?
+                    <a href="https://discord.gg/rkzb2eBZz" target="_blank" rel="noopener noreferrer">Join our Discord server!</a>
+                </p>
             </div>
 
             <div id="authForm" class="auth-form" style="display:none;">
 
-                <h2 id="authFormTitle">Sign Up</h2>
+                <h2 id="authFormTitle">Login</h2>
 
                 <input id="authUsername" type="text" maxlength="20" placeholder="Username"
                        autocomplete="username" autocapitalize="off" spellcheck="false">
@@ -55,7 +59,16 @@
 
                 <div id="authMessage" class="auth-message"></div>
 
-                <button id="authSubmitBtn" class="auth-btn" type="button">MAKE ACCOUNT</button>
+                <button id="authSubmitBtn" class="auth-btn" type="button">LOGIN</button>
+
+                <div class="auth-forgot">
+                    <a href="#" id="authForgotLink">Forgot Password or PIN?</a>
+                    <div id="authForgotBox" class="auth-forgot-box" style="display:none;">
+                        Please contact our Discord server for assistance with your account.<br>
+                        Discord: <a href="https://discord.gg/rkzb2eBZz" target="_blank" rel="noopener noreferrer">https://discord.gg/rkzb2eBZz</a>
+                    </div>
+                </div>
+
                 <button id="authBackBtn" class="auth-btn auth-btn-dark" type="button">← BACK</button>
 
             </div>
@@ -136,12 +149,6 @@
             <div id="accountInfo" class="account-info" style="display:none;">
                 <div class="account-info-label">ACCOUNT INFO</div>
                 <div id="accountInfoName" class="account-info-name"></div>
-
-                <div class="account-info-label account-password-label">PASSWORD</div>
-                <div class="account-password-row">
-                    <span id="accountPasswordMasked" class="account-password-masked">••••••••</span>
-                    <button id="accountShowPasswordButton" class="account-show-password" type="button">🔒 SHOW PASSWORD</button>
-                </div>
 
                 <div class="account-points-card">
                     <div class="account-points-icon">🏆</div>
@@ -289,6 +296,20 @@
 
             <ul id="playerList"></ul>
 
+            <!-- LOBBY CHAT (text chat for players without a mic) -->
+            <div id="lobbyChat" class="lobby-chat">
+                <div class="lobby-chat-header">
+                    <span class="lobby-chat-title">💬 LOBBY CHAT</span>
+                    <span class="lobby-chat-hint">No mic? Type here</span>
+                </div>
+                <div id="lobbyChatMessages" class="lobby-chat-messages"></div>
+                <div class="lobby-chat-input-row">
+                    <input id="lobbyChatInput" type="text" maxlength="200" placeholder="Type a message..." autocomplete="off">
+                    <button id="lobbyChatSend" type="button">SEND</button>
+                </div>
+                <div id="lobbyChatError" class="lobby-chat-error"></div>
+            </div>
+
             <!-- WAITING MESSAGE -->
             <div id="waitingMessage" style="display:none;">
                 <h2>⏳ Waiting for the host</h2>
@@ -345,6 +366,14 @@
                 <label>Civilians
                     <input id="civilianCount" type="number" value="0" readonly>
                 </label>
+
+                <!-- SOUNDBOARD PERMISSIONS (host only; client.js fills in the player list) -->
+                <div id="soundboardHostSection" class="sb-host-section">
+                    <h3>🔊 Soundboard Permissions</h3>
+                    <p>Choose which registered players can play sounds. Guests can't be selected.</p>
+                    <div id="soundboardPermList" class="sb-perm-list"></div>
+                    <button id="soundboardPermUpdate" type="button" class="sb-update-button">✅ UPDATE PERMISSIONS</button>
+                </div>
 
                 <button id="startGame" type="button">🎮 START GAME</button>
 
@@ -604,6 +633,19 @@
                     </p>
                 </section>
 
+                <!-- SOUNDBOARD -->
+                <section class="guide-system">
+                    <h3>🎛️ SOUNDBOARD</h3>
+                    <span class="guide-status">CHANNEL // SOUND EFFECTS</span>
+                    <p>
+                        Open it with the 🎛️ SOUNDBOARD button inside the Voice Chat panel, in the lobby
+                        and during the game. Pick a sound and everyone in your room hears it.
+                        The host chooses which registered players can play sounds (guests cannot).
+                        Everyone can change their own volume or mute it. There is a short cooldown
+                        between sounds, so no spamming.
+                    </p>
+                </section>
+
                 <!-- SHOP -->
                 <section class="guide-system">
                     <h3>🛍️ SHOP & POINTS</h3>
@@ -632,24 +674,32 @@
 
                 <div class="guide-divider"></div>
 
-                <!-- FINAL WARNING -->
+               <!-- FINAL WARNING -->
                 <section class="guide-final">
-                    <h3>☠️ FINAL WARNING</h3>
+                    <h3>☠️ FINAL WARNING🎭 </h3>
 
                     <div class="guide-final-text">
-                        TRUST NO ONE.<br>
-                        WATCH EVERYONE.<br>
-                        QUESTION EVERYTHING.
+                       𝑻𝑹𝑼𝑺𝑻 𝑵𝑶 𝑶𝑵𝑬 <br>
+
+                       𝑾𝑨𝑻𝑪𝑯 𝑬𝑽𝑬𝑹𝒀𝑶𝑵𝑬 <br>
+
+                    𝑸𝑼𝑬𝑺𝑻𝑰𝑶𝑵 𝑬𝑽𝑬𝑹𝒀𝑻𝑯𝑰𝑵𝑮.
+
                     </div>
 
                     <p>
-                        THE NIGHT HAS EYES.<br>
-                        THE DAY HAS LIES.<br>
-                        THE MAFIA IS AMONG YOU.
+                      『  𝑻𝑯𝑬 𝑵𝑰𝑮𝑯𝑻 𝑯𝑨𝑺 𝑬𝒀𝑬𝑺  』<br>
+
+                       『  𝑻𝑯𝑬 𝑫𝑨𝒀 𝑯𝑨𝑺 𝑳𝑰𝑬𝑺  』<br>
+
+                       『  𝑻𝑯𝑬 𝑴𝑨𝑭𝑰𝑨 𝑰𝑺 𝑨𝑴𝑶𝑵𝑮 𝒀𝑶𝑼  』
+
                     </p>
 
-                    <h2>👑 MAFIA WARS</h2>
+                  
                     <strong>⚔️ ONLY THE SURVIVORS WRITE THE STORY.</strong>
+
+                    <h3> <strong>『 𝐓𝐑𝐔𝐒𝐓 𝐍𝐎 𝐎𝐍𝐄 • 𝐑𝐔𝐋𝐄 𝐓𝐇𝐄 𝐍𝐈𝐆𝐇𝐓 』</strong></h3>
                 </section>
 
             </div>
@@ -732,7 +782,7 @@
 
                     <!-- PUBLIC CHAT -->
                     <div class="chat-box public-chat-box">
-                        <h2>💬 Public Chat</h2>
+                        <div class="game-chat-header"><h2>💬 Public Chat</h2><span class="game-chat-hint">Everyone can read</span></div>
                         <div id="chatMessages"></div>
                         <div class="chat-input-row">
                             <input id="chatInput" type="text" maxlength="200" placeholder="Type a message...">
@@ -756,7 +806,7 @@
 
                     <!-- MAFIA CHAT -->
                     <div id="mafiaChatBox" class="chat-box mafia-chat-box" style="display:none;">
-                        <h2>🔴 Mafia Chat</h2>
+                        <div class="game-chat-header"><h2>🔴 Mafia Chat</h2><span class="game-chat-hint">🔒 Mafia only</span></div>
                         <div id="mafiaChatMessages"></div>
                         <div class="chat-input-row">
                             <input id="mafiaChatInput" type="text" maxlength="200" placeholder="Mafia message...">
