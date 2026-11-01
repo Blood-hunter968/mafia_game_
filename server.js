@@ -148,6 +148,71 @@ function isValidUsername(name) {
     return /^[A-Za-z0-9_]{3,20}$/.test(name);
 }
 
+/* ---------- Owner-created accounts: display name, secrets ---------- */
+
+const DISCORD_URL = "https://discord.gg/rkzb2eBZz";
+
+function cleanDisplayName(name) {
+    return String(name || "").replace(/\s+/g, " ").trim();
+}
+
+function isValidDisplayName(name) {
+    return /^[\p{L}\p{N}_. -]{3,20}$/u.test(name);
+}
+
+/* What other players see. The original username never changes. */
+function getDisplayName(user) {
+    return (user && (user.displayName || user.username)) || "";
+}
+
+/* True if another account already uses this name as a username or display name. */
+function isNameTaken(name, exceptKey) {
+    const lower = String(name).toLowerCase();
+    for (const [key, user] of Object.entries(accountsDb.users)) {
+        if (key === exceptKey) continue;
+        if (String(user.username).toLowerCase() === lower) return true;
+        if (user.displayName && String(user.displayName).toLowerCase() === lower) return true;
+    }
+    return false;
+}
+
+/* Logged-in players always use their account Display Name in rooms. */
+function resolvePlayerName(socket, typedName) {
+    const key = socketAccounts.get(socket.id);
+    const user = key ? accountsDb.users[key] : null;
+    return user ? getDisplayName(user) : typedName;
+}
+
+/* Same AES-GCM idea as encryptPassword, for reading a secret back with the OTHER credential. */
+function decryptSecret(encrypted, secret) {
+    try {
+        if (!encrypted?.salt || !encrypted.iv || !encrypted.tag || !encrypted.ciphertext) return null;
+        const key = crypto.scryptSync(String(secret), Buffer.from(encrypted.salt, "hex"), 32);
+        const decipher = crypto.createDecipheriv("aes-256-gcm", key, Buffer.from(encrypted.iv, "hex"));
+        decipher.setAuthTag(Buffer.from(encrypted.tag, "hex"));
+        return Buffer.concat([
+            decipher.update(Buffer.from(encrypted.ciphertext, "hex")),
+            decipher.final()
+        ]).toString("utf8");
+    } catch (_) {
+        return null;
+    }
+}
+
+async function verifyHash(secret, salt, expectedHex) {
+    if (!salt || !expectedHex) return false;
+    const attempt = await hashPassword(String(secret), salt);
+    const a = Buffer.from(attempt, "hex");
+    const b = Buffer.from(expectedHex, "hex");
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+function dropSessionsOf(accountKey) {
+    for (const [token, key] of accountSessions.entries()) {
+        if (key === accountKey) accountSessions.delete(token);
+    }
+}
+
 function emptyStats() {
     return { kills: 0, saves: 0, detects: 0, civilianVotes: 0, jesterWins: 0, mafiaWins: 0, civilianWins: 0 };
 }
@@ -157,11 +222,17 @@ function emptyStats() {
    1 Mafia team win = 5, 1 Civilian team win = 4. */
 const POINT_VALUES = { kills: 3, saves: 2, detects: 2, jesterWins: 4, civilianVotes: 1, mafiaWins: 5, civilianWins: 4 };
 
-function totalStats(stats) {
+/* Points the player EARNED from what they did in games. */
+function baseStatPoints(stats) {
     return STAT_KEYS.reduce(
         (sum, key) => sum + (Number(stats?.[key]) || 0) * (POINT_VALUES[key] || 0),
         0
     );
+}
+
+/* Rank points = earned points + the Owner's adjustment (stats.bonusPoints, can be negative). */
+function totalStats(stats) {
+    return Math.max(0, baseStatPoints(stats) + (Number(stats?.bonusPoints) || 0));
 }
 
 /* Adds +1 to one stat of an ACCOUNT player. Skip players are ignored. */
@@ -194,10 +265,31 @@ function syncAccountBadge(socket, force) {
 }
 
 /* Names only. Accounts only. Skip players never appear here. */
+/* Position of one account on the leaderboard (same order as the Ranks screen, but not limited to 100). */
+function getLeaderboardPosition(user) {
+    const mine = totalStats(user.stats);
+    let position = 1;
+    let count = 0;
+
+    for (const other of Object.values(accountsDb.users)) {
+        count++;
+        if (other === user) continue;
+
+        const total = totalStats(other.stats);
+
+        if (total > mine || (total === mine && String(other.username).localeCompare(String(user.username)) < 0)) {
+            position++;
+        }
+    }
+
+    return { position, count };
+}
+
 function getRanksList() {
     return Object.values(accountsDb.users)
         .map(user => ({
             username: user.username,
+            displayName: getDisplayName(user),
             badge: user.badge || "member",
             tier: getEquippedTierKey(user),
             total: totalStats(user.stats)
@@ -210,6 +302,7 @@ function getRanksList() {
         .map((user, index) => ({
             rank: index + 1,
             username: user.username,
+            displayName: user.displayName,
             badge: user.badge,
             tier: user.tier,
             points: user.total
@@ -230,6 +323,7 @@ function loginSocket(socket, accountKey, silent) {
         ok: true,
         guest: false,
         username: user.username,
+        displayName: getDisplayName(user),
         token,
         silent: Boolean(silent)
     });
@@ -492,11 +586,12 @@ const SHOP_POINTS_WIN_BONUS = 10;       // extra on a WIN, so a win = 10 + 10 = 
 const GRANDFATHER_EXISTING_TAGS = true; // players who already unlocked tags by score keep them
 const MAX_SHOP_PRICE = 1000000;
 
-const CHARACTER_SLOTS = ["face", "hair", "shirt", "suit", "pants", "shoes", "hat", "mask", "accessory"];
+const CHARACTER_SLOTS = ["face", "tone", "hair", "shirt", "suit", "pants", "shoes", "hat", "mask", "accessory"];
 const REQUIRED_SLOT_DEFAULTS = { face: "face_basic", shirt: "shirt_basic", pants: "pants_basic", shoes: "shoes_basic" };
 
 const SHOP_CATEGORIES = [
     { key: "face",      group: "character", label: "Faces",       icon: "🙂" },
+    { key: "tone",      group: "character", label: "Skin Tones",  icon: "🎨" },
     { key: "hair",      group: "character", label: "Hairstyles",  icon: "💇" },
     { key: "shirt",     group: "character", label: "Shirts",      icon: "👕" },
     { key: "suit",      group: "character", label: "Suits",       icon: "🤵" },
@@ -631,6 +726,23 @@ shopAdd({ id: "hat_tophat",  cat: "hat", name: "Top Hat",     price: 300, emoji:
 shopAdd({ id: "hat_crown",   cat: "hat", name: "Golden Crown", price: 800, emoji: { t: "👑", x: 50, y: 24, s: 34 } });
 
 /* ----- Masks (emoji over the face) ----- */
+/* ----- Skin tones (colors the head, neck and hands; works with any face) ----- */
+shopAdd({ id: "tone_porcelain", cat: "tone", name: "Porcelain", price: 80, skin: "#f8dcc6" });
+shopAdd({ id: "tone_fair", cat: "tone", name: "Fair", price: 80, skin: "#f1c9a5" });
+shopAdd({ id: "tone_light", cat: "tone", name: "Light", price: 80, skin: "#e8b98a" });
+shopAdd({ id: "tone_sand", cat: "tone", name: "Sand", price: 80, skin: "#d8a574" });
+shopAdd({ id: "tone_honey", cat: "tone", name: "Honey", price: 80, skin: "#cf9a63" });
+shopAdd({ id: "tone_bronze", cat: "tone", name: "Bronze", price: 80, skin: "#a9713f" });
+shopAdd({ id: "tone_caramel", cat: "tone", name: "Caramel", price: 80, skin: "#8d5524" });
+shopAdd({ id: "tone_mocha", cat: "tone", name: "Mocha", price: 80, skin: "#5c3a21" });
+shopAdd({ id: "tone_espresso", cat: "tone", name: "Espresso", price: 80, skin: "#3d2314" });
+shopAdd({ id: "tone_zombie", cat: "tone", name: "Zombie Green", price: 150, skin: "#7fb069" });
+shopAdd({ id: "tone_ocean", cat: "tone", name: "Ocean Blue", price: 150, skin: "#4a90d9" });
+shopAdd({ id: "tone_royal", cat: "tone", name: "Royal Purple", price: 150, skin: "#8e5bd0" });
+shopAdd({ id: "tone_blood", cat: "tone", name: "Blood Red", price: 150, skin: "#c0392b" });
+shopAdd({ id: "tone_ghost", cat: "tone", name: "Ghost Grey", price: 150, skin: "#b8bcc4" });
+shopAdd({ id: "tone_gold", cat: "tone", name: "Pure Gold", price: 250, skin: "#e6b800" });
+
 shopAdd({ id: "mask_surgical", cat: "mask", name: "Face Mask",    price: 300, emoji: { t: "😷", x: 50, y: 48, s: 38 } });
 shopAdd({ id: "mask_theatre",  cat: "mask", name: "Theatre Mask", price: 300, emoji: { t: "🎭", x: 50, y: 49, s: 50 } });
 shopAdd({ id: "mask_clown",    cat: "mask", name: "Clown Mask",   price: 350, emoji: { t: "🤡", x: 50, y: 49, s: 50 } });
@@ -932,7 +1044,7 @@ function shopOwns(user, item) {
 }
 
 function defaultLook() {
-    return { face: "face_basic", hair: null, shirt: "shirt_basic", suit: null, pants: "pants_basic", shoes: "shoes_basic", hat: null, mask: null, accessory: null };
+    return { face: "face_basic", tone: null, hair: null, shirt: "shirt_basic", suit: null, pants: "pants_basic", shoes: "shoes_basic", hat: null, mask: null, accessory: null };
 }
 
 /* The character a player is wearing. Always valid: unowned / unknown items fall back to the default. */
@@ -1626,6 +1738,7 @@ function getPublicPlayers(room, viewer) {
                 badge: getBadgeOf(player.id),
                 tier: getTierOfPlayer(player),
                 look: getLookOfPlayer(player),
+                registered: Boolean(player.account),
                 alive: player.alive,
                 role: visibleRole,
                 connected: true
@@ -1663,6 +1776,9 @@ function emitLobby(roomCode) {
 
             voicePlayerIds:
                 getVoicePlayerIds(room),
+
+            soundboardPlayerIds:
+                getSoundboardPlayerIds(room),
 
             roomCode
         }
@@ -1984,6 +2100,9 @@ function sendGameInformation(roomCode) {
 
                 voicePlayerIds:
                     getVoicePlayerIds(room),
+
+                soundboardPlayerIds:
+                    getSoundboardPlayerIds(room),
 
                 stats:
                     room.stats || {
@@ -3121,6 +3240,96 @@ function setRoomVoiceSettings(room, allowed, ids) {
     return null;
 }
 
+/* =========================================================
+   LOBBY CHAT (server side)
+   Text chat while the room is still in the lobby, so players
+   without a microphone can talk too. Checked here: the sender
+   must really be in the room, the room must be in the lobby,
+   and there is a spam limit. The last messages are kept so
+   people who join later can read them.
+========================================================= */
+
+const LOBBY_CHAT_MAX_LENGTH = 200;
+const LOBBY_CHAT_HISTORY = 50;
+const LOBBY_CHAT_MIN_GAP_MS = 600;
+const LOBBY_CHAT_BURST_LIMIT = 8;
+const LOBBY_CHAT_BURST_WINDOW_MS = 10000;
+
+function findRoomCodeBySocket(socketId) {
+    for (const code of Object.keys(rooms)) {
+        if (rooms[code]?.players?.some(p => p.id === socketId && p.connected !== false)) {
+            return code;
+        }
+    }
+
+    return null;
+}
+
+/* =========================================================
+   SOUNDBOARD (server side)
+   - 12 sounds. The audio files live in public/soundboard/.
+   - The HOST chooses which REGISTERED players may play sounds
+     (guests can never be selected). The host can always play.
+   - Everything is checked HERE, so a modified browser cannot play
+     without permission, spam sounds, or reach another room.
+========================================================= */
+
+const SOUNDBOARD_IDS = new Set([
+    "years", "amongus", "hisname", "cry", "explosion", "fahhhhh",
+    "fail", "funny", "goodboy", "hawwwww", "laugh", "omgbruh"
+]);
+
+const SOUNDBOARD_COOLDOWN_MS = 2000;        // per player, between two sounds
+const SOUNDBOARD_BURST_LIMIT = 6;           // max sounds per player ...
+const SOUNDBOARD_BURST_WINDOW_MS = 20000;   // ... inside this window
+const SOUNDBOARD_ROOM_GAP_MS = 400;         // whole room: minimum gap between sounds
+
+function isRegisteredPlayer(player) {
+    return Boolean(player && player.account);
+}
+
+function getSoundboardPlayerIds(room) {
+    if (!room) return [];
+
+    return room.players
+        .filter(p => p.soundboardAllowed && isRegisteredPlayer(p) && p.connected !== false)
+        .map(p => p.id);
+}
+
+function canPlaySoundboard(room, player) {
+    if (!room || !player || player.connected === false) return false;
+
+    return room.host === player.id ||
+        Boolean(player.soundboardAllowed && isRegisteredPlayer(player));
+}
+
+/* Returns an error string, or null when the host's selection was applied. */
+function setRoomSoundboardPermissions(room, ids) {
+    const unique = Array.from(new Set(
+        (Array.isArray(ids) ? ids : []).map(id => String(id))
+    ));
+
+    const chosen = [];
+
+    for (const id of unique) {
+        const player = room.players.find(p => p.id === id && p.connected !== false);
+
+        if (!player) continue;
+
+        if (!isRegisteredPlayer(player)) {
+            return "Guest players cannot use the soundboard. Only registered players can be selected.";
+        }
+
+        chosen.push(id);
+    }
+
+    room.players.forEach(p => {
+        p.soundboardAllowed = chosen.includes(p.id) && isRegisteredPlayer(p);
+    });
+
+    return null;
+}
+
 function getVoiceGroup(room, player) {
     if (!room || !player || player.connected === false) return "none";
 
@@ -3565,81 +3774,15 @@ io.on(
            ACCOUNTS: SIGN UP / LOGIN / SKIP / RANKS
         ================================================= */
 
-        socket.on("signUp", async data => {
-            try {
-                const username = String(data?.username || "").trim();
-                const password = String(data?.password || "");
-                const pin = String(data?.pin || "");
-
-                if (!isValidUsername(username)) {
-                    return socket.emit("authResult", {
-                        ok: false,
-                        error: "Username must be 3-20 letters, numbers or _ only."
-                    });
-                }
-
-                if (password.length < 6 || password.length > 72) {
-                    return socket.emit("authResult", {
-                        ok: false,
-                        error: "Password must be 6-72 characters."
-                    });
-                }
-
-                if (!isValidPin(pin)) {
-                    return socket.emit("authResult", {
-                        ok: false,
-                        error: "PIN must be 4-8 digits."
-                    });
-                }
-
-                const key = username.toLowerCase();
-
-                if (accountsDb.users[key]) {
-                    return socket.emit("authResult", {
-                        ok: false,
-                        error: "That username is already taken."
-                    });
-                }
-
-                const salt = crypto.randomBytes(16).toString("hex");
-                const hash = await hashPassword(password, salt);
-                const pinSalt = crypto.randomBytes(16).toString("hex");
-                const pinHash = await hashPassword(pin, pinSalt);
-                const passwordEncrypted = {
-                    salt: pinSalt,
-                    ...encryptPassword(password, pin, pinSalt)
-                };
-
-                // Check again: someone may have taken it while hashing.
-                if (accountsDb.users[key]) {
-                    return socket.emit("authResult", {
-                        ok: false,
-                        error: "That username is already taken."
-                    });
-                }
-
-                accountsDb.users[key] = {
-                    username,
-                    salt,
-                    hash,
-                    pinSalt,
-                    pinHash,
-                    passwordEncrypted,
-                    created: Date.now(),
-                    stats: emptyStats()
-                };
-
-                saveAccounts();
-                loginSocket(socket, key, false);
-            } catch (error) {
-                console.error("signUp error:", error);
-                socket.emit("authResult", {
-                    ok: false,
-                    error: "Something went wrong. Try again."
-                });
-            }
+        /* Public sign-up is closed: accounts are made by the Owner (Shop -> Add Account). */
+        socket.on("signUp", () => {
+            socket.emit("authResult", {
+                ok: false,
+                error: "Want to make an account? Join our Discord server: " + DISCORD_URL
+            });
         });
 
+        /* Login needs ALL THREE to match: username, password and PIN. */
         socket.on("login", async data => {
             try {
                 const now = Date.now();
@@ -3661,10 +3804,7 @@ io.on(
                 let validPin = false;
 
                 if (user && password.length <= 72) {
-                    const attempt = await hashPassword(password, user.salt);
-                    const a = Buffer.from(attempt, "hex");
-                    const b = Buffer.from(user.hash, "hex");
-                    validPassword = a.length === b.length && crypto.timingSafeEqual(a, b);
+                    validPassword = await verifyHash(password, user.salt, user.hash);
                 } else {
                     // Same amount of work for unknown users.
                     await hashPassword(password.slice(0, 72), "0000000000000000");
@@ -3672,10 +3812,7 @@ io.on(
 
                 if (user && isValidPin(pin)) {
                     if (user.pinHash && user.pinSalt) {
-                        const pinAttempt = await hashPassword(pin, user.pinSalt);
-                        const a = Buffer.from(pinAttempt, "hex");
-                        const b = Buffer.from(user.pinHash, "hex");
-                        validPin = a.length === b.length && crypto.timingSafeEqual(a, b);
+                        validPin = await verifyHash(pin, user.pinSalt, user.pinHash);
                     } else if (validPassword) {
                         // Backwards-compatible migration for accounts created before PIN support.
                         user.pinSalt = crypto.randomBytes(16).toString("hex");
@@ -3697,13 +3834,36 @@ io.on(
                         socket.data.authLockUntil = Date.now() + 30000;
                     }
 
+                    // One message for every case, so nobody can learn which part was right.
                     return socket.emit("authResult", {
                         ok: false,
-                        error: !validPassword ? "Wrong username or password." : "Wrong PIN."
+                        error: "Username, password or PIN is incorrect."
                     });
                 }
 
                 socket.data.authFails = 0;
+
+                // Both credentials are known right now, so (re)build the two "show" secrets.
+                let changed = false;
+
+                if (!user.passwordEncrypted?.ciphertext) {
+                    user.passwordEncrypted = {
+                        salt: user.pinSalt,
+                        ...encryptPassword(password, pin, user.pinSalt)
+                    };
+                    changed = true;
+                }
+
+                if (!user.pinEncrypted?.ciphertext) {
+                    user.pinEncrypted = {
+                        salt: user.salt,
+                        ...encryptPassword(pin, password, user.salt)
+                    };
+                    changed = true;
+                }
+
+                if (changed) saveAccounts();
+
                 loginSocket(socket, key, false);
             } catch (error) {
                 console.error("login error:", error);
@@ -3711,6 +3871,536 @@ io.on(
                     ok: false,
                     error: "Something went wrong. Try again."
                 });
+            }
+        });
+
+        /* =================================================
+           OWNER ONLY: ACCOUNT MANAGEMENT (Shop -> Add Account)
+           The server checks the Owner badge on every call.
+        ================================================= */
+
+        function requireOwnerAccounts(reply) {
+            if (socket.badge !== "owner") {
+                reply({ ok: false, error: "Only the Owner can manage accounts." });
+                return false;
+            }
+            return true;
+        }
+
+        function checkNewCredentials({ username, password, pin }, needAll) {
+            if (needAll || username !== undefined) {
+                if (!isValidUsername(username)) return "Username must be 3-20 letters, numbers or _ only.";
+            }
+            if (needAll || password) {
+                if (password.length < 6 || password.length > 72) return "Password must be 6-72 characters.";
+            }
+            if (needAll || pin) {
+                if (!isValidPin(pin)) return "PIN must be 4-8 digits.";
+            }
+            return null;
+        }
+
+        socket.on("ownerAccountAdd", async (data, callback) => {
+            const reply = typeof callback === "function" ? callback : () => {};
+
+            try {
+                if (!requireOwnerAccounts(reply)) return;
+
+                const username = String(data?.username || "").trim();
+                const password = String(data?.password || "");
+                const pin = String(data?.pin || "");
+
+                const problem = checkNewCredentials({ username, password, pin }, true);
+                if (problem) return reply({ ok: false, error: problem });
+
+                const key = username.toLowerCase();
+
+                if (accountsDb.users[key] || isNameTaken(username, null)) {
+                    return reply({ ok: false, error: "That username is already taken." });
+                }
+
+                const salt = crypto.randomBytes(16).toString("hex");
+                const hash = await hashPassword(password, salt);
+                const pinSalt = crypto.randomBytes(16).toString("hex");
+                const pinHash = await hashPassword(pin, pinSalt);
+
+                // Check again: something may have changed while hashing.
+                if (accountsDb.users[key]) {
+                    return reply({ ok: false, error: "That username is already taken." });
+                }
+
+                accountsDb.users[key] = {
+                    username,
+                    salt,
+                    hash,
+                    pinSalt,
+                    pinHash,
+                    passwordEncrypted: { salt: pinSalt, ...encryptPassword(password, pin, pinSalt) },
+                    pinEncrypted: { salt, ...encryptPassword(pin, password, salt) },
+                    created: Date.now(),
+                    createdBy: "owner",
+                    stats: emptyStats()
+                };
+
+                saveAccounts();
+                reply({ ok: true, username });
+            } catch (error) {
+                console.error("ownerAccountAdd error:", error);
+                reply({ ok: false, error: "Could not add the account." });
+            }
+        });
+
+        /* Never sends hashes or secrets. */
+        socket.on("ownerAccountList", callback => {
+            const reply = typeof callback === "function" ? callback : () => {};
+            if (!requireOwnerAccounts(reply)) return;
+
+            const accounts = Object.values(accountsDb.users)
+                .map(user => ({
+                    username: user.username,
+                    displayName: getDisplayName(user),
+                    created: user.created || 0,
+                    createdByOwner: user.createdBy === "owner"
+                }))
+                .sort((a, b) => b.created - a.created || a.username.localeCompare(b.username));
+
+            reply({ ok: true, accounts });
+        });
+
+        /* Edit: a new username and/or a NEW password and/or a NEW PIN (blank = unchanged).
+           A new username keeps everything else: points, items, uploads, Help posts. */
+        socket.on("ownerAccountEdit", async (data, callback) => {
+            const reply = typeof callback === "function" ? callback : () => {};
+
+            try {
+                if (!requireOwnerAccounts(reply)) return;
+
+                const key = String(data?.username || "").trim().toLowerCase();
+                const user = accountsDb.users[key];
+                if (!user) return reply({ ok: false, error: "Account not found." });
+
+                const wantedName = String(data?.newUsername ?? "").trim();
+                const renaming = wantedName !== "" && wantedName !== user.username;
+                const password = String(data?.password || "");
+                const pin = String(data?.pin || "");
+
+                if (!renaming && !password && !pin) {
+                    return reply({ ok: false, error: "Change the username, or type a new password or a new PIN." });
+                }
+
+                const problem = checkNewCredentials({
+                    username: renaming ? wantedName : undefined,
+                    password,
+                    pin
+                }, false);
+                if (problem) return reply({ ok: false, error: problem });
+
+                const newKey = renaming ? wantedName.toLowerCase() : key;
+
+                if (renaming && ((newKey !== key && accountsDb.users[newKey]) || isNameTaken(wantedName, key))) {
+                    return reply({ ok: false, error: "That username is already taken." });
+                }
+
+                let newSalt = null, newHash = null, newPinSalt = null, newPinHash = null;
+
+                if (password) {
+                    newSalt = crypto.randomBytes(16).toString("hex");
+                    newHash = await hashPassword(password, newSalt);
+                }
+
+                if (pin) {
+                    newPinSalt = crypto.randomBytes(16).toString("hex");
+                    newPinHash = await hashPassword(pin, newPinSalt);
+                }
+
+                // Check again: something may have changed while hashing.
+                if (accountsDb.users[key] !== user) return reply({ ok: false, error: "Account not found." });
+                if (renaming && newKey !== key && accountsDb.users[newKey]) {
+                    return reply({ ok: false, error: "That username is already taken." });
+                }
+
+                // The player's uploaded files live in a folder named after the username: move it first.
+                // If that fails nothing has been changed yet.
+                if (renaming && newKey !== key) {
+                    try {
+                        const from = userUploadDir(key);
+                        const to = userUploadDir(newKey);
+
+                        if (fs.existsSync(from)) {
+                            if (fs.existsSync(to)) {
+                                return reply({ ok: false, error: "That username already has a files folder. Pick another." });
+                            }
+                            fs.renameSync(from, to);
+                        }
+                    } catch (error) {
+                        console.error("ownerAccountEdit: could not move uploads:", error);
+                        return reply({ ok: false, error: "Could not move the player's files. Nothing was changed." });
+                    }
+                }
+
+                if (password) { user.salt = newSalt; user.hash = newHash; }
+                if (pin) { user.pinSalt = newPinSalt; user.pinHash = newPinHash; }
+
+                if (password || pin) {
+                    if (password && pin) {
+                        user.passwordEncrypted = { salt: user.pinSalt, ...encryptPassword(password, pin, user.pinSalt) };
+                        user.pinEncrypted = { salt: user.salt, ...encryptPassword(pin, password, user.salt) };
+                    } else {
+                        // Only one changed: the other credential is unknown here, so the
+                        // "show" secrets are rebuilt the next time the player logs in.
+                        user.passwordEncrypted = null;
+                        user.pinEncrypted = null;
+                    }
+
+                    dropSessionsOf(key);   // a changed password / PIN signs the player out everywhere
+                }
+
+                if (renaming) {
+                    user.username = wantedName;
+
+                    if (newKey !== key) {
+                        accountsDb.users[newKey] = user;
+                        delete accountsDb.users[key];
+
+                        // Everything that points at the old username now points at the new one,
+                        // so the player stays signed in and keeps their room seat.
+                        for (const [token, accountKey] of accountSessions.entries()) {
+                            if (accountKey === key) accountSessions.set(token, newKey);
+                        }
+
+                        for (const [socketId, accountKey] of socketAccounts.entries()) {
+                            if (accountKey === key) socketAccounts.set(socketId, newKey);
+                        }
+
+                        for (const room of Object.values(rooms)) {
+                            if (!room?.players) continue;
+                            for (const player of room.players) {
+                                if (player.account === key) player.account = newKey;
+                            }
+                        }
+
+                        let questionsChanged = false;
+
+                        for (const question of questionsDb) {
+                            if (question.authorAccountKey === key) {
+                                question.authorAccountKey = newKey;
+                                question.author = wantedName;
+                                questionsChanged = true;
+                            }
+
+                            for (const answer of (Array.isArray(question.replies) ? question.replies : [])) {
+                                if (answer.authorAccountKey === key) {
+                                    answer.authorAccountKey = newKey;
+                                    answer.author = wantedName;
+                                    questionsChanged = true;
+                                }
+                            }
+                        }
+
+                        if (questionsChanged) {
+                            saveQuestions();
+                            emitQuestionsUpdate();
+                        }
+                    }
+
+                    // Tell the player's open game so it shows the new name straight away.
+                    for (const [socketId, accountKey] of socketAccounts.entries()) {
+                        if (accountKey === newKey) {
+                            io.sockets.sockets.get(socketId)?.emit("accountRenamed", {
+                                username: user.username,
+                                displayName: getDisplayName(user)
+                            });
+                        }
+                    }
+                }
+
+                saveAccounts();
+                reply({ ok: true, username: user.username });
+            } catch (error) {
+                console.error("ownerAccountEdit error:", error);
+                reply({ ok: false, error: "Could not save the account." });
+            }
+        });
+
+        socket.on("ownerAccountDelete", (data, callback) => {
+            const reply = typeof callback === "function" ? callback : () => {};
+            if (!requireOwnerAccounts(reply)) return;
+
+            const key = String(data?.username || "").trim().toLowerCase();
+            const user = accountsDb.users[key];
+            if (!user) return reply({ ok: false, error: "Account not found." });
+
+            if (getSocketAccountKey(socket) === key) {
+                return reply({ ok: false, error: "You can't delete the account you are signed in with." });
+            }
+
+            for (const room of Object.values(rooms)) {
+                if (!room?.players) continue;
+                for (const player of room.players) {
+                    if (player.account === key) player.account = null;
+                }
+            }
+
+            dropSessionsOf(key);
+
+            for (const [socketId, accountKey] of socketAccounts.entries()) {
+                if (accountKey === key) socketAccounts.delete(socketId);
+            }
+
+            try {
+                fs.rmSync(userUploadDir(key), { recursive: true, force: true });
+            } catch (_) { /* nothing to remove */ }
+
+            delete accountsDb.users[key];
+            saveAccounts();
+            reply({ ok: true });
+        });
+
+        /* =================================================
+           OWNER ONLY: VIEW ACCOUNT (points) + GIVE GIFT
+        ================================================= */
+
+        const MAX_OWNER_POINTS = 1000000;
+
+        function ownerTarget(data, reply) {
+            if (!requireOwnerAccounts(reply)) return null;
+
+            const key = String(data?.username || "").trim().toLowerCase();
+            const user = accountsDb.users[key];
+
+            if (!user) {
+                reply({ ok: false, error: "Account not found." });
+                return null;
+            }
+
+            return { key, user };
+        }
+
+        function ownerAccountSummary(user) {
+            const p = ensureProgress(user);
+
+            return {
+                ok: true,
+                username: user.username,
+                displayName: getDisplayName(user),
+                badge: user.badge || "member",
+                level: levelInfo(p.xp).level,
+                rankPoints: totalStats(user.stats),
+                shopPoints: p.shop.points,
+                itemsOwned: p.shop.owned.length + p.shop.ownedMinecraftSkins.length + p.shop.ownedSongs.length
+            };
+        }
+
+        /* Tells the player's open game (if they are online) so they see it straight away. */
+        function tellPlayer(accountKey, event, payload) {
+            for (const [socketId, key] of socketAccounts.entries()) {
+                if (key === accountKey) io.sockets.sockets.get(socketId)?.emit(event, payload);
+            }
+        }
+
+        function readPoints(value, label) {
+            if (value === undefined || value === null || String(value).trim() === "") return { skip: true };
+
+            const number = Number(value);
+
+            if (!Number.isInteger(number) || number < 0 || number > MAX_OWNER_POINTS) {
+                return { error: `${label} must be a whole number from 0 to ${MAX_OWNER_POINTS.toLocaleString("en-US")}.` };
+            }
+
+            return { value: number };
+        }
+
+        socket.on("ownerAccountView", (data, callback) => {
+            const reply = typeof callback === "function" ? callback : () => {};
+            const target = ownerTarget(data, reply);
+            if (!target) return;
+
+            reply(ownerAccountSummary(target.user));
+        });
+
+        /* Rank points and/or shop points. Rank points = what they earned + an Owner adjustment. */
+        socket.on("ownerAccountSetPoints", (data, callback) => {
+            const reply = typeof callback === "function" ? callback : () => {};
+            const target = ownerTarget(data, reply);
+            if (!target) return;
+
+            const rank = readPoints(data?.rankPoints, "Rank points");
+            const shop = readPoints(data?.shopPoints, "Shop points");
+
+            if (rank.error || shop.error) return reply({ ok: false, error: rank.error || shop.error });
+            if (rank.skip && shop.skip) return reply({ ok: false, error: "Type the new rank points or shop points." });
+
+            const user = target.user;
+
+            if (!rank.skip) {
+                user.stats = { ...emptyStats(), ...(user.stats || {}) };
+                user.stats.bonusPoints = rank.value - baseStatPoints(user.stats);
+            }
+
+            if (!shop.skip) {
+                ensureProgress(user).shop.points = shop.value;
+            }
+
+            saveAccounts();
+            tellPlayer(target.key, "ownerPointsChanged", {});
+            reply(ownerAccountSummary(user));
+        });
+
+        /* Everything in the shop, with a flag for what this player already owns. */
+        socket.on("ownerGiftCatalog", (data, callback) => {
+            const reply = typeof callback === "function" ? callback : () => {};
+            const target = ownerTarget(data, reply);
+            if (!target) return;
+
+            const user = target.user;
+            const p = ensureProgress(user);
+
+            const categories = [
+                ...SHOP_CATEGORIES.map(c => ({ key: c.key, label: c.label, icon: c.icon })),
+                { key: "skin", label: "Minecraft Skins", icon: "⛏️" },
+                { key: "song", label: "Songs", icon: "🎵" }
+            ];
+
+            const items = [];
+
+            SHOP_CATALOG.forEach(item => {
+                if (item.free) return;
+                items.push({ kind: "item", id: item.id, cat: item.cat, name: item.name || item.id, owned: shopOwns(user, item) });
+            });
+
+            publicSkins().forEach(skin => {
+                items.push({ kind: "skin", id: skin.file, cat: "skin", name: skin.name, owned: p.shop.ownedMinecraftSkins.includes(skin.file) });
+            });
+
+            MUSIC_SONGS.forEach(song => {
+                items.push({ kind: "song", id: song.id, cat: "song", name: song.name, owned: ownsSong(user, song.id) });
+            });
+
+            reply({ ok: true, username: user.username, categories, items });
+        });
+
+        /* Gives one shop item for free. Never takes points and never equips it for the player. */
+        socket.on("ownerGiftGive", (data, callback) => {
+            const reply = typeof callback === "function" ? callback : () => {};
+            const target = ownerTarget(data, reply);
+            if (!target) return;
+
+            const user = target.user;
+            const p = ensureProgress(user);
+            const kind = String(data?.kind || "");
+            const id = String(data?.id || "");
+            let name = "";
+
+            if (kind === "item") {
+                const item = SHOP_ITEMS.get(id);
+                if (!item || item.free) return reply({ ok: false, error: "That item can't be given." });
+                if (shopOwns(user, item)) return reply({ ok: false, error: "They already own that." });
+                p.shop.owned.push(item.id);
+                name = item.name || item.id;
+            } else if (kind === "skin") {
+                const skin = getSkinInfo(id);
+                if (!skin) return reply({ ok: false, error: "Unknown Minecraft skin." });
+                if (p.shop.ownedMinecraftSkins.includes(skin.file)) return reply({ ok: false, error: "They already own that." });
+                p.shop.ownedMinecraftSkins.push(skin.file);
+                name = skin.name;
+            } else if (kind === "song") {
+                const song = MUSIC_SONGS.find(entry => entry.id === id);
+                if (!song) return reply({ ok: false, error: "Unknown song." });
+                if (ownsSong(user, song.id)) return reply({ ok: false, error: "They already own that." });
+                p.shop.ownedSongs.push(song.id);
+                name = song.name;
+            } else {
+                return reply({ ok: false, error: "Unknown gift." });
+            }
+
+            saveAccounts();
+            tellPlayer(target.key, "ownerGiftReceived", { name });
+            reply({ ok: true, name });
+        });
+
+        /* =================================================
+           ACCOUNT SETTINGS: details, Display Name, Show PIN
+        ================================================= */
+
+        socket.on("getMyAccountDetails", callback => {
+            const reply = typeof callback === "function" ? callback : () => {};
+            const key = getSocketAccountKey(socket);
+            const user = key ? accountsDb.users[key] : null;
+            if (!user) return reply({ ok: false });
+
+            reply({
+                ok: true,
+                username: user.username,
+                displayName: getDisplayName(user)
+            });
+        });
+
+        socket.on("setDisplayName", (data, callback) => {
+            const reply = typeof callback === "function" ? callback : () => {};
+            const key = getSocketAccountKey(socket);
+            const user = key ? accountsDb.users[key] : null;
+            if (!user) return reply({ ok: false, error: "Sign in first." });
+
+            const name = cleanDisplayName(data?.displayName);
+
+            if (!isValidDisplayName(name)) {
+                return reply({ ok: false, error: "Display Name: 3-20 letters, numbers, spaces, _ . or -" });
+            }
+
+            if (isNameTaken(name, key)) {
+                return reply({ ok: false, error: "That name is already used by another player." });
+            }
+
+            // Back to exactly the original username = no custom name.
+            user.displayName = name === user.username ? undefined : name;
+            saveAccounts();
+            reply({ ok: true, displayName: getDisplayName(user) });
+        });
+
+        /* Show PIN: the PASSWORD is checked on the server before the PIN is decrypted. */
+        socket.on("showMyPin", async data => {
+            try {
+                const key = getSocketAccountKey(socket);
+                const user = key ? accountsDb.users[key] : null;
+                const password = String(data?.password || "");
+
+                if (!user) {
+                    return socket.emit("showMyPinResult", { ok: false, error: "Sign in first." });
+                }
+
+                if (socket.data.secretLockUntil && Date.now() < socket.data.secretLockUntil) {
+                    return socket.emit("showMyPinResult", { ok: false, error: "Too many wrong attempts. Wait 30 seconds." });
+                }
+
+                const valid = password.length > 0 && password.length <= 72 &&
+                    await verifyHash(password, user.salt, user.hash);
+
+                if (!valid) {
+                    socket.data.secretFails = (socket.data.secretFails || 0) + 1;
+
+                    if (socket.data.secretFails >= 5) {
+                        socket.data.secretFails = 0;
+                        socket.data.secretLockUntil = Date.now() + 30000;
+                    }
+
+                    return socket.emit("showMyPinResult", { ok: false, error: "Wrong password." });
+                }
+
+                socket.data.secretFails = 0;
+
+                const pin = decryptSecret(user.pinEncrypted, password);
+
+                if (!pin) {
+                    return socket.emit("showMyPinResult", {
+                        ok: false,
+                        error: "PIN is not available yet. Log in once with your PIN to enable this."
+                    });
+                }
+
+                socket.emit("showMyPinResult", { ok: true, pin });
+            } catch (error) {
+                console.error("showMyPin error:", error);
+                socket.emit("showMyPinResult", { ok: false, error: "Could not show the PIN." });
             }
         });
 
@@ -3733,6 +4423,7 @@ io.on(
                 ok: true,
                 guest: false,
                 username: accountsDb.users[key].username,
+                displayName: getDisplayName(accountsDb.users[key]),
                 token,
                 silent: Boolean(data?.silent)
             });
@@ -3770,12 +4461,86 @@ io.on(
             socket.emit("playerStatsData", {
                 ok: true,
                 username: user.username,
+                displayName: getDisplayName(user),
                 badge: user.badge || "member",
                 tier: getEquippedTierKey(user),
                 level: levelInfo(ensureProgress(user).xp).level,
                 look: getLookOfUser(user),
                 points: totalStats(user.stats),
                 stats: { ...emptyStats(), ...(user.stats || {}) }
+            });
+        });
+
+        /* =================================================
+           VIEW ACCOUNT (lobby + game)
+           Shows the PUBLIC card of a player who is in the SAME room:
+           rank, rank points, level, stats. Never shows the login name,
+           shop points, owned items, or anything about the game roles.
+        ================================================= */
+
+        socket.on("getAccountCard", data => {
+            const now = Date.now();
+            if (now - (socket.data.accountCardAt || 0) < 250) return;
+            socket.data.accountCardAt = now;
+
+            const roomCode = findRoomCodeBySocket(socket.id);
+            const room = roomCode ? rooms[roomCode] : null;
+            const target = room
+                ? room.players.find(p => p.id === String(data?.playerId || "") && p.connected !== false)
+                : null;
+
+            if (!room || !target) {
+                return socket.emit("accountCardData", { ok: false, error: "That player is no longer in the room." });
+            }
+
+            const base = {
+                ok: true,
+                playerId: target.id,
+                name: target.name,
+                isHost: room.host === target.id,
+                look: getLookOfPlayer(target)
+            };
+
+            const user = target.account ? accountsDb.users[target.account] : null;
+
+            if (!user) {
+                return socket.emit("accountCardData", { ...base, guest: true });
+            }
+
+            const prog = ensureProgress(user);
+            const info = levelInfo(prog.xp);
+            const points = totalStats(user.stats);
+            const stats = { ...emptyStats(), ...(user.stats || {}) };
+            const board = getLeaderboardPosition(user);
+            const nextTier = TIERS.find(tier => tier.min > points) || null;
+
+            socket.emit("accountCardData", {
+                ...base,
+                guest: false,
+                name: getDisplayName(user),
+                badge: user.badge || "member",
+                tier: getEquippedTierKey(user),
+                points,
+                position: board.position,
+                accounts: board.count,
+                nextTier: nextTier ? { key: nextTier.key, min: nextTier.min } : null,
+                level: info.level,
+                xpIntoLevel: info.xpIntoLevel,
+                xpNeeded: info.xpNeeded,
+                medals: Object.keys(LEVEL_REWARDS)
+                    .map(Number)
+                    .filter(level => level <= info.level)
+                    .map(level => ({ level, icon: LEVEL_REWARDS[level].icon, name: LEVEL_REWARDS[level].name })),
+                memberSince: Number(user.created) || null,
+                stats: {
+                    kills: Number(stats.kills) || 0,
+                    saves: Number(stats.saves) || 0,
+                    detects: Number(stats.detects) || 0,
+                    civilianVotes: Number(stats.civilianVotes) || 0,
+                    jesterWins: Number(stats.jesterWins) || 0,
+                    mafiaWins: Number(stats.mafiaWins) || 0,
+                    civilianWins: Number(stats.civilianWins) || 0
+                }
             });
         });
 
@@ -4626,6 +5391,164 @@ io.on(
         });
 
         /* =================================================
+           LOBBY CHAT
+           lobbyChatRequest: send the saved messages to this player.
+           sendLobbyMessage: send one message to the whole room.
+        ================================================= */
+
+        socket.on("lobbyChatRequest", () => {
+            const roomCode = findRoomCodeBySocket(socket.id);
+            const room = roomCode ? rooms[roomCode] : null;
+
+            if (!room) return;
+
+            socket.emit("lobbyChatHistory", room.lobbyChat || []);
+        });
+
+        socket.on("sendLobbyMessage", data => {
+            // The room comes from where this socket really is, never from the browser.
+            const roomCode = findRoomCodeBySocket(socket.id);
+            const room = roomCode ? rooms[roomCode] : null;
+
+            if (!room) return;
+
+            const player = room.players.find(p => p.id === socket.id);
+            if (!player) return;
+
+            if (room.phase !== "lobby") {
+                return socket.emit("lobbyChatError", "Lobby chat is only open before the game starts.");
+            }
+
+            const text = String(data?.message || "")
+                .replace(/[\u0000-\u001f\u007f]/g, " ")
+                .replace(/\s+/g, " ")
+                .trim()
+                .substring(0, LOBBY_CHAT_MAX_LENGTH);
+
+            if (!text) return;
+
+            const now = Date.now();
+
+            if (now - (player.lastChatAt || 0) < LOBBY_CHAT_MIN_GAP_MS) {
+                return socket.emit("lobbyChatError", "You are typing too fast.");
+            }
+
+            player.chatTimes = (player.chatTimes || [])
+                .filter(time => now - time < LOBBY_CHAT_BURST_WINDOW_MS);
+
+            if (player.chatTimes.length >= LOBBY_CHAT_BURST_LIMIT) {
+                return socket.emit("lobbyChatError", "Slow down! Too many messages in a short time.");
+            }
+
+            player.lastChatAt = now;
+            player.chatTimes.push(now);
+
+            const entry = {
+                id: (room.lobbyChatSeq = (room.lobbyChatSeq || 0) + 1),
+                fromId: player.id,
+                name: player.name,
+                text,
+                time: now
+            };
+
+            room.lobbyChat = room.lobbyChat || [];
+            room.lobbyChat.push(entry);
+
+            if (room.lobbyChat.length > LOBBY_CHAT_HISTORY) {
+                room.lobbyChat.splice(0, room.lobbyChat.length - LOBBY_CHAT_HISTORY);
+            }
+
+            io.to(roomCode).emit("lobbyMessage", entry);
+        });
+
+
+        /* =================================================
+           SOUNDBOARD
+           setSoundboardPermissions: the host picks the registered
+           players who may play sounds (lobby or during the game).
+           soundboardPlay: a permitted player plays one of the 12
+           sounds for everyone in THEIR OWN room only.
+        ================================================= */
+
+        socket.on("setSoundboardPermissions", data => {
+            const roomCode = String(data?.roomCode || "").trim().toUpperCase();
+            const room = rooms[roomCode];
+
+            if (!room || room.host !== socket.id) return;
+
+            const error = setRoomSoundboardPermissions(
+                room,
+                Array.isArray(data?.players) ? data.players : []
+            );
+
+            if (error) {
+                return socket.emit("soundboardError", error);
+            }
+
+            if (room.phase === "lobby") {
+                emitLobby(roomCode);
+            } else {
+                sendGameInformation(roomCode);
+            }
+        });
+
+        socket.on("soundboardPlay", data => {
+            // The room comes from where this socket really is, never from the browser.
+            let roomCode = null;
+
+            for (const code of Object.keys(rooms)) {
+                if (rooms[code]?.players?.some(p => p.id === socket.id && p.connected !== false)) {
+                    roomCode = code;
+                    break;
+                }
+            }
+
+            const room = roomCode ? rooms[roomCode] : null;
+            if (!room) return;
+
+            const player = room.players.find(p => p.id === socket.id);
+            if (!player) return;
+
+            const soundId = String(data?.soundId || "");
+
+            if (!SOUNDBOARD_IDS.has(soundId)) {
+                return socket.emit("soundboardError", "Unknown sound.");
+            }
+
+            if (!canPlaySoundboard(room, player)) {
+                return socket.emit("soundboardError", "The host has not given you permission to use the soundboard.");
+            }
+
+            const now = Date.now();
+
+            if (now - (player.lastSoundAt || 0) < SOUNDBOARD_COOLDOWN_MS) {
+                return socket.emit("soundboardError", "Wait a moment before playing another sound.");
+            }
+
+            player.soundTimes = (player.soundTimes || [])
+                .filter(time => now - time < SOUNDBOARD_BURST_WINDOW_MS);
+
+            if (player.soundTimes.length >= SOUNDBOARD_BURST_LIMIT) {
+                return socket.emit("soundboardError", "Slow down! You played too many sounds in a short time.");
+            }
+
+            if (now - (room.lastSoundAt || 0) < SOUNDBOARD_ROOM_GAP_MS) {
+                return socket.emit("soundboardError", "Another sound just played. Try again.");
+            }
+
+            player.lastSoundAt = now;
+            player.soundTimes.push(now);
+            room.lastSoundAt = now;
+
+            io.to(roomCode).emit("soundboardPlayed", {
+                soundId,
+                fromId: player.id,
+                fromName: player.name
+            });
+        });
+
+
+        /* =================================================
            HOST DETECTIVE-CHECK ANNOUNCEMENT OPTION
            YES = morning message adds "The detective knows one of the mafia."
         ================================================= */
@@ -4655,11 +5578,11 @@ io.on(
             data => {
 
                 const playerName =
-                    String(
+                    resolvePlayerName(socket, String(
                         typeof data === "string"
                             ? data
                             : data?.playerName || ""
-                    ).trim();
+                    ).trim());
 
                 const visibility =
                     String(
@@ -4818,9 +5741,9 @@ io.on(
             data => {
 
                 const playerName =
-                    String(
+                    resolvePlayerName(socket, String(
                         data?.playerName || ""
-                    ).trim();
+                    ).trim());
 
                 const roomCode =
                     String(
@@ -4919,7 +5842,7 @@ io.on(
         ================================================= */
 
         socket.on("requestRejoin", data => {
-            const playerName = String(data?.playerName || "").trim();
+            const playerName = resolvePlayerName(socket, String(data?.playerName || "").trim());
             const roomCode = String(data?.roomCode || "").trim().toUpperCase();
 
             if (!playerName || !roomCode) {
@@ -4935,9 +5858,13 @@ io.on(
                 return socket.emit("rejoinError", "The host is not allowing people to join right now.");
             }
 
-            const oldPlayer = room.players.find(
-                p => p.name.toLowerCase() === playerName.toLowerCase()
-            );
+            // Account players are found by their account, so changing the Display Name never breaks Rejoin.
+            const rejoinAccountKey = getSocketAccountKey(socket);
+            const oldPlayer =
+                (rejoinAccountKey && room.players.find(p => p.account === rejoinAccountKey)) ||
+                room.players.find(
+                    p => p.name.toLowerCase() === playerName.toLowerCase()
+                );
 
             if (!oldPlayer) {
                 return socket.emit(
@@ -6075,6 +7002,12 @@ assignRoles(
                         playerName:
                             player.name,
 
+                        fromId:
+                            player.id,
+
+                        time:
+                            Date.now(),
+
                         message
                     }
                 );
@@ -6130,6 +7063,12 @@ assignRoles(
                                 {
                                     playerName:
                                         sender.name,
+
+                                    fromId:
+                                        sender.id,
+
+                                    time:
+                                        Date.now(),
 
                                     message
                                 }
