@@ -916,6 +916,7 @@ function updateHostUI() {
     ensureVoiceHostSetting();
     ensureDetectiveHostSetting();
     updateVoiceHostButton();
+    ensureSoundboardHostSection();
 
     const hostSettings =
         $("hostSettings");
@@ -985,7 +986,16 @@ function renderLobbyPlayers() {
             document.createElement("span");
 
         setTierName(name, player.name, player.tier);
-        name.insertBefore(avatarNode(player.look, 30, true), name.firstChild);
+        /* Full-body character (not cropped) with the host's crown on top of its head. */
+        const avatarWrap =
+            document.createElement("span");
+
+        avatarWrap.className =
+            "lobby-avatar-wrap";
+
+        avatarWrap.appendChild(avatarNode(player.look, 40, false));
+
+        name.insertBefore(avatarWrap, name.firstChild);
 
         appendUserBadge(name, player.badge);
 
@@ -998,15 +1008,15 @@ function renderLobbyPlayers() {
                 document.createElement("span");
 
             crown.className =
-                "host-crown";
+                "host-crown host-crown-head";
 
             crown.textContent =
-                "👑 ";
+                "👑";
 
             crown.title =
                 "Host";
 
-            name.prepend(crown);
+            avatarWrap.appendChild(crown);
         }
 
         if (
@@ -1027,6 +1037,7 @@ function renderLobbyPlayers() {
         }
 
         li.appendChild(name);
+        li.appendChild(makeViewAccountButton(player));
 
         list.appendChild(li);
     });
@@ -2208,6 +2219,8 @@ function renderGamePlayers() {
             li.appendChild(dead);
         }
 
+        li.appendChild(makeViewAccountButton(player));
+
         if (!player.alive) {
 
             li.style.opacity =
@@ -3314,30 +3327,43 @@ function sendPublic() {
    PUBLIC CHAT MESSAGE
 ========================================================= */
 
-socket.on(
-    "newMessage",
-    data => {
+/* Chat bubble used by the Public chat and the Mafia chat (same look as the lobby chat).
+   Your messages are red bubbles on the right, everyone else's are dark bubbles on the left. */
+function chatAddBubble(container, data) {
+    if (!container || !data) return;
 
-        const container =
-            $("chatMessages");
+    const mine = data.fromId ? data.fromId === socket.id : false;
 
-        if (!container) return;
+    const row = document.createElement("div");
+    row.className = "lc-msg " + (mine ? "lc-me" : "lc-them");
 
-        const div =
-            document.createElement("div");
+    const meta = document.createElement("div");
+    meta.className = "lc-meta";
 
-        div.className =
-            "chat-message";
+    const name = document.createElement("span");
+    name.className = "lc-name";
+    name.textContent = (data.fromId && data.fromId === window.currentHostId ? "👑 " : "") +
+        (mine ? "You" : String(data.playerName || "Player").slice(0, 24));
 
-        div.textContent =
-            `${data.playerName}: ${data.message}`;
+    const time = document.createElement("span");
+    time.className = "lc-time";
+    time.textContent = data.time ? lcTimeText(data.time) : "";
 
-        container.appendChild(div);
+    meta.append(name, time);
 
-        container.scrollTop =
-            container.scrollHeight;
-    }
-);
+    const text = document.createElement("div");
+    text.className = "lc-text";
+    text.textContent = String(data.message || "");
+
+    row.append(meta, text);
+    container.appendChild(row);
+
+    while (container.children.length > 120) container.firstElementChild.remove();
+
+    container.scrollTop = container.scrollHeight;
+}
+
+socket.on("newMessage", data => chatAddBubble($("chatMessages"), data));
 
 /* =========================================================
    MAFIA CHAT
@@ -3407,30 +3433,7 @@ function sendMafia() {
    MAFIA CHAT MESSAGE
 ========================================================= */
 
-socket.on(
-    "newMafiaMessage",
-    data => {
-
-        const container =
-            $("mafiaChatMessages");
-
-        if (!container) return;
-
-        const div =
-            document.createElement("div");
-
-        div.className =
-            "chat-message";
-
-        div.textContent =
-            `${data.playerName}: ${data.message}`;
-
-        container.appendChild(div);
-
-        container.scrollTop =
-            container.scrollHeight;
-    }
-);
+socket.on("newMafiaMessage", data => chatAddBubble($("mafiaChatMessages"), data));
 
 /* =========================================================
    ERRORS
@@ -4747,12 +4750,13 @@ window.addEventListener("beforeunload", () => {
 
 
 /* =========================================================
-   ACCOUNTS: SIGN UP / LOGIN / SKIP + RANKS
+   ACCOUNTS: LOGIN / SKIP + RANKS (accounts are made by the Owner)
    Added as a separate block so the existing game code is untouched.
 ========================================================= */
 
 const authState = {
-    username: null,     // null = Skip / guest
+    username: null,     // null = Skip / guest (original username, never changes)
+    displayName: null,  // the name other players see
     token: null,
     entered: false,     // true once the player passed the first screen
     mode: "signup"
@@ -4842,7 +4846,10 @@ function showAuthMenu() {
 }
 
 function showAuthForm(mode) {
+    mode = "login";   // accounts are made by the Owner now, so there is only Login
     authState.mode = mode;
+    ensureAuthExtras();
+    if ($("authForgotBox")) $("authForgotBox").style.display = "none";
     $("authMenu").style.display = "none";
     $("authForm").style.display = "";
     $("authFormTitle").textContent = mode === "signup" ? "Sign Up" : "Login";
@@ -4877,25 +4884,15 @@ function submitAuth() {
         return;
     }
 
-    if (authState.mode === "signup" && !/^[A-Za-z0-9_]{3,20}$/.test(username)) {
-        setAuthMessage("Username: 3-20 letters, numbers or _ only.", "error");
-        return;
-    }
-
-    if (authState.mode === "signup" && password.length < 6) {
-        setAuthMessage("Password must be at least 6 characters.", "error");
-        return;
-    }
-
     if (!/^\d{4,8}$/.test(pin)) {
         setAuthMessage("PIN must be 4-8 digits.", "error");
         return;
     }
 
     setAuthBusy(true);
-    setAuthMessage(authState.mode === "signup" ? "Making your account..." : "Logging in...", "waiting");
+    setAuthMessage("Logging in...", "waiting");
 
-    socket.emit(authState.mode === "signup" ? "signUp" : "login", { username, password, pin });
+    socket.emit("login", { username, password, pin });
 }
 
 /* Fill the name box with the account name (only if it is empty). */
@@ -4905,7 +4902,7 @@ function prefillAccountNames() {
     ["createPlayerName", "joinPlayerName", "quickStartPlayerName", "rejoinPlayerName"]
         .forEach(id => {
             const input = $(id);
-            if (input && !input.value.trim()) input.value = authState.username;
+            if (input && !input.value.trim()) input.value = authState.displayName || authState.username;
         });
 }
 
@@ -4933,9 +4930,11 @@ socket.on("authResult", data => {
 
     if (data.guest) {
         authState.username = null;
+        authState.displayName = null;
         saveAuthToken(null);
     } else {
         authState.username = data.username;
+        authState.displayName = data.displayName || data.username;
         saveAuthToken(data.token);
     }
 
@@ -4982,7 +4981,9 @@ function renderRanks(list) {
 
     const query = ($("ranksSearch")?.value || "").trim().toLowerCase();
     const shown = ranksCache.filter(entry =>
-        !query || String(entry.username).toLowerCase().includes(query)
+        !query ||
+        String(entry.username).toLowerCase().includes(query) ||
+        String(entry.displayName || "").toLowerCase().includes(query)
     );
 
     if (shown.length === 0) {
@@ -5003,7 +5004,7 @@ function renderRanks(list) {
 
         const name = document.createElement("span");
         name.className = "rank-name";
-        setTierName(name, entry.username, entry.tier);
+        setTierName(name, entry.displayName || entry.username, entry.tier);
         appendUserBadge(name, entry.badge);
 
         const details = document.createElement("button");
@@ -5029,7 +5030,7 @@ $("ranksSearch")?.addEventListener("input", () => renderRanks());
 socket.on("playerStatsData", data => {
     if (!data || !data.ok) return;
 
-    setTierName($("ranksDetailsName"), data.username, data.tier);
+    setTierName($("ranksDetailsName"), data.displayName || data.username, data.tier);
     showDetailsAvatar(data.look);
     appendUserBadge($("ranksDetailsName"), data.badge);
     $("statKills").textContent = data.stats.kills || 0;
@@ -5163,7 +5164,6 @@ socket.on("deleteMyAccountResult", data => {
 
 document.addEventListener("DOMContentLoaded", () => {
 
-    $("authSignUpBtn")?.addEventListener("click", () => showAuthForm("signup"));
     $("authLoginBtn")?.addEventListener("click", () => showAuthForm("login"));
     $("authBackBtn")?.addEventListener("click", showAuthMenu);
     $("authSubmitBtn")?.addEventListener("click", submitAuth);
@@ -5191,7 +5191,6 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     $("accountLogoutButton")?.addEventListener("click", doLogout);
-    $("accountShowPasswordButton")?.addEventListener("click", () => openAccountSecurity("show"));
     $("accountDeleteButton")?.addEventListener("click", () => openAccountSecurity("delete"));
     $("accountSecurityCancel")?.addEventListener("click", closeAccountSecurity);
     $("accountSecurityConfirm")?.addEventListener("click", submitAccountSecurity);
@@ -5965,9 +5964,10 @@ function renderSettingsPage(view) {
         } else if (mount) {
             mount.innerHTML = `
                 <h3>👻 Guest</h3>
-                <p>Sign in or create an account to use your existing Account controls.</p>
+                <p>Sign in to use your account controls.</p>
+                <p>Want to make an account? <a href="https://discord.gg/rkzb2eBZz" target="_blank" rel="noopener noreferrer">Join our Discord server!</a></p>
                 <div style="margin-top:13px">
-                    <button class="settings-action" id="settingsSignIn">🔐 SIGN IN / CREATE ACCOUNT</button>
+                    <button class="settings-action" id="settingsSignIn">🔐 SIGN IN</button>
                 </div>
             `;
             $("settingsSignIn")?.addEventListener("click", () => {
@@ -6874,8 +6874,8 @@ if (authState?.username) setTimeout(requestMyProgress, 500);
      new items are added in server.js only (one line each).
 ========================================================= */
 
-const DEFAULT_LOOK = { face: "face_basic", hair: null, shirt: "shirt_basic", suit: null, pants: "pants_basic", shoes: "shoes_basic", hat: null, mask: null, accessory: null };
-const OPTIONAL_SLOTS = ["hair", "suit", "hat", "mask", "accessory"];
+const DEFAULT_LOOK = { face: "face_basic", tone: null, hair: null, shirt: "shirt_basic", suit: null, pants: "pants_basic", shoes: "shoes_basic", hat: null, mask: null, accessory: null };
+const OPTIONAL_SLOTS = ["tone", "hair", "suit", "hat", "mask", "accessory"];
 
 var shopCatalog = null;                 // { items, categories, slots, ... } from the server
 var shopItemMap = new Map();
@@ -6965,7 +6965,9 @@ function blockEdges(x, y, w, h, d, sideOnly) {
 function avatarMarkup(look, bust) {
     const wear = Object.assign({}, DEFAULT_LOOK, look || {});
     const face = shopItem(wear.face) || shopItem("face_basic");
-    const skin = (face && face.skin) || "#f1c27d";
+    // A bought Skin Tone (shop -> Skin Tones) overrides the face's own skin color.
+    const tone = shopItem(wear.tone);
+    const skin = (tone && tone.skin) || (face && face.skin) || "#f1c27d";
 
     const parts = [
         avatarLayer(shopItem(wear.pants) || shopItem("pants_basic")),
@@ -8011,6 +8013,8 @@ function ensureMafiaVoiceUiStyles() {}
 
 function readVoiceSettings(data) {
     if (!data) return;
+
+    readSoundboardSettings(data);
 
     if (data.voiceChatAllowed !== undefined) {
         voiceChatAllowedSetting = data.voiceChatAllowed !== false;
@@ -9116,3 +9120,1648 @@ renderSettingsPage = function(view) {
         }
     }
 };
+
+/* =========================================================
+   OWNER-MADE ACCOUNTS
+   - Start page: no Sign Up button, Discord message instead
+   - Login page: Username + Password + PIN, "Forgot" link
+   - Settings (Owner only): ➕ Add Account -> Add Account / List Accounts (View Account, Edit, Delete)
+   - Settings -> Account: username, Display Name, Password, PIN
+   Everything is checked again on the server.
+========================================================= */
+
+const DISCORD_INVITE_URL = "https://discord.gg/rkzb2eBZz";
+
+/* ---------- Start page + Login page extras ---------- */
+
+function ensureAuthExtras() {
+    // The Discord note and Forgot link are in index.html now.
+    // This only wires up the "Forgot Password or PIN?" link (once).
+    const link = $("authForgotLink");
+
+    if (link && !link.dataset.bound) {
+        link.dataset.bound = "1";
+        link.addEventListener("click", event => {
+            event.preventDefault();
+            const box = $("authForgotBox");
+            if (box) box.style.display = box.style.display === "none" ? "" : "none";
+        });
+    }
+}
+
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", ensureAuthExtras);
+} else {
+    ensureAuthExtras();
+}
+
+/* ---------- Small password / PIN prompt (Show Password, Show PIN) ---------- */
+
+const acctState = {
+    clickInstalled: false,
+    list: null,          // Owner: loaded accounts (null = still loading)
+    filter: "",
+    editing: null,       // Owner: the account being edited
+    viewData: null,      // Owner: View Account numbers (null = loading)
+    gift: null,          // Owner: gift catalog for the viewed player (null = loading)
+    giftCat: "all",
+    giftFilter: "",
+    message: "",
+    promptKind: null,    // "password" | "pin"
+    revealTimers: {}
+};
+
+function openAcctPrompt(options) {
+    let overlay = $("acctPromptOverlay");
+
+    if (!overlay) {
+        overlay = document.createElement("div");
+        overlay.id = "acctPromptOverlay";
+        overlay.className = "qa-overlay qa-center";
+        overlay.style.zIndex = "100000";   // always above the Settings window
+        document.body.appendChild(overlay);
+    }
+
+    acctState.promptKind = options.kind;
+
+    overlay.innerHTML = `
+        <div class="qa-modal">
+            <h2>${escapeHtml(options.title)}</h2>
+            <p>${escapeHtml(options.text)}</p>
+            <input id="acctPromptInput" type="password" autocomplete="new-password"
+                ${options.numeric ? 'inputmode="numeric" maxlength="8"' : 'maxlength="72"'}
+                placeholder="${escapeHtml(options.placeholder)}">
+            <div id="acctPromptNote" class="qa-note"></div>
+            <div class="qa-actions">
+                <button id="acctPromptCancel" type="button">CANCEL</button>
+                <button id="acctPromptConfirm" type="button">${escapeHtml(options.confirmLabel)}</button>
+            </div>
+        </div>
+    `;
+    overlay.style.display = "flex";
+
+    const input = $("acctPromptInput");
+    setTimeout(() => input.focus(), 40);
+
+    const submit = () => {
+        const value = input.value;
+
+        if (options.numeric ? !/^\d{4,8}$/.test(value) : (!value || value.length > 72)) {
+            setAcctPromptNote(options.numeric ? "PIN must be 4-8 digits." : "Enter your password.");
+            return;
+        }
+
+        setAcctPromptNote("Checking…");
+        options.onSubmit(value);
+    };
+
+    $("acctPromptCancel").addEventListener("click", closeAcctPrompt);
+    $("acctPromptConfirm").addEventListener("click", submit);
+    input.addEventListener("keydown", event => {
+        if (event.key === "Enter") submit();
+        if (event.key === "Escape") closeAcctPrompt();
+    });
+    overlay.addEventListener("click", event => {
+        if (event.target === overlay) closeAcctPrompt();
+    });
+}
+
+function closeAcctPrompt() {
+    const overlay = $("acctPromptOverlay");
+    if (overlay) overlay.style.display = "none";
+    acctState.promptKind = null;
+}
+
+function setAcctPromptNote(text) {
+    const note = $("acctPromptNote");
+    if (note) note.textContent = text || "";
+}
+
+/* Shows a secret for 10 seconds, then hides it again. */
+function revealAcctSecret(valueId, buttonSelector, value, mask, buttonText) {
+    const box = $(valueId);
+    if (!box) return;
+
+    box.textContent = value;
+    clearTimeout(acctState.revealTimers[valueId]);
+
+    acctState.revealTimers[valueId] = setTimeout(() => {
+        const again = $(valueId);
+        if (again) again.textContent = mask;
+        const button = document.querySelector(buttonSelector);
+        if (button) button.textContent = buttonText;
+    }, 10000);
+}
+
+socket.on("showMyPasswordResult", data => {
+    if (acctState.promptKind !== "password") return;
+
+    if (!data?.ok) {
+        setAcctPromptNote(data?.error || "Wrong PIN.");
+        return;
+    }
+
+    closeAcctPrompt();
+    revealAcctSecret("acctPwShown", '[data-acct="show-password"]', data.password, "••••••••", "🔒 Show Password");
+    const button = document.querySelector('[data-acct="show-password"]');
+    if (button) button.textContent = "🔓 Password shown (10s)";
+});
+
+socket.on("showMyPinResult", data => {
+    if (acctState.promptKind !== "pin") return;
+
+    if (!data?.ok) {
+        setAcctPromptNote(data?.error || "Wrong password.");
+        return;
+    }
+
+    closeAcctPrompt();
+    revealAcctSecret("acctPinShown", '[data-acct="show-pin"]', data.pin, "••••", "🔒 Show PIN");
+    const button = document.querySelector('[data-acct="show-pin"]');
+    if (button) button.textContent = "🔓 PIN shown (10s)";
+});
+
+/* ---------- Settings -> Account: details card ---------- */
+
+function renderAccountDetailsCard(page) {
+    if ($("acctDetailsCard")) return;
+
+    const card = document.createElement("div");
+    card.className = "settings-card";
+    card.id = "acctDetailsCard";
+    card.innerHTML = `<h3>👤 Account</h3><p class="settings-muted">Loading…</p>`;
+    page.querySelector(".settings-header")?.insertAdjacentElement("afterend", card);
+
+    socket.emit("getMyAccountDetails", result => {
+        if (!card.isConnected) return;
+
+        if (!result?.ok) {
+            card.remove();
+            return;
+        }
+
+        card.innerHTML = `
+            <h3>👤 Account</h3>
+            <div class="settings-row"><div><strong>Username</strong><small>${escapeHtml(result.username)} (can't be changed)</small></div></div>
+            <div class="settings-row"><div><strong>Display Name</strong><small>Other players see this name instead of your username.</small></div></div>
+            <div class="mw-admin-add">
+                <input id="acctDisplayName" type="text" maxlength="20" autocomplete="off" value="${escapeHtml(result.displayName)}" placeholder="Display Name">
+                <button class="inv-btn primary" type="button" data-acct="save-display">Save</button>
+            </div>
+            <div class="settings-row"><div><strong>Password</strong><small id="acctPwShown">••••••••</small></div><button class="inv-btn" type="button" data-acct="show-password">🔒 Show Password</button></div>
+            <div class="settings-row"><div><strong>PIN</strong><small id="acctPinShown">••••</small></div><button class="inv-btn" type="button" data-acct="show-pin">🔒 Show PIN</button></div>
+            <div class="shop-message" id="acctDetailsMessage"></div>
+        `;
+    });
+}
+
+function acctDetailsNotice(text) {
+    const box = $("acctDetailsMessage");
+    if (box) box.textContent = text || "";
+}
+
+function saveDisplayName() {
+    const input = $("acctDisplayName");
+    if (!input) return;
+
+    socket.emit("setDisplayName", { displayName: input.value }, result => {
+        if (!result?.ok) {
+            acctDetailsNotice(result?.error || "Could not save the Display Name.");
+            return;
+        }
+
+        const old = authState.displayName;
+        authState.displayName = result.displayName;
+        input.value = result.displayName;
+
+        // Name boxes that still hold the old name get the new one.
+        ["createPlayerName", "joinPlayerName", "quickStartPlayerName", "rejoinPlayerName"].forEach(id => {
+            const box = $(id);
+            if (box && (box.value === old || box.value === authState.username)) box.value = result.displayName;
+        });
+
+        acctDetailsNotice(`✅ Saved. Other players now see "${result.displayName}" when you create or join a room.`);
+    });
+}
+
+/* ---------- Owner: Shop -> Add Account ---------- */
+
+function acctNotice(text) {
+    acctState.message = text || "";
+    const box = $("acctMessage");
+    if (box) box.textContent = acctState.message;
+}
+
+function loadAcctList() {
+    acctState.list = null;
+
+    socket.emit("ownerAccountList", result => {
+        if (result?.ok) {
+            acctState.list = result.accounts || [];
+        } else {
+            acctState.list = [];
+            acctState.message = result?.error || "Could not load the accounts.";
+        }
+
+        if (settingsView === "acctlist") renderSettingsPage("acctlist");
+    });
+}
+
+function acctRowsHtml() {
+    const query = acctState.filter.trim().toLowerCase();
+
+    const rows = (acctState.list || [])
+        .filter(a =>
+            !query ||
+            a.username.toLowerCase().includes(query) ||
+            a.displayName.toLowerCase().includes(query)
+        )
+        .map(a => `
+            <div class="shop-admin-row">
+                <div>
+                    <strong>${escapeHtml(a.username)}</strong>${a.displayName !== a.username ? ` <small class="settings-muted">(shown as ${escapeHtml(a.displayName)})</small>` : ""}<br>
+                    <small class="settings-muted">${a.createdByOwner ? "Made by Owner" : "Older account"}</small>
+                </div>
+                <div class="shop-admin-controls">
+                    <button class="inv-btn" type="button" data-acct="view" data-user="${escapeHtml(a.username)}">View Account</button>
+                    <button class="inv-btn" type="button" data-acct="edit" data-user="${escapeHtml(a.username)}">Edit</button>
+                    <button class="inv-btn" type="button" data-acct="delete" data-user="${escapeHtml(a.username)}">Delete</button>
+                </div>
+            </div>`)
+        .join("");
+
+    return rows || `<div class="settings-muted">No accounts found.</div>`;
+}
+
+const GIFT_ROW_LIMIT = 300;
+
+function acctGiftRowsHtml() {
+    const g = acctState.gift;
+    if (!g) return "";
+
+    const labels = {};
+    g.categories.forEach(c => { labels[c.key] = `${c.icon} ${c.label}`; });
+
+    const query = acctState.giftFilter.trim().toLowerCase();
+
+    const matches = g.items.filter(item =>
+        (acctState.giftCat === "all" || item.cat === acctState.giftCat) &&
+        (!query || item.name.toLowerCase().includes(query))
+    );
+
+    if (!matches.length) return `<div class="settings-muted">No items found.</div>`;
+
+    const rows = matches.slice(0, GIFT_ROW_LIMIT).map(item => `
+        <div class="shop-admin-row">
+            <div>
+                <strong>${escapeHtml(item.name)}</strong><br>
+                <small class="settings-muted">${escapeHtml(labels[item.cat] || item.cat)}</small>
+            </div>
+            <div class="shop-admin-controls">
+                ${item.owned
+                    ? `<button class="inv-btn" type="button" disabled>Owned ✓</button>`
+                    : `<button class="inv-btn primary" type="button" data-acct="gift-give" data-kind="${escapeHtml(item.kind)}" data-id="${escapeHtml(item.id)}">Give</button>`}
+            </div>
+        </div>`).join("");
+
+    const more = matches.length > GIFT_ROW_LIMIT
+        ? `<div class="settings-muted" style="margin-top:8px">Showing the first ${GIFT_ROW_LIMIT} of ${matches.length}. Use the search or a category to narrow it down.</div>`
+        : "";
+
+    return rows + more;
+}
+
+function renderAcctPage(page, view) {
+    if (myBadge !== "owner") {
+        page.innerHTML = settingsHeader("➕ ADD ACCOUNT") + `<div class="settings-card"><p>Only the Owner can manage accounts.</p></div>`;
+        return;
+    }
+
+    if (view === "acctmenu") {
+        page.innerHTML = settingsHeader("➕ ADD ACCOUNT") + `
+            <div class="settings-admin-note">Players can't sign up on their own any more. Accounts made here are the only way in. The server re-checks that you are the Owner.</div>
+            <div class="settings-grid">
+                <button class="settings-option settings-category" type="button" data-acct="go-add">
+                    <span class="settings-icon">➕</span><span class="settings-copy"><strong>Add Account</strong><span>Create a new player account</span></span>
+                </button>
+                <button class="settings-option settings-category" type="button" data-acct="go-list">
+                    <span class="settings-icon">📋</span><span class="settings-copy"><strong>List Accounts</strong><span>See, edit or delete accounts</span></span>
+                </button>
+            </div>
+        `;
+    } else if (view === "acctadd") {
+        page.innerHTML = settingsHeader("➕ ADD ACCOUNT") + `
+            <div class="settings-card">
+                <h3>➕ Add Account</h3>
+                <div class="mw-admin-add">
+                    <input id="acctNewUsername" type="text" maxlength="20" placeholder="Username (3-20 letters, numbers, _)" autocomplete="off" spellcheck="false">
+                    <input id="acctNewPassword" type="password" maxlength="72" placeholder="Password (6-72 characters)" autocomplete="new-password">
+                    <input id="acctNewPin" type="password" inputmode="numeric" maxlength="8" placeholder="PIN (4-8 digits)" autocomplete="new-password">
+                    <button class="inv-btn primary" type="button" data-acct="add-submit">Add Account</button>
+                </div>
+                <div class="mw-admin-note">Give the player their username, password and PIN yourself. All three are needed to log in.</div>
+            </div>
+            <div class="shop-message" id="acctMessage">${escapeHtml(acctState.message)}</div>
+        `;
+    } else if (view === "acctlist") {
+        const body = acctState.list === null
+            ? `<div class="settings-muted">Loading…</div>`
+            : acctRowsHtml();
+
+        page.innerHTML = settingsHeader("📋 LIST ACCOUNTS") + `
+            <div class="settings-card">
+                <div class="mw-admin-add">
+                    <input id="acctSearch" type="text" maxlength="60" placeholder="Search by username or display name" autocomplete="off" value="${escapeHtml(acctState.filter)}">
+                </div>
+            </div>
+            <div class="settings-card" id="acctListBody">${body}</div>
+            <div class="shop-message" id="acctMessage">${escapeHtml(acctState.message)}</div>
+        `;
+    } else if (view === "acctedit") {
+        const a = acctState.editing;
+
+        if (!a) {
+            settingsNav("acctlist");
+            return;
+        }
+
+        page.innerHTML = settingsHeader("✏️ EDIT ACCOUNT") + `
+            <div class="settings-card">
+                <h3>✏️ ${escapeHtml(a.username)}</h3>
+                <div class="settings-muted" style="margin-bottom:8px">Change the username, and/or type a new password and/or a new PIN. Leave a box as it is to keep it.</div>
+                <div class="mw-admin-add">
+                    <input id="acctEditUsername" type="text" maxlength="20" placeholder="Username (3-20 letters, numbers, _)" autocomplete="off" spellcheck="false" value="${escapeHtml(a.username)}">
+                    <input id="acctEditPassword" type="password" maxlength="72" placeholder="New password (optional)" autocomplete="new-password">
+                    <input id="acctEditPin" type="password" inputmode="numeric" maxlength="8" placeholder="New PIN (optional)" autocomplete="new-password">
+                    <button class="inv-btn primary" type="button" data-acct="edit-save">Save</button>
+                </div>
+                <div class="mw-admin-note">A new username keeps their points, items and progress, and they stay signed in. Changing a password or PIN signs that player out everywhere.</div>
+            </div>
+            <div class="shop-message" id="acctMessage">${escapeHtml(acctState.message)}</div>
+        `;
+    }
+
+    else if (view === "acctview") {
+        const d = acctState.viewData;
+        const who = escapeHtml(acctState.viewing || "");
+
+        page.innerHTML = settingsHeader("👁️ VIEW ACCOUNT") + (d ? `
+            <div class="settings-card">
+                <h3>👁️ ${escapeHtml(d.username)}</h3>
+                <div class="settings-row"><div><strong>Display Name</strong><small>${escapeHtml(d.displayName)}</small></div></div>
+                <div class="settings-row"><div><strong>Level</strong><small>${Number(d.level) || 1}</small></div></div>
+                <div class="settings-row"><div><strong>Items owned</strong><small>${Number(d.itemsOwned) || 0}</small></div></div>
+            </div>
+            <div class="settings-card">
+                <h3>🏆 Points</h3>
+                <div class="settings-muted" style="margin-bottom:8px">Change a number and press Save Points. Rank points can go up or down.</div>
+                <div class="mw-admin-add">
+                    <label class="acct-field-label" for="acctRankPoints">Rank points</label>
+                    <input id="acctRankPoints" type="number" min="0" max="1000000" step="1" value="${Number(d.rankPoints) || 0}">
+                    <label class="acct-field-label" for="acctShopPoints">Shop points</label>
+                    <input id="acctShopPoints" type="number" min="0" max="1000000" step="1" value="${Number(d.shopPoints) || 0}">
+                    <button class="inv-btn primary" type="button" data-acct="save-points">Save Points</button>
+                </div>
+            </div>
+            <div class="shop-message" id="acctMessage">${escapeHtml(acctState.message)}</div>
+            <div class="settings-card">
+                <button class="inv-btn primary" type="button" data-acct="go-gift" style="width:100%">🎁 Give Gift</button>
+            </div>
+        ` : `<div class="settings-card"><h3>👁️ ${who}</h3><div class="settings-muted">Loading…</div></div>
+             <div class="shop-message" id="acctMessage">${escapeHtml(acctState.message)}</div>`);
+    } else if (view === "acctgift") {
+        const g = acctState.gift;
+        let options = "";
+
+        if (g) {
+            const counts = {};
+            g.items.forEach(item => { counts[item.cat] = (counts[item.cat] || 0) + 1; });
+            options = `<option value="all"${acctState.giftCat === "all" ? " selected" : ""}>All categories</option>` +
+                g.categories
+                    .filter(c => counts[c.key])
+                    .map(c => `<option value="${escapeHtml(c.key)}"${acctState.giftCat === c.key ? " selected" : ""}>${escapeHtml(c.icon)} ${escapeHtml(c.label)}</option>`)
+                    .join("");
+        }
+
+        page.innerHTML = settingsHeader("🎁 GIVE GIFT") + (g ? `
+            <div class="settings-card">
+                <h3>🎁 Give a gift to ${escapeHtml(g.username)}</h3>
+                <div class="settings-muted" style="margin-bottom:8px">Gifts are free for the player and are not equipped for them.</div>
+                <div class="mw-admin-add">
+                    <select id="acctGiftCat">${options}</select>
+                    <input id="acctGiftSearch" type="text" maxlength="60" placeholder="Search items" autocomplete="off" value="${escapeHtml(acctState.giftFilter)}">
+                </div>
+            </div>
+            <div class="settings-card" id="acctGiftBody">${acctGiftRowsHtml()}</div>
+            <div class="shop-message" id="acctMessage">${escapeHtml(acctState.message)}</div>
+        ` : `<div class="settings-card"><div class="settings-muted">Loading the shop…</div></div>
+             <div class="shop-message" id="acctMessage">${escapeHtml(acctState.message)}</div>`);
+    }
+
+    const back = view === "acctmenu" ? "main" : view === "acctedit" || view === "acctview" ? "acctlist" : view === "acctgift" ? "acctview" : "acctmenu";
+    $("settingsBack")?.addEventListener("click", () => {
+        acctState.message = "";
+        settingsNav(back);
+    });
+    $("settingsClose")?.addEventListener("click", closeSettings);
+}
+
+function handleAcctClick(event) {
+    const target = event.target.closest("[data-acct]");
+    if (!target) return;
+
+    const action = target.dataset.acct;
+
+    if (action === "open-menu") {
+        acctState.message = "";
+        settingsNav("acctmenu");
+    } else if (action === "go-add") {
+        acctState.message = "";
+        settingsNav("acctadd");
+    } else if (action === "go-list") {
+        acctState.message = "";
+        acctState.filter = "";
+        loadAcctList();
+        settingsNav("acctlist");
+    } else if (action === "add-submit") {
+        const payload = {
+            username: $("acctNewUsername")?.value || "",
+            password: $("acctNewPassword")?.value || "",
+            pin: $("acctNewPin")?.value || ""
+        };
+
+        if (!payload.username || !payload.password || !payload.pin) {
+            acctNotice("Fill in the username, password and PIN.");
+            return;
+        }
+
+        target.disabled = true;
+        acctNotice("Adding…");
+
+        socket.emit("ownerAccountAdd", payload, result => {
+            target.disabled = false;
+
+            if (result?.ok) {
+                ["acctNewUsername", "acctNewPassword", "acctNewPin"].forEach(id => {
+                    if ($(id)) $(id).value = "";
+                });
+                acctNotice(`✅ Account "${result.username}" added.`);
+            } else {
+                acctNotice(result?.error || "Could not add the account.");
+            }
+        });
+    } else if (action === "view") {
+        acctState.viewing = target.dataset.user;
+        acctState.viewData = null;
+        acctState.message = "";
+
+        socket.emit("ownerAccountView", { username: acctState.viewing }, result => {
+            if (result?.ok) {
+                acctState.viewData = result;
+            } else {
+                acctState.message = result?.error || "Could not load the account.";
+            }
+            if (settingsView === "acctview") renderSettingsPage("acctview");
+        });
+
+        settingsNav("acctview");
+    } else if (action === "save-points") {
+        const payload = {
+            username: acctState.viewing,
+            rankPoints: $("acctRankPoints")?.value ?? "",
+            shopPoints: $("acctShopPoints")?.value ?? ""
+        };
+
+        target.disabled = true;
+        acctNotice("Saving…");
+
+        socket.emit("ownerAccountSetPoints", payload, result => {
+            target.disabled = false;
+
+            if (result?.ok) {
+                acctState.viewData = result;
+                acctState.message = "✅ Points saved.";
+                renderSettingsPage("acctview");
+            } else {
+                acctNotice(result?.error || "Could not save the points.");
+            }
+        });
+    } else if (action === "go-gift") {
+        acctState.gift = null;
+        acctState.giftCat = "all";
+        acctState.giftFilter = "";
+        acctState.message = "";
+
+        socket.emit("ownerGiftCatalog", { username: acctState.viewing }, result => {
+            if (result?.ok) {
+                acctState.gift = result;
+            } else {
+                acctState.message = result?.error || "Could not load the shop.";
+            }
+            if (settingsView === "acctgift") renderSettingsPage("acctgift");
+        });
+
+        settingsNav("acctgift");
+    } else if (action === "gift-give") {
+        const kind = target.dataset.kind;
+        const id = target.dataset.id;
+
+        target.disabled = true;
+
+        socket.emit("ownerGiftGive", { username: acctState.viewing, kind, id }, result => {
+            if (result?.ok) {
+                const item = acctState.gift?.items.find(i => i.kind === kind && i.id === id);
+                if (item) item.owned = true;
+                const body = $("acctGiftBody");
+                if (body) body.innerHTML = acctGiftRowsHtml();
+                acctNotice(`🎁 Gave "${result.name}" to ${acctState.gift?.username || acctState.viewing}.`);
+            } else {
+                target.disabled = false;
+                acctNotice(result?.error || "Could not give that.");
+            }
+        });
+    } else if (action === "edit") {
+        const found = (acctState.list || []).find(a => a.username === target.dataset.user);
+        if (!found) return;
+        acctState.editing = found;
+        acctState.message = "";
+        settingsNav("acctedit");
+    } else if (action === "edit-save") {
+        const a = acctState.editing;
+        if (!a) return;
+
+        const payload = {
+            username: a.username,
+            newUsername: ($("acctEditUsername")?.value || "").trim(),
+            password: $("acctEditPassword")?.value || "",
+            pin: $("acctEditPin")?.value || ""
+        };
+
+        if (payload.newUsername === a.username && !payload.password && !payload.pin) {
+            acctNotice("Change the username, or type a new password or a new PIN.");
+            return;
+        }
+
+        target.disabled = true;
+        acctNotice("Saving…");
+
+        socket.emit("ownerAccountEdit", payload, result => {
+            target.disabled = false;
+
+            if (result?.ok) {
+                acctState.message = `✅ Saved "${result.username || a.username}".`;
+                acctState.filter = "";
+                loadAcctList();
+                settingsNav("acctlist");
+            } else {
+                acctNotice(result?.error || "Could not save the account.");
+            }
+        });
+    } else if (action === "delete") {
+        const username = target.dataset.user;
+
+        if (!confirm(`Delete the account "${username}"? Its points, items and stats will be lost for good.`)) return;
+
+        socket.emit("ownerAccountDelete", { username }, result => {
+            acctState.message = result?.ok ? `✅ Account "${username}" deleted.` : (result?.error || "Could not delete the account.");
+            loadAcctList();
+        });
+    } else if (action === "save-display") {
+        saveDisplayName();
+    } else if (action === "show-password") {
+        openAcctPrompt({
+            kind: "password",
+            title: "ENTER PIN",
+            text: "Enter your PIN to reveal your password.",
+            placeholder: "PIN",
+            numeric: true,
+            confirmLabel: "SHOW PASSWORD",
+            onSubmit: pin => socket.emit("showMyPassword", { pin })
+        });
+    } else if (action === "show-pin") {
+        openAcctPrompt({
+            kind: "pin",
+            title: "ENTER PASSWORD",
+            text: "Enter your password to reveal your PIN.",
+            placeholder: "Password",
+            numeric: false,
+            confirmLabel: "SHOW PIN",
+            onSubmit: password => socket.emit("showMyPin", { password })
+        });
+    }
+}
+
+/* ---------- Hook everything into Settings ---------- */
+
+const renderSettingsPageBeforeAccounts = renderSettingsPage;
+
+renderSettingsPage = function(view) {
+    const page = $("settingsPage");
+
+    if (page && !acctState.clickInstalled) {
+        acctState.clickInstalled = true;
+        page.addEventListener("click", handleAcctClick);
+        page.addEventListener("input", event => {
+            if (event.target.id === "acctSearch") {
+                acctState.filter = event.target.value;
+                const body = $("acctListBody");
+                if (body && acctState.list !== null) body.innerHTML = acctRowsHtml();
+            } else if (event.target.id === "acctGiftSearch") {
+                acctState.giftFilter = event.target.value;
+                const body = $("acctGiftBody");
+                if (body) body.innerHTML = acctGiftRowsHtml();
+            }
+        });
+        page.addEventListener("change", event => {
+            if (event.target.id !== "acctGiftCat") return;
+            acctState.giftCat = event.target.value;
+            const body = $("acctGiftBody");
+            if (body) body.innerHTML = acctGiftRowsHtml();
+        });
+    }
+
+    if (page && ["acctmenu", "acctadd", "acctlist", "acctedit", "acctview", "acctgift"].includes(view)) {
+        // Keep the existing Account controls safe (same rule the other pages follow).
+        const accountInfo = $("accountInfo");
+        const accountChip = $("accountChip");
+        if (accountInfo && accountChip && accountInfo.parentElement !== accountChip) {
+            accountChip.appendChild(accountInfo);
+            accountInfo.style.display = "none";
+        }
+
+        renderAcctPage(page, view);
+        return;
+    }
+
+    renderSettingsPageBeforeAccounts(view);
+
+    // Settings: Owner-only ➕ Add Account entry.
+    if (page && view === "main" && myBadge === "owner") {
+        const grid = page.querySelector(".settings-grid");
+
+        if (grid && !grid.querySelector('[data-acct="open-menu"]')) {
+            grid.insertAdjacentHTML("beforeend", `
+                <button class="settings-option settings-category" type="button" data-acct="open-menu">
+                    <span class="settings-icon">➕</span><span class="settings-copy"><strong>Add Account</strong><span>Owner only: create and manage player accounts</span></span>
+                </button>
+            `);
+        }
+    }
+
+    // Settings -> Account: username, Display Name, password, PIN.
+    if (page && view === "account" && authState?.username) {
+        renderAccountDetailsCard(page);
+    }
+};
+
+/* The Owner changed this player's username while they are playing. */
+socket.on("accountRenamed", data => {
+    if (!authState.username || !data?.username) return;
+
+    const oldDisplay = authState.displayName;
+    authState.username = data.username;
+    authState.displayName = data.displayName || data.username;
+
+    ["createPlayerName", "joinPlayerName", "quickStartPlayerName", "rejoinPlayerName"].forEach(id => {
+        const box = $(id);
+        if (box && box.value === oldDisplay) box.value = authState.displayName;
+    });
+
+    if (typeof updateAccountChip === "function") updateAccountChip();
+});
+
+/* The Owner changed this player's points or gave them a gift. */
+socket.on("ownerGiftReceived", data => {
+    if (typeof showShopToast === "function") showShopToast(`🎁 The Owner gave you: ${data?.name || "a gift"}`);
+    if (typeof requestMyProgress === "function") setTimeout(requestMyProgress, 400);
+});
+
+socket.on("ownerPointsChanged", () => {
+    if (typeof showShopToast === "function") showShopToast("💰 The Owner updated your points");
+    if (typeof requestMyProgress === "function") setTimeout(requestMyProgress, 400);
+});
+
+
+/* =========================================================
+   SOUNDBOARD
+   - 12 sounds. Put the MP3 files in  public/soundboard/
+     (file names below, e.g. "Among Us.mp3").
+   - Works in the lobby and during the game; everyone in the
+     SAME room hears a sound when a permitted player plays it.
+   - The HOST decides which REGISTERED players may play sounds
+     (guests cannot be selected). The server checks everything:
+     permission, cooldown and spam limits (see server.js).
+   - Each player has their own volume + mute (saved on this device).
+========================================================= */
+
+var SOUNDBOARD_SOUNDS = [
+    { id: "years",     emoji: "⏳", name: "2000 Years Later",  files: ["2000 Years Later.mp3", "2000 years later.mp3", "2000-years-later.mp3"] },
+    { id: "amongus",   emoji: "🚨", name: "Among Us",          files: ["Among Us.mp3", "among us.mp3", "among-us.mp3"] },
+    { id: "hisname",   emoji: "🎤", name: "And His Name Is",   files: ["And His Name Is.mp3", "and his name is.mp3", "and-his-name-is.mp3"] },
+    { id: "cry",       emoji: "😭", name: "Cry",               files: ["Cry.mp3", "cry.mp3"] },
+    { id: "explosion", emoji: "💥", name: "Explosion",         files: ["Explosion.mp3", "explosion.mp3"] },
+    { id: "fahhhhh",   emoji: "😂", name: "Fahhhhh",           files: ["Fahhhhh.mp3", "fahhhhh.mp3"] },
+    { id: "fail",      emoji: "❌", name: "Fail",              files: ["Fail.mp3", "fail.mp3"] },
+    { id: "funny",     emoji: "🤣", name: "Funny",             files: ["Funny.mp3", "funny.mp3"] },
+    { id: "goodboy",   emoji: "🐶", name: "Good Boy",          files: ["Good Boy.mp3", "good boy.mp3", "good-boy.mp3"] },
+    { id: "hawwwww",   emoji: "😱", name: "Hawwwww",           files: ["Hawwwww.mp3", "hawwwww.mp3"] },
+    { id: "laugh",     emoji: "😂", name: "Laugh Hahahaha",    files: ["Laugh Hahahaha.mp3", "laugh hahahaha.mp3", "laugh-hahahaha.mp3"] },
+    { id: "omgbruh",   emoji: "💀", name: "OMG Bruh",          files: ["OMG Bruh.mp3", "omg bruh.mp3", "omg-bruh.mp3"] }
+];
+
+var SOUNDBOARD_COOLDOWN_MS = 2000;   // the server enforces the same limit
+var SOUNDBOARD_MAX_OVERLAP = 3;      // at most 3 sounds at the same time
+
+var soundboardPlayerIds = [];        // players the host selected (from the server)
+var sbDraft = null;                  // host's unsaved selection (null = follow the server)
+var sbOpen = false;
+var sbCooldownUntil = 0;
+var sbActiveAudio = [];
+var sbToastTimer = null;
+var sbRefreshTimer = null;
+
+function sbLoadNumber(key, fallback) {
+    try {
+        const raw = localStorage.getItem(key);
+        if (raw === null) return fallback;
+        const value = Number(raw);
+        return Number.isFinite(value) ? value : fallback;
+    } catch (error) {
+        return fallback;
+    }
+}
+
+function sbSaveNumber(key, value) {
+    try { localStorage.setItem(key, String(value)); } catch (error) { /* private mode */ }
+}
+
+var sbVolume = Math.min(100, Math.max(0, sbLoadNumber("mafiaSoundboardVolume", 70)));
+var sbMuted = sbLoadNumber("mafiaSoundboardMuted", 0) === 1;
+
+function readSoundboardSettings(data) {
+    if (!data || !Array.isArray(data.soundboardPlayerIds)) return;
+
+    soundboardPlayerIds = data.soundboardPlayerIds.slice();
+
+    // The server list can arrive before isHost is updated, so refresh a moment later.
+    scheduleSoundboardRefresh();
+}
+
+function scheduleSoundboardRefresh() {
+    clearTimeout(sbRefreshTimer);
+    sbRefreshTimer = setTimeout(refreshSoundboardUi, 0);
+}
+
+function sbCanPlay() {
+    return Boolean(isHost || soundboardPlayerIds.includes(socket.id));
+}
+
+function sbInRoomScreen() {
+    const visible = id => {
+        const el = $(id);
+        return Boolean(el) && getComputedStyle(el).display !== "none";
+    };
+
+    return visible("lobby") || visible("gameScreen");
+}
+
+function sbSelectedSet() {
+    return sbDraft || new Set(soundboardPlayerIds);
+}
+
+function sbStatus(text) {
+    const status = $("soundboardStatus");
+    if (status) status.textContent = text || "";
+}
+
+/* One line: shown in the panel, or as a small toast when the panel is closed. */
+function sbFlash(text) {
+    sbStatus(text);
+
+    if (sbOpen) return;
+
+    const toast = $("soundboardToast");
+    if (!toast) return;
+
+    toast.textContent = text;
+    toast.classList.add("sb-toast-show");
+
+    clearTimeout(sbToastTimer);
+    sbToastTimer = setTimeout(() => toast.classList.remove("sb-toast-show"), 2600);
+}
+
+/* ---------- Host: who may play ---------- */
+
+function renderSoundboardPermissions(container) {
+    if (!container) return;
+
+    container.innerHTML = "";
+
+    const list = (players || []).filter(player => player && player.connected !== false);
+    const selected = sbSelectedSet();
+
+    list.forEach(player => {
+        const registered = Boolean(player.registered);
+        const isHostRow = player.id === window.currentHostId;
+
+        const row = document.createElement("label");
+        row.className = "sb-perm-row" + (registered || isHostRow ? "" : " sb-perm-guest");
+
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        box.checked = isHostRow || (registered && selected.has(player.id));
+        box.disabled = isHostRow || !registered;
+
+        const name = document.createElement("span");
+        name.className = "sb-perm-name";
+        name.textContent = player.name + (player.id === socket.id ? " (you)" : "");
+
+        const tag = document.createElement("span");
+        tag.className = "sb-perm-tag";
+        tag.textContent = isHostRow ? "Host · always allowed" : (registered ? "Registered" : "Guest · not allowed");
+
+        box.addEventListener("change", () => {
+            if (sbDraft === null) sbDraft = new Set(soundboardPlayerIds);
+
+            if (box.checked) sbDraft.add(player.id);
+            else sbDraft.delete(player.id);
+
+            refreshSoundboardUi();
+        });
+
+        row.append(box, name, tag);
+        container.appendChild(row);
+    });
+
+    if (!list.length) {
+        const empty = document.createElement("div");
+        empty.className = "sb-empty";
+        empty.textContent = "No players yet.";
+        container.appendChild(empty);
+    }
+}
+
+function sbApplyPermissions() {
+    if (!isHost) return;
+
+    const chosen = Array.from(sbSelectedSet()).filter(id =>
+        (players || []).some(player => player.id === id && player.registered)
+    );
+
+    socket.emit("setSoundboardPermissions", { roomCode, players: chosen });
+
+    sbDraft = null;
+    sbStatus("✅ Soundboard permissions updated.");
+    scheduleSoundboardRefresh();
+}
+
+function sbUpdateButtonLabel(button) {
+    if (!button) return;
+
+    const count = Array.from(sbSelectedSet()).filter(id =>
+        (players || []).some(player => player.id === id && player.registered)
+    ).length;
+
+    button.textContent = `✅ UPDATE PERMISSIONS (${count})` + (sbDraft ? " •" : "");
+}
+
+/* The section in the lobby's host settings (markup is in index.html; created here if missing). */
+function ensureSoundboardHostSection() {
+    const hostSettings = $("hostSettings");
+    if (!hostSettings) return;
+
+    let section = $("soundboardHostSection");
+
+    if (!section) {
+        section = document.createElement("div");
+        section.id = "soundboardHostSection";
+        section.className = "sb-host-section";
+        section.innerHTML =
+            "<h3>🔊 Soundboard Permissions</h3>" +
+            "<p>Choose which registered players can play sounds. Guests can't be selected.</p>" +
+            "<div id=\"soundboardPermList\" class=\"sb-perm-list\"></div>" +
+            "<button id=\"soundboardPermUpdate\" type=\"button\" class=\"sb-update-button\"></button>";
+
+        const start = $("startGame");
+        hostSettings.insertBefore(section, start && start.parentNode === hostSettings ? start : null);
+    }
+
+    const update = $("soundboardPermUpdate");
+
+    if (update && !update.dataset.bound) {
+        update.dataset.bound = "1";
+        update.addEventListener("click", sbApplyPermissions);
+    }
+
+    section.style.display = isHost ? "" : "none";
+
+    renderSoundboardPermissions($("soundboardPermList"));
+    sbUpdateButtonLabel(update);
+}
+
+/* ---------- Panel (lives inside the Voice Chat panel) ---------- */
+
+/* Adds a 🎛️ SOUNDBOARD button to the Voice Chat panel's button row and a
+   soundboard section under it. Returns false until the voice panel exists. */
+function ensureSoundboardUi() {
+    if ($("voiceSoundboardPanel")) return true;
+
+    const voice = $("voiceChatPanel");
+    const controls = voice ? voice.querySelector(".voice-controls") : null;
+    const body = $("voiceBody");
+
+    if (!voice || !controls || !body) return false;
+
+    const toggle = document.createElement("button");
+    toggle.id = "soundboardToggle";
+    toggle.type = "button";
+    toggle.className = "voice-control-button";
+    toggle.textContent = "🎛️ SOUNDBOARD";
+    toggle.addEventListener("click", () => {
+        sbOpen = !sbOpen;
+        refreshSoundboardUi();
+    });
+    controls.appendChild(toggle);
+
+    const toast = document.createElement("div");
+    toast.id = "soundboardToast";
+    voice.appendChild(toast);
+
+    const panel = document.createElement("div");
+    panel.id = "voiceSoundboardPanel";
+    panel.className = "voice-speaker-panel sb-panel";
+    panel.style.display = "none";
+
+    const note = document.createElement("div");
+    note.id = "soundboardNote";
+    note.className = "sb-note";
+
+    const volumeRow = document.createElement("div");
+    volumeRow.className = "sb-volume-row";
+
+    const mute = document.createElement("button");
+    mute.id = "soundboardMute";
+    mute.type = "button";
+    mute.className = "sb-mute";
+    mute.addEventListener("click", () => {
+        sbMuted = !sbMuted;
+        sbSaveNumber("mafiaSoundboardMuted", sbMuted ? 1 : 0);
+        sbApplyVolume();
+    });
+
+    const slider = document.createElement("input");
+    slider.id = "soundboardVolume";
+    slider.type = "range";
+    slider.min = "0";
+    slider.max = "100";
+    slider.step = "1";
+    slider.value = String(sbVolume);
+    slider.setAttribute("aria-label", "Soundboard volume");
+    slider.addEventListener("input", () => {
+        sbVolume = Number(slider.value) || 0;
+        sbSaveNumber("mafiaSoundboardVolume", sbVolume);
+        sbApplyVolume();
+    });
+
+    const label = document.createElement("span");
+    label.id = "soundboardVolumeLabel";
+    label.className = "sb-volume-label";
+
+    volumeRow.append(mute, slider, label);
+
+    const grid = document.createElement("div");
+    grid.id = "soundboardGrid";
+    grid.className = "sb-grid";
+
+    SOUNDBOARD_SOUNDS.forEach(sound => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "sb-sound";
+        button.dataset.sound = sound.id;
+
+        const emoji = document.createElement("span");
+        emoji.className = "sb-emoji";
+        emoji.textContent = sound.emoji;
+
+        const name = document.createElement("span");
+        name.className = "sb-name";
+        name.textContent = sound.name;
+
+        button.append(emoji, name);
+        button.addEventListener("click", () => sbPlay(sound.id));
+        grid.appendChild(button);
+    });
+
+    const status = document.createElement("div");
+    status.id = "soundboardStatus";
+    status.className = "sb-status";
+
+    const hostBox = document.createElement("details");
+    hostBox.id = "soundboardHostBox";
+    hostBox.className = "sb-host-box";
+    hostBox.style.display = "none";
+
+    const summary = document.createElement("summary");
+    summary.textContent = "⚙️ Permissions (host)";
+
+    const permList = document.createElement("div");
+    permList.id = "soundboardPanelPermList";
+    permList.className = "sb-perm-list";
+
+    const update = document.createElement("button");
+    update.id = "soundboardPanelUpdate";
+    update.type = "button";
+    update.className = "sb-update-button";
+    update.addEventListener("click", sbApplyPermissions);
+
+    hostBox.append(summary, permList, update);
+
+    panel.append(note, volumeRow, grid, status, hostBox);
+    body.appendChild(panel);
+
+    sbApplyVolume();
+    setTimeout(refreshSoundboardUi, 0);
+
+    return true;
+}
+
+function sbApplyVolume() {
+    const mute = $("soundboardMute");
+    const label = $("soundboardVolumeLabel");
+
+    if (mute) mute.textContent = sbMuted || sbVolume <= 0 ? "🔇" : (sbVolume < 40 ? "🔈" : "🔊");
+    if (label) label.textContent = sbMuted ? "MUTED" : `${sbVolume}%`;
+
+    sbActiveAudio.forEach(audio => { audio.volume = sbMuted ? 0 : sbVolume / 100; });
+}
+
+/* Cheap check: panel open/closed + which buttons are enabled. Runs every second. */
+function sbSyncVisibility() {
+    if (!ensureSoundboardUi()) return;
+
+    const voice = $("voiceChatPanel");
+    const voiceShown = Boolean(voice) && voice.style.display !== "none";
+
+    if (!voiceShown || !sbInRoomScreen()) sbOpen = false;
+
+    $("soundboardToggle")?.classList.toggle("voice-control-active", sbOpen);
+
+    const panel = $("voiceSoundboardPanel");
+    if (panel) panel.style.display = sbOpen ? "block" : "none";
+
+    const hostBox = $("soundboardHostBox");
+    if (hostBox) hostBox.style.display = isHost ? "" : "none";
+
+    const canPlay = sbCanPlay();
+    const cooling = Date.now() < sbCooldownUntil;
+
+    document.querySelectorAll("#soundboardGrid .sb-sound").forEach(button => {
+        button.disabled = !canPlay || cooling;
+    });
+
+    $("soundboardGrid")?.classList.toggle("sb-locked", !canPlay);
+    $("soundboardGrid")?.classList.toggle("sb-cooling", canPlay && cooling);
+
+    const note = $("soundboardNote");
+
+    if (note) {
+        note.textContent = canPlay
+            ? "Tap a sound to play it for everyone in this room."
+            : "🔒 You can listen, but the host has not given you permission to play sounds.";
+    }
+}
+
+/* Full redraw: after permissions, players or the host change. */
+function refreshSoundboardUi() {
+    sbSyncVisibility();
+
+    if (isHost && sbOpen) {
+        renderSoundboardPermissions($("soundboardPanelPermList"));
+        sbUpdateButtonLabel($("soundboardPanelUpdate"));
+    }
+
+    ensureSoundboardHostSection();
+}
+
+/* ---------- Playing ---------- */
+
+function sbPlay(soundId) {
+    if (!sbCanPlay()) {
+        sbStatus("🔒 You do not have soundboard permission.");
+        return;
+    }
+
+    const now = Date.now();
+    if (now < sbCooldownUntil) return;
+
+    sbCooldownUntil = now + SOUNDBOARD_COOLDOWN_MS;
+
+    socket.emit("soundboardPlay", { roomCode, soundId });
+
+    sbSyncVisibility();
+    setTimeout(sbSyncVisibility, SOUNDBOARD_COOLDOWN_MS + 40);
+}
+
+function sbPlayAudio(sound) {
+    const audio = new Audio();
+    audio.preload = "auto";
+    audio.volume = sbMuted ? 0 : sbVolume / 100;
+
+    let attempt = 0;
+
+    // Tries the exact file name first, then simpler spellings (Linux servers are case-sensitive).
+    const tryNext = () => {
+        if (attempt >= sound.files.length) return;
+
+        audio.src = "/soundboard/" + encodeURIComponent(sound.files[attempt++]);
+        const started = audio.play();
+        if (started && started.catch) started.catch(() => { /* blocked or missing */ });
+    };
+
+    audio.addEventListener("error", tryNext);
+
+    audio.addEventListener("ended", () => {
+        sbActiveAudio = sbActiveAudio.filter(item => item !== audio);
+    });
+
+    sbActiveAudio.push(audio);
+
+    while (sbActiveAudio.length > SOUNDBOARD_MAX_OVERLAP) {
+        const oldest = sbActiveAudio.shift();
+        try { oldest.pause(); } catch (error) { /* ignore */ }
+    }
+
+    tryNext();
+}
+
+socket.on("soundboardPlayed", data => {
+    const sound = SOUNDBOARD_SOUNDS.find(item => item.id === data?.soundId);
+    if (!sound) return;
+
+    const who = String(data?.fromName || "Someone").slice(0, 24);
+
+    sbFlash(`${sound.emoji} ${who} played ${sound.name}`);
+
+    if (sbMuted || sbVolume <= 0) return;
+
+    sbPlayAudio(sound);
+});
+
+socket.on("soundboardError", message => {
+    sbCooldownUntil = 0;
+    sbFlash("⚠️ " + String(message || "Soundboard error."));
+    sbSyncVisibility();
+});
+
+setInterval(sbSyncVisibility, 1000);
+
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", refreshSoundboardUi);
+} else {
+    refreshSoundboardUi();
+}
+
+
+/* =========================================================
+   LOBBY CHAT
+   Text chat in the lobby, so players without a microphone can
+   talk too. The server checks the room, the lobby phase and spam
+   (see server.js). Messages are drawn with textContent only.
+========================================================= */
+
+var lobbyChatKey = "";          // "ROOM:socketId" the history was loaded for
+var lobbyChatErrorTimer = null;
+var lobbyChatLastTime = 0;
+
+function lcTimeText(time) {
+    try {
+        return new Date(time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    } catch (error) {
+        return "";
+    }
+}
+
+function lcClear() {
+    const box = $("lobbyChatMessages");
+    if (!box) return;
+
+    box.innerHTML = "";
+
+    const empty = document.createElement("div");
+    empty.className = "lc-empty";
+    empty.textContent = "No messages yet. Say hi 👋";
+    box.appendChild(empty);
+}
+
+function lcAdd(entry) {
+    const box = $("lobbyChatMessages");
+    if (!box || !entry) return;
+
+    box.querySelector(".lc-empty")?.remove();
+
+    const mine = entry.fromId === socket.id;
+    const isHostSender = entry.fromId === window.currentHostId;
+
+    const row = document.createElement("div");
+    row.className = "lc-msg " + (mine ? "lc-me" : "lc-them");
+
+    const meta = document.createElement("div");
+    meta.className = "lc-meta";
+
+    const name = document.createElement("span");
+    name.className = "lc-name";
+    name.textContent = (isHostSender ? "👑 " : "") + (mine ? "You" : String(entry.name || "Player").slice(0, 24));
+
+    const time = document.createElement("span");
+    time.className = "lc-time";
+    time.textContent = lcTimeText(entry.time);
+
+    meta.append(name, time);
+
+    const text = document.createElement("div");
+    text.className = "lc-text";
+    text.textContent = String(entry.text || "");
+
+    row.append(meta, text);
+    box.appendChild(row);
+
+    while (box.children.length > 80) box.firstElementChild.remove();
+
+    box.scrollTop = box.scrollHeight;
+}
+
+function lcError(message) {
+    const el = $("lobbyChatError");
+    if (!el) return;
+
+    el.textContent = message || "";
+
+    clearTimeout(lobbyChatErrorTimer);
+    lobbyChatErrorTimer = setTimeout(() => { el.textContent = ""; }, 3000);
+}
+
+function lcSend() {
+    const input = $("lobbyChatInput");
+    if (!input) return;
+
+    const message = input.value.trim();
+    if (!message) return;
+
+    // Same limits as the server, so the player gets instant feedback.
+    if (Date.now() - lobbyChatLastTime < 600) {
+        lcError("You are typing too fast.");
+        return;
+    }
+
+    lobbyChatLastTime = Date.now();
+
+    socket.emit("sendLobbyMessage", { roomCode, message });
+
+    input.value = "";
+    input.focus();
+}
+
+function setupLobbyChat() {
+    const input = $("lobbyChatInput");
+    const send = $("lobbyChatSend");
+
+    if (!input || !send || send.dataset.bound) return;
+
+    send.dataset.bound = "1";
+    send.addEventListener("click", lcSend);
+
+    input.addEventListener("keydown", event => {
+        if (event.key === "Enter") {
+            event.preventDefault();
+            lcSend();
+        }
+    });
+
+    lcClear();
+}
+
+socket.on("lobbyChatHistory", list => {
+    lcClear();
+
+    if (!Array.isArray(list)) return;
+
+    list.forEach(entry => lcAdd(entry));
+});
+
+socket.on("lobbyMessage", entry => lcAdd(entry));
+
+socket.on("lobbyChatError", message => lcError(String(message || "Could not send.")));
+
+// The lobby update tells us which room we are in; load its saved messages once per room/connection.
+socket.on("playerJoined", data => {
+    const code = data && !Array.isArray(data) ? data.roomCode : "";
+    if (!code) return;
+
+    const key = `${code}:${socket.id}`;
+    if (key === lobbyChatKey) return;
+
+    lobbyChatKey = key;
+    setupLobbyChat();
+    lcClear();
+    socket.emit("lobbyChatRequest");
+});
+
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", setupLobbyChat);
+} else {
+    setupLobbyChat();
+}
+
+
+/* =========================================================
+   VIEW ACCOUNT
+   A small "👤 View Account" button on every player in the lobby and
+   in the game. It opens that player's PUBLIC card: rank, rank points,
+   level, stats. Guests have no account, so the card says so.
+   The server only answers for players in your own room and never
+   sends the login name, shop points, items or game roles.
+========================================================= */
+
+var accountCardId = "";   // player the open card is waiting for / showing
+
+function makeViewAccountButton(player) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "view-account-btn";
+    button.textContent = "👤 View Account";
+    button.title = "See this player's rank, points and stats";
+    button.addEventListener("click", event => {
+        event.stopPropagation();
+        openAccountCard(player);
+    });
+    return button;
+}
+
+function ensureAccountCardOverlay() {
+    let overlay = $("accountCardOverlay");
+    if (overlay) return overlay;
+
+    overlay = document.createElement("div");
+    overlay.id = "accountCardOverlay";
+    overlay.style.display = "none";
+    overlay.addEventListener("click", event => {
+        if (event.target === overlay) closeAccountCard();
+    });
+
+    document.body.appendChild(overlay);
+
+    document.addEventListener("keydown", event => {
+        if (event.key === "Escape" && overlay.style.display !== "none") closeAccountCard();
+    });
+
+    return overlay;
+}
+
+function closeAccountCard() {
+    const overlay = $("accountCardOverlay");
+    if (overlay) overlay.style.display = "none";
+    accountCardId = "";
+}
+
+function openAccountCard(player) {
+    if (!player || !player.id) return;
+
+    const overlay = ensureAccountCardOverlay();
+
+    accountCardId = player.id;
+
+    overlay.innerHTML = "";
+
+    const card = document.createElement("div");
+    card.className = "ac-card";
+
+    const loading = document.createElement("div");
+    loading.className = "ac-loading";
+    loading.textContent = "Loading account…";
+
+    card.appendChild(loading);
+    overlay.appendChild(card);
+    overlay.style.display = "flex";
+
+    socket.emit("getAccountCard", { playerId: player.id });
+}
+
+function acStat(label, value) {
+    const cell = document.createElement("div");
+    cell.className = "ac-stat";
+
+    const number = document.createElement("strong");
+    number.textContent = String(value);
+
+    const text = document.createElement("span");
+    text.textContent = label;
+
+    cell.append(number, text);
+    return cell;
+}
+
+function renderAccountCard(data) {
+    const overlay = ensureAccountCardOverlay();
+
+    overlay.innerHTML = "";
+
+    const card = document.createElement("div");
+    card.className = "ac-card";
+
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "ac-close";
+    close.textContent = "✕";
+    close.setAttribute("aria-label", "Close");
+    close.addEventListener("click", closeAccountCard);
+    card.appendChild(close);
+
+    if (!data || !data.ok) {
+        const message = document.createElement("div");
+        message.className = "ac-loading";
+        message.textContent = (data && data.error) || "Could not load this account.";
+        card.appendChild(message);
+        overlay.appendChild(card);
+        return;
+    }
+
+    /* ----- top: character + name ----- */
+    const top = document.createElement("div");
+    top.className = "ac-top";
+
+    const avatarBox = document.createElement("div");
+    avatarBox.className = "ac-avatar";
+    avatarBox.appendChild(avatarNode(data.look, 74, false));
+
+    const who = document.createElement("div");
+    who.className = "ac-who";
+
+    const name = document.createElement("div");
+    name.className = "ac-name";
+    setTierName(name, data.name, data.guest ? null : data.tier);
+    if (!data.guest) appendUserBadge(name, data.badge);
+
+    const tags = document.createElement("div");
+    tags.className = "ac-tags";
+
+    const kind = document.createElement("span");
+    kind.className = "ac-tag" + (data.guest ? " ac-tag-guest" : "");
+    kind.textContent = data.guest ? "GUEST" : "REGISTERED";
+    tags.appendChild(kind);
+
+    if (data.isHost) {
+        const host = document.createElement("span");
+        host.className = "ac-tag ac-tag-host";
+        host.textContent = "👑 HOST";
+        tags.appendChild(host);
+    }
+
+    if (data.playerId === socket.id) {
+        const you = document.createElement("span");
+        you.className = "ac-tag";
+        you.textContent = "YOU";
+        tags.appendChild(you);
+    }
+
+    who.append(name, tags);
+    top.append(avatarBox, who);
+    card.appendChild(top);
+
+    if (data.guest) {
+        const note = document.createElement("div");
+        note.className = "ac-guest-note";
+        note.textContent = "This player is a guest. Guests have no account, so they have no rank, points or level.";
+        card.appendChild(note);
+        overlay.appendChild(card);
+        return;
+    }
+
+    /* ----- rank + points ----- */
+    const tier = getTierInfo(data.tier);
+    const big = document.createElement("div");
+    big.className = "ac-big";
+
+    const rankBox = document.createElement("div");
+    rankBox.className = "ac-big-box";
+    const rankLabel = document.createElement("span");
+    rankLabel.textContent = "LEADERBOARD";
+    const rankValue = document.createElement("strong");
+    rankValue.textContent = `#${data.position}`;
+    const rankSmall = document.createElement("small");
+    rankSmall.textContent = `of ${data.accounts} account${data.accounts === 1 ? "" : "s"}`;
+    rankBox.append(rankLabel, rankValue, rankSmall);
+
+    const pointsBox = document.createElement("div");
+    pointsBox.className = "ac-big-box";
+    const pointsLabel = document.createElement("span");
+    pointsLabel.textContent = "RANK POINTS";
+    const pointsValue = document.createElement("strong");
+    pointsValue.textContent = String(data.points);
+    const pointsSmall = document.createElement("small");
+    if (data.nextTier) {
+        const nextInfo = getTierInfo(data.nextTier.key);
+        pointsSmall.textContent = `${data.nextTier.min - data.points} to ${nextInfo ? nextInfo.name : "next rank"}`;
+    } else {
+        pointsSmall.textContent = "Top rank reached";
+    }
+    pointsBox.append(pointsLabel, pointsValue, pointsSmall);
+
+    const tagBox = document.createElement("div");
+    tagBox.className = "ac-big-box";
+    const tagLabel = document.createElement("span");
+    tagLabel.textContent = "RANK TAG";
+    const tagValue = document.createElement("strong");
+    tagValue.textContent = tier ? `${tier.symbol} ${tier.name}` : "Unranked";
+    if (tier) tagValue.style.color = tier.color;
+    const tagSmall = document.createElement("small");
+    tagSmall.textContent = tier ? "Unlocked" : "Starts at 150 pts";
+    tagBox.append(tagLabel, tagValue, tagSmall);
+
+    big.append(rankBox, pointsBox, tagBox);
+    card.appendChild(big);
+
+    /* ----- level bar ----- */
+    const level = document.createElement("div");
+    level.className = "ac-level";
+
+    const levelTop = document.createElement("div");
+    levelTop.className = "ac-level-top";
+    const levelName = document.createElement("strong");
+    levelName.textContent = `⭐ LEVEL ${data.level}`;
+    const levelXp = document.createElement("span");
+    levelXp.textContent = data.xpNeeded ? `${data.xpIntoLevel} / ${data.xpNeeded} XP` : "MAX LEVEL";
+    levelTop.append(levelName, levelXp);
+
+    const bar = document.createElement("div");
+    bar.className = "ac-bar";
+    const fill = document.createElement("div");
+    fill.className = "ac-bar-fill";
+    fill.style.width = (data.xpNeeded ? Math.min(100, Math.round(data.xpIntoLevel / data.xpNeeded * 100)) : 100) + "%";
+    bar.appendChild(fill);
+
+    level.append(levelTop, bar);
+    card.appendChild(level);
+
+    /* ----- stats ----- */
+    const st = data.stats || {};
+    const totalWins = (st.jesterWins || 0) + (st.mafiaWins || 0) + (st.civilianWins || 0);
+
+    const grid = document.createElement("div");
+    grid.className = "ac-grid";
+    grid.append(
+        acStat("🏆 Total Wins", totalWins),
+        acStat("🔪 Kills", st.kills || 0),
+        acStat("🛡️ Saves", st.saves || 0),
+        acStat("🔎 Detects", st.detects || 0),
+        acStat("🗳️ Correct Votes", st.civilianVotes || 0),
+        acStat("☠️ Mafia Wins", st.mafiaWins || 0),
+        acStat("🎉 Civilian Wins", st.civilianWins || 0),
+        acStat("🤡 Jester Wins", st.jesterWins || 0)
+    );
+    card.appendChild(grid);
+
+    /* ----- medals + member since ----- */
+    if (Array.isArray(data.medals) && data.medals.length) {
+        const medals = document.createElement("div");
+        medals.className = "ac-medals";
+
+        const title = document.createElement("span");
+        title.textContent = "MEDALS";
+        medals.appendChild(title);
+
+        data.medals.forEach(medal => {
+            const icon = document.createElement("span");
+            icon.className = "ac-medal";
+            icon.textContent = medal.icon;
+            icon.title = `${medal.name} (level ${medal.level})`;
+            medals.appendChild(icon);
+        });
+
+        card.appendChild(medals);
+    }
+
+    if (data.memberSince) {
+        const since = document.createElement("div");
+        since.className = "ac-since";
+        try {
+            since.textContent = "Member since " + new Date(data.memberSince).toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" });
+            card.appendChild(since);
+        } catch (error) { /* ignore */ }
+    }
+
+    overlay.appendChild(card);
+}
+
+socket.on("accountCardData", data => {
+    const overlay = $("accountCardOverlay");
+
+    // Ignore late answers for a card the player already closed or replaced.
+    if (!overlay || overlay.style.display === "none") return;
+    if (data && data.ok && data.playerId !== accountCardId) return;
+
+    renderAccountCard(data);
+});
+
+
+
+
