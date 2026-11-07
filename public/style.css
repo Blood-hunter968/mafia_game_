@@ -2068,3 +2068,25 @@ html[data-mafia-theme="white"] .role-settings input[type="radio"] {
 @media (max-width: 700px) {
     .game-chat-hint { display: none; }
 }
+
+/* =========================================================
+   EXTRA ROLES - role setup rows, Details buttons
+========================================================= */
+.role-settings label { transition: transform .15s ease, box-shadow .15s ease; }
+.role-settings label:hover { transform: translateX(3px); }
+.role-settings label.role-row-new { border-left: 4px solid #e32626 !important; }
+.role-settings label input[type="number"] { margin-left: auto; }
+.role-settings .mwx-details-btn {
+    margin: 0 0 0 10px; padding: 5px 11px; font-size: 12px; font-weight: 800; letter-spacing: .5px;
+    background: linear-gradient(180deg, #3a1010, #1a0606); color: #fff;
+    border: 1px solid #8c1818; border-radius: 4px; cursor: pointer; white-space: nowrap;
+}
+.role-settings .mwx-details-btn:hover { border-color: #ff3b3b; box-shadow: 0 0 10px rgba(227, 38, 38, .45); }
+html[data-mafia-theme="white"] .role-settings .mwx-details-btn {
+    background: linear-gradient(180deg, #1a56e6, #0f3aa8); border-color: var(--wt-blue-light); color: #fff;
+}
+html[data-mafia-theme="white"] .role-settings label.role-row-new { border-left-color: var(--wt-blue-light) !important; }
+@media (max-width: 600px) {
+    .role-settings label { flex-wrap: wrap; }
+    .role-settings .mwx-details-btn { margin-left: 0; }
+}
