@@ -363,6 +363,42 @@
                     <input id="loverCount" type="number" min="0" max="1" value="0">
                 </label>
 
+                <label class="role-row-new">Bodyguard
+                    <input id="bodyguardCount" type="number" min="0" value="0">
+                </label>
+
+                <label class="role-row-new">Vigilante
+                    <input id="vigilanteCount" type="number" min="0" value="0">
+                </label>
+
+                <label class="role-row-new">Sheriff
+                    <input id="sheriffCount" type="number" min="0" value="0">
+                </label>
+
+                <label class="role-row-new">Mayor
+                    <input id="mayorCount" type="number" min="0" max="1" value="0">
+                </label>
+
+                <label class="role-row-new">Escort
+                    <input id="escortCount" type="number" min="0" value="0">
+                </label>
+
+                <label class="role-row-new">Framer (Mafia team)
+                    <input id="framerCount" type="number" min="0" value="0">
+                </label>
+
+                <label class="role-row-new">Medium
+                    <input id="mediumCount" type="number" min="0" value="0">
+                </label>
+
+                <label class="role-row-new">Executioner
+                    <input id="executionerCount" type="number" min="0" max="1" value="0">
+                </label>
+
+                <label class="role-row-new">Amnesiac
+                    <input id="amnesiacCount" type="number" min="0" max="1" value="0">
+                </label>
+
                 <label>Civilians
                     <input id="civilianCount" type="number" value="0" readonly>
                 </label>
@@ -537,6 +573,105 @@
                     <div class="guide-win">
                         🏆 <strong>WIN CONDITION:</strong>
                         Win with the Town.
+                    </div>
+                </section>
+
+                <!-- BODYGUARD -->
+                <section class="guide-role">
+                    <h3>🛡️ BODYGUARD</h3>
+                    <span class="guide-team">TEAM // TOWN</span>
+                    <p>🌙 Each night the Bodyguard guards one player. If the Mafia attacks that player, the Bodyguard dies in their place and the target survives.</p>
+                    <div class="guide-win">
+                        🏆 <strong>WIN CONDITION:</strong>
+                        Win with the Town.
+                    </div>
+                </section>
+
+                <!-- VIGILANTE -->
+                <section class="guide-role">
+                    <h3>🔫 VIGILANTE</h3>
+                    <span class="guide-team">TEAM // TOWN</span>
+                    <p>🌙 Each night the Vigilante may shoot one player, or skip. If the Vigilante kills <strong>2 innocent players</strong> in one game, the Vigilante dies of guilt.</p>
+                    <div class="guide-win">
+                        🏆 <strong>WIN CONDITION:</strong>
+                        Win with the Town.
+                    </div>
+                </section>
+
+                <!-- SHERIFF -->
+                <section class="guide-role">
+                    <h3>⭐ SHERIFF</h3>
+                    <span class="guide-team">TEAM // TOWN</span>
+                    <p>🌙 Each night the Sheriff checks one player and learns <strong>SUSPICIOUS</strong> or <strong>NOT SUSPICIOUS</strong>. Mafia, framed players, the Jester and the Executioner look suspicious. The Godfather looks innocent.</p>
+                    <div class="guide-win">
+                        🏆 <strong>WIN CONDITION:</strong>
+                        Win with the Town.
+                    </div>
+                </section>
+
+                <!-- MAYOR -->
+                <section class="guide-role">
+                    <h3>🏛️ MAYOR</h3>
+                    <span class="guide-team">TEAM // TOWN</span>
+                    <p>☀️ The Mayor has no night action, but their vote counts as <strong>2 votes</strong> during the day.</p>
+                    <div class="guide-win">
+                        🏆 <strong>WIN CONDITION:</strong>
+                        Win with the Town.
+                    </div>
+                </section>
+
+                <!-- ESCORT -->
+                <section class="guide-role">
+                    <h3>🚧 ESCORT</h3>
+                    <span class="guide-team">TEAM // TOWN</span>
+                    <p>🌙 The Escort acts first each night and blocks one player. That player's ability does nothing that night.</p>
+                    <div class="guide-win">
+                        🏆 <strong>WIN CONDITION:</strong>
+                        Win with the Town.
+                    </div>
+                </section>
+
+                <!-- FRAMER -->
+                <section class="guide-role">
+                    <h3>🎭 FRAMER</h3>
+                    <span class="guide-team">TEAM // MAFIA</span>
+                    <p>🌙 A Mafia-team member who also kills with the Mafia. Each night the Framer frames one player, who looks like Mafia to the Detective and Sheriff.</p>
+                    <div class="guide-win">
+                        🏆 <strong>WIN CONDITION:</strong>
+                        The Mafia team wins when they equal or outnumber the Town.
+                    </div>
+                </section>
+
+                <!-- MEDIUM -->
+                <section class="guide-role">
+                    <h3>🔮 MEDIUM</h3>
+                    <span class="guide-team">TEAM // TOWN</span>
+                    <p>🌙 At night the Medium can talk to the dead in the Dead Chat and learn useful hints.</p>
+                    <div class="guide-win">
+                        🏆 <strong>WIN CONDITION:</strong>
+                        Win with the Town.
+                    </div>
+                </section>
+
+                <!-- EXECUTIONER -->
+                <section class="guide-role">
+                    <h3>🪓 EXECUTIONER</h3>
+                    <span class="guide-team">TEAM // NEUTRAL</span>
+                    <p>The Executioner gets a secret target. If the target dies in any other way, the Executioner becomes a Civilian.</p>
+                    <div class="guide-win">
+                        🏆 <strong>WIN CONDITION:</strong>
+                        The Executioner wins when the town votes their target out.
+                    </div>
+                </section>
+
+                <!-- AMNESIAC -->
+                <section class="guide-role">
+                    <h3>🧠 AMNESIAC</h3>
+                    <span class="guide-team">TEAM // NEUTRAL</span>
+                    <p>The Amnesiac starts without a role. When the <strong>first player dies</strong>, the Amnesiac takes that player's role and abilities.</p>
+                    <div class="guide-win">
+                        🏆 <strong>WIN CONDITION:</strong>
+                        Win with the team of the role they take.
                     </div>
                 </section>
 
