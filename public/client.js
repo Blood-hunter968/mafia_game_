@@ -1313,7 +1313,16 @@ function updateCivilianCount() {
         "doctorCount",
         "detectiveCount",
         "jesterCount",
-        "loverCount"
+        "loverCount",
+        "bodyguardCount",
+        "vigilanteCount",
+        "sheriffCount",
+        "mayorCount",
+        "escortCount",
+        "framerCount",
+        "mediumCount",
+        "executionerCount",
+        "amnesiacCount"
     ];
 
     let used = 0;
@@ -1356,7 +1365,16 @@ function setupRoleInputs() {
         "doctorCount",
         "detectiveCount",
         "jesterCount",
-        "loverCount"
+        "loverCount",
+        "bodyguardCount",
+        "vigilanteCount",
+        "sheriffCount",
+        "mayorCount",
+        "escortCount",
+        "framerCount",
+        "mediumCount",
+        "executionerCount",
+        "amnesiacCount"
     ].forEach(id => {
 
         $(id)?.addEventListener(
@@ -1458,7 +1476,16 @@ function setupStartGame() {
                             $("loverCount")?.value || 0,
 
                         civilian:
-                            $("civilianCount")?.value || 0
+                            $("civilianCount")?.value || 0,
+                        bodyguard: $("bodyguardCount")?.value || 0,
+                        vigilante: $("vigilanteCount")?.value || 0,
+                        sheriff: $("sheriffCount")?.value || 0,
+                        mayor: $("mayorCount")?.value || 0,
+                        escort: $("escortCount")?.value || 0,
+                        framer: $("framerCount")?.value || 0,
+                        medium: $("mediumCount")?.value || 0,
+                        executioner: $("executionerCount")?.value || 0,
+                        amnesiac: $("amnesiacCount")?.value || 0
                     }
                 }
             );
@@ -1533,6 +1560,9 @@ function ensureNightTurnOverlay() {
 
 function isMyActiveNightTurn(turn) {
     if (currentPhase !== "night") return false;
+    if (window.MW_EXTRA_TURN_ROLES && window.MW_EXTRA_TURN_ROLES[turn]) {
+        return window.MW_EXTRA_TURN_ROLES[turn] !== myRole;
+    }
 
     // Turn photos are shown to EVERYONE EXCEPT the team/role whose turn it is.
     // Mafia members do not see the Mafia turn photo; non-Mafia players do.
@@ -1631,6 +1661,12 @@ function updateNightTurnOverlay(turn, endsAt) {
             subtitle: "CUPID IS MAKING A DECISION",
             image: isMobileOrTablet() ? "/images/mobile/cupid-turn-mobile.png" : "/images/laptop/cupid-turn-laptop.png"
         }
+    ,
+        escort: { title: "ESCORT TURN", subtitle: "ESCORT IS MAKING A DECISION", image: "/images/roles/escort-turn.png" },
+        framer: { title: "FRAMER TURN", subtitle: "FRAMER IS MAKING A DECISION", image: "/images/roles/framer-turn.png" },
+        bodyguard: { title: "BODYGUARD TURN", subtitle: "BODYGUARD IS MAKING A DECISION", image: "/images/roles/bodyguard-turn.png" },
+        sheriff: { title: "SHERIFF TURN", subtitle: "SHERIFF IS MAKING A DECISION", image: "/images/roles/sheriff-turn.png" },
+        vigilante: { title: "VIGILANTE TURN", subtitle: "VIGILANTE IS MAKING A DECISION", image: "/images/roles/vigilante-turn.png" }
     };
 
     const info = roleData[turn];
@@ -2358,9 +2394,10 @@ function renderTargets(data) {
 
     button.disabled = false;
 
-if (myRole === "Mafia" ||
+if ((myRole === "Mafia" ||
     myRole === "Grandmafia" ||
-    myRole === "Baby Mafia") {
+    myRole === "Baby Mafia" ||
+    myRole === "Framer") && currentNightTurn !== "framer") {
 
     button.textContent = "🔪 KILL";
 
@@ -2369,11 +2406,10 @@ if (myRole === "Mafia" ||
     button.textContent = "🔎 CHECK";
 
 } else if (myRole === "Doctor") {
-
     button.textContent = "💚 SAVE";
-
+} else if (window.MW_ACTION_TEXT && window.MW_ACTION_TEXT[myRole]) {
+    button.textContent = window.MW_ACTION_TEXT[myRole].button;
 } else {
-
     button.textContent = "CONFIRM";
 }
 
@@ -2574,11 +2610,21 @@ function setupMainAction() {
                 }
 
                 if (
+                    window.MW_EXTRA_TURN_ROLES &&
+                    window.MW_EXTRA_TURN_ROLES[currentNightTurn] === myRole
+                ) {
+                    socket.emit(
+                        "roleChoose",
+                        {
+                            roomCode,
+                            targetId
+                        }
+                    );
+                } else if (
                     isMafiaTeamClient(
                         myRole
                     )
                 ) {
-
                     socket.emit(
                         "mafiaChoose",
                         {
@@ -2626,7 +2672,8 @@ function isMafiaTeamClient(role) {
         "Mafia",
         "Godfather",
         "Grandmafia",
-        "Baby Mafia"
+        "Baby Mafia",
+        "Framer"
     ].includes(role);
 }
 
@@ -2744,9 +2791,13 @@ function updateActionMessage() {
             mafia: "Mafia",
             doctor: "Doctor",
             detective: "Detective",
-            cupid: "Cupid"
+            cupid: "Cupid",
+            escort: "Escort",
+            framer: "Framer",
+            bodyguard: "Bodyguard",
+            sheriff: "Sheriff",
+            vigilante: "Vigilante"
         };
-
         const activeRole = roleTurnMap[currentNightTurn];
 
         if (!activeRole) {
@@ -2755,7 +2806,8 @@ function updateActionMessage() {
             (currentNightTurn === "mafia" && isMafiaTeamClient(myRole)) ||
             (currentNightTurn === "doctor" && myRole === "Doctor") ||
             (currentNightTurn === "detective" && myRole === "Detective") ||
-            (currentNightTurn === "cupid" && (myRole === "Cupid" || myRole === "Cupid"))
+            (currentNightTurn === "cupid" && (myRole === "Cupid" || myRole === "Cupid")) ||
+            (window.MW_EXTRA_TURN_ROLES && window.MW_EXTRA_TURN_ROLES[currentNightTurn] === myRole)
         ) {
             message.textContent = `🎯 ${activeRole} turn — make your decision.`;
         } else {
@@ -3008,7 +3060,9 @@ socket.on(
         if ($("actionMessage")) {
 
             $("actionMessage").textContent =
-                "👶 You are now Baby Mafia! You can kill with the Mafia.";
+                (data.role === "Baby Mafia"
+                    ? "👶 You are now Baby Mafia! You can kill with the Mafia."
+                    : `🎭 You are now the ${data.role}!`);
         }
 
         renderMafiaChat();
@@ -3619,6 +3673,9 @@ function showGameOverMenu(winner, message, stats = gameStats) {
             winnerLogo.src = "/images/wins/jester-win.png";
         }
 
+        else if (winner === "Executioner") {
+            winnerLogo.src = "/images/wins/jester-win.png";
+        }
         else if (winner === "Civilians") {
             winnerLogo.src = "/images/wins/civilian-win.png";
         }
@@ -6560,6 +6617,7 @@ function isMyRoleTurn(turn) {
     if (turn === "doctor") return role === "doctor";
     if (turn === "detective") return role === "detective";
     if (turn === "cupid") return role === "cupid";
+    if (window.MW_EXTRA_TURN_ROLES && window.MW_EXTRA_TURN_ROLES[turn]) return window.MW_EXTRA_TURN_ROLES[turn].toLowerCase() === role;
     return false;
 }
 
@@ -10763,5 +10821,574 @@ socket.on("accountCardData", data => {
 });
 
 
+/* =========================================================
+   MAFIA WARS - EXTRA ROLES AND FEATURES (client)
+   New roles, Details button, host role setup rows, dead chat,
+   last words, emotes, friends list, game replay.
+   All new screens are created by this code, so they work
+   without changing index.html or style.css.
+========================================================= */
+(function () {
+    "use strict";
 
+    const EXTRA_ROLE_ROWS = [
+        { key: "bodyguard",   role: "Bodyguard",   label: "Bodyguard" },
+        { key: "vigilante",   role: "Vigilante",   label: "Vigilante" },
+        { key: "sheriff",     role: "Sheriff",     label: "Sheriff" },
+        { key: "mayor",       role: "Mayor",       label: "Mayor" },
+        { key: "escort",      role: "Escort",      label: "Escort" },
+        { key: "framer",      role: "Framer",      label: "Framer" },
+        { key: "medium",      role: "Medium",      label: "Medium" },
+        { key: "executioner", role: "Executioner", label: "Executioner" },
+        { key: "amnesiac",    role: "Amnesiac",    label: "Amnesiac" }
+    ];
+
+    const ROLE_INFO = {
+        "Mafia":       { icon: "🔪", team: "Mafia",   text: "Each night the Mafia team secretly picks one player to kill. Win by having as many players as the town." },
+        "Godfather":   { icon: "👑", team: "Mafia",   text: "A Mafia boss. The Detective and Sheriff see him as innocent. If he dies, the whole Mafia team dies with him." },
+        "Grandmafia":  { icon: "🧓", team: "Mafia",   text: "Mafia member. On Night 1 secretly picks a player who becomes Baby Mafia when the Grandmafia dies." },
+        "Baby Mafia":  { icon: "👶", team: "Mafia",   text: "Becomes Mafia after the Grandmafia dies and can kill with the team." },
+        "Framer":      { icon: "🎭", team: "Mafia",   text: "Mafia member. Each night frames one player: that night the Detective and Sheriff will see them as Mafia / suspicious." },
+        "Doctor":      { icon: "💚", team: "Town",    text: "Each night protects one player from the Mafia attack (and from the Vigilante)." },
+        "Detective":   { icon: "🔎", team: "Town",    text: "Each night investigates one player and learns if they are MAFIA or NOT MAFIA. The Godfather looks innocent, framed players look guilty." },
+        "Cupid":       { icon: "💘", team: "Town",    text: "On Night 1 links two players as lovers. If one dies, the other dies too." },
+        "Grandma":     { icon: "👵", team: "Town",    text: "If the Mafia attacks her, the attack is reflected and kills the attacker." },
+        "Civilian":    { icon: "🙂", team: "Town",    text: "No special power. Talk, think and vote out the Mafia." },
+        "Bodyguard":   { icon: "🛡️", team: "Town",    text: "Each night guards one player. If the Mafia attacks that player, the Bodyguard dies in their place and the target lives." },
+        "Vigilante":   { icon: "🔫", team: "Town",    text: "Each night can shoot one player (or skip). If the Vigilante kills 2 innocent players in one game, he dies of guilt." },
+        "Sheriff":     { icon: "⭐", team: "Town",    text: "Each night checks one player: SUSPICIOUS or NOT SUSPICIOUS. Mafia, framed players, the Jester and the Executioner look suspicious. The Godfather looks innocent." },
+        "Mayor":       { icon: "🏛️", team: "Town",    text: "Has no night action. The Mayor's vote counts as 2 votes during the day." },
+        "Escort":      { icon: "🚧", team: "Town",    text: "Acts first each night. Picks one player and blocks their ability for that night (Doctor, Detective, Mafia kill, and more)." },
+        "Medium":      { icon: "🔮", team: "Town",    text: "Can talk to the dead in the Dead Chat during the night and learn hints from them." },
+        "Jester":      { icon: "🤡", team: "Neutral", text: "Wins immediately if the Jester is eliminated. Act suspicious so the town votes you out." },
+        "Executioner": { icon: "🪓", team: "Neutral", text: "Gets a secret target. Wins if the town votes that target out. If the target dies another way, you become a Civilian." },
+        "Amnesiac":    { icon: "🧠", team: "Neutral", text: "Starts with no role. When the FIRST player dies, the Amnesiac takes that player's role and abilities." }
+    };
+
+    const ROLE_ORDER = [
+        "Mafia", "Godfather", "Grandmafia", "Framer", "Doctor", "Detective", "Sheriff", "Bodyguard",
+        "Vigilante", "Escort", "Medium", "Mayor", "Cupid", "Grandma", "Civilian", "Jester", "Executioner", "Amnesiac"
+    ];
+
+    const COUNT_ID_ROLE = {
+        mafiaCount: "Mafia", godfatherCount: "Godfather", grandmafiaCount: "Grandmafia", grandmaCount: "Grandma",
+        doctorCount: "Doctor", detectiveCount: "Detective", jesterCount: "Jester", loverCount: "Cupid",
+        civilianCount: "Civilian"
+    };
+
+    const ACTION_TEXT = {
+        Escort:    { button: "🚧 BLOCK",  hint: "Choose a player to block tonight." },
+        Framer:    { button: "🎭 FRAME",  hint: "Choose a player to frame as Mafia." },
+        Bodyguard: { button: "🛡️ GUARD",  hint: "Choose a player to protect with your life." },
+        Sheriff:   { button: "⭐ CHECK",  hint: "Choose a player to investigate." },
+        Vigilante: { button: "🔫 SHOOT",  hint: "Choose a player to shoot, or skip." }
+    };
+
+    const EXTRA_TURN_ROLES = { escort: "Escort", framer: "Framer", bodyguard: "Bodyguard", sheriff: "Sheriff", vigilante: "Vigilante" };
+
+    window.MW_ROLE_INFO = ROLE_INFO;
+    window.MW_EXTRA_TURN_ROLES = EXTRA_TURN_ROLES;
+    window.MW_ACTION_TEXT = ACTION_TEXT;
+
+    /* ---------------- tiny helpers ---------------- */
+    const el = (tag, cls, html) => {
+        const n = document.createElement(tag);
+        if (cls) n.className = cls;
+        if (html !== undefined) n.innerHTML = html;
+        return n;
+    };
+    const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    const getRoom = () => (typeof roomCode !== "undefined" ? roomCode : "");
+
+    /* ---------------- styles ---------------- */
+    const css = document.createElement("style");
+    css.id = "mwExtraCss";
+    css.textContent = `
+    .mwx-dock{position:fixed;left:12px;bottom:12px;z-index:9000;display:flex;flex-direction:column;gap:8px}
+    .mwx-fab{background:linear-gradient(180deg,#2a0b10,#14060a);color:#fff;border:1px solid #7a1424;border-radius:12px;padding:9px 13px;font-weight:700;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.55);font-size:14px;text-align:left;transition:transform .12s,border-color .12s}
+    .mwx-fab:hover{transform:translateY(-2px);border-color:#ff3b52}
+    .mwx-fab .mwx-dot{display:inline-block;min-width:18px;padding:0 5px;margin-left:6px;border-radius:9px;background:#ff3b52;color:#fff;font-size:12px;text-align:center}
+    .mwx-modal{position:fixed;inset:0;z-index:9500;background:rgba(0,0,0,.72);display:none;align-items:center;justify-content:center;padding:14px;backdrop-filter:blur(3px)}
+    .mwx-modal.open{display:flex}
+    .mwx-card{width:min(640px,100%);max-height:88vh;overflow:auto;background:linear-gradient(180deg,#1b0a0e,#0d0507);border:1px solid #7a1424;border-radius:16px;box-shadow:0 18px 60px rgba(0,0,0,.8);color:#f3e9ea;padding:18px 18px 16px;font-family:inherit}
+    .mwx-card h2{margin:0 0 4px;font-size:22px;letter-spacing:.5px}
+    .mwx-sub{opacity:.7;font-size:13px;margin-bottom:12px}
+    .mwx-close{float:right;background:#3a0f16;color:#fff;border:1px solid #7a1424;border-radius:9px;padding:5px 11px;cursor:pointer;font-weight:700}
+    .mwx-role{display:flex;gap:11px;align-items:flex-start;padding:10px;border-radius:12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.06);margin-bottom:8px}
+    .mwx-role.hl{border-color:#ff3b52;background:rgba(255,59,82,.12)}
+    .mwx-role .ic{font-size:26px;line-height:1}
+    .mwx-role b{font-size:15px}
+    .mwx-role p{margin:3px 0 0;font-size:13px;opacity:.88;line-height:1.4}
+    .mwx-tag{display:inline-block;margin-left:8px;font-size:11px;padding:1px 8px;border-radius:9px;font-weight:700}
+    .mwx-tag.Mafia{background:#5c0d18;color:#ffb3bd}.mwx-tag.Town{background:#0d4a2a;color:#a8f0c8}.mwx-tag.Neutral{background:#4a3a0d;color:#f0dca0}
+    .mwx-details-btn{margin-left:8px;background:#3a0f16;color:#fff;border:1px solid #7a1424;border-radius:8px;padding:3px 10px;font-size:12px;font-weight:700;cursor:pointer}
+    .mwx-details-btn:hover{border-color:#ff3b52}
+    .mwx-newrows{margin:8px 0;padding:8px 10px;border:1px dashed #7a1424;border-radius:12px;background:rgba(122,20,36,.10)}
+    .mwx-newrows .ttl{font-size:12px;opacity:.7;margin-bottom:6px;font-weight:700;letter-spacing:.5px}
+    .mwx-row{display:flex;align-items:center;gap:8px;margin:5px 0}
+    .mwx-row label{min-width:110px;font-weight:700}
+    .mwx-row input{width:64px;padding:5px 7px;border-radius:8px;border:1px solid #7a1424;background:#14060a;color:#fff;text-align:center}
+    .mwx-rolecard{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:8000;max-width:min(560px,92vw);background:rgba(20,6,10,.92);border:1px solid #7a1424;border-radius:12px;padding:8px 13px;color:#f3e9ea;font-size:13px;display:none;box-shadow:0 6px 24px rgba(0,0,0,.6)}
+    .mwx-rolecard b{font-size:14px}
+    .mwx-rolecard .exec{margin-top:4px;color:#ffd27a;font-weight:700}
+    .mwx-rolecard .sub{opacity:.85;margin-top:2px}
+    .mwx-skip{margin:6px 0 0;padding:8px 14px;border-radius:10px;border:1px solid #7a1424;background:#2a0b10;color:#fff;font-weight:700;cursor:pointer}
+    .mwx-toast{position:fixed;left:50%;top:70px;transform:translate(-50%,-10px);z-index:9800;background:#1b0a0e;border:1px solid #ff3b52;color:#fff;border-radius:12px;padding:11px 18px;font-weight:700;box-shadow:0 8px 30px rgba(0,0,0,.7);opacity:0;pointer-events:none;transition:all .25s;max-width:92vw;text-align:center}
+    .mwx-toast.show{opacity:1;transform:translate(-50%,0)}
+    .mwx-result{position:fixed;inset:0;z-index:9700;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.7)}
+    .mwx-result.open{display:flex}
+    .mwx-result .box{background:linear-gradient(180deg,#1b0a0e,#0d0507);border:2px solid #ff3b52;border-radius:18px;padding:26px 38px;text-align:center;color:#fff;box-shadow:0 0 60px rgba(255,59,82,.35)}
+    .mwx-result .big{font-size:30px;font-weight:900;margin-top:6px;letter-spacing:1px}
+    .mwx-result .big.bad{color:#ff6b7b}.mwx-result .big.good{color:#7dffb0}
+    .mwx-emotes{position:fixed;left:50%;bottom:10px;transform:translateX(-50%);z-index:8500;display:none;gap:6px;background:rgba(20,6,10,.92);border:1px solid #7a1424;border-radius:30px;padding:6px 10px}
+    .mwx-emotes button{background:transparent;border:none;font-size:23px;cursor:pointer;padding:2px 5px;border-radius:10px;transition:transform .1s}
+    .mwx-emotes button:hover{transform:scale(1.3);background:rgba(255,255,255,.08)}
+    .mwx-float{position:fixed;z-index:9400;pointer-events:none;text-align:center;animation:mwxfloat 2.6s ease-out forwards}
+    .mwx-float .e{font-size:44px;display:block}
+    .mwx-float .n{font-size:12px;font-weight:700;background:rgba(0,0,0,.7);border-radius:8px;padding:1px 8px;color:#fff}
+    @keyframes mwxfloat{0%{transform:translateY(0) scale(.6);opacity:0}15%{opacity:1;transform:translateY(-20px) scale(1.1)}100%{transform:translateY(-190px) scale(1);opacity:0}}
+    .mwx-dead{position:fixed;right:12px;bottom:12px;z-index:8900;width:min(320px,92vw);display:none;flex-direction:column;background:rgba(14,5,8,.96);border:1px solid #5b5b8a;border-radius:14px;box-shadow:0 8px 30px rgba(0,0,0,.7);color:#e6e6f5}
+    .mwx-dead .hd{padding:8px 12px;font-weight:800;border-bottom:1px solid rgba(255,255,255,.1);cursor:pointer;display:flex;justify-content:space-between}
+    .mwx-dead .msgs{height:170px;overflow:auto;padding:8px 10px;font-size:13px}
+    .mwx-dead .msgs div{margin-bottom:5px;line-height:1.35}
+    .mwx-dead .msgs b{color:#a9a9ff}.mwx-dead .msgs b.med{color:#ffd27a}
+    .mwx-dead form,.mwx-dead .inrow{display:flex;gap:6px;padding:8px}
+    .mwx-dead input{flex:1;background:#1a1a2c;border:1px solid #444470;border-radius:8px;color:#fff;padding:6px 8px}
+    .mwx-dead button{background:#3a3a66;color:#fff;border:none;border-radius:8px;padding:6px 11px;font-weight:700;cursor:pointer}
+    .mwx-dead.min .msgs,.mwx-dead.min .inrow{display:none}
+    .mwx-frow{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:10px;background:rgba(255,255,255,.05);margin-bottom:6px}
+    .mwx-frow .nm{flex:1;font-weight:700}.mwx-frow .st{font-size:12px;opacity:.8}
+    .mwx-frow .on{display:inline-block;width:9px;height:9px;border-radius:50%;background:#555;margin-right:6px}
+    .mwx-frow .on.y{background:#3ddc84}
+    .mwx-sm{background:#3a0f16;color:#fff;border:1px solid #7a1424;border-radius:8px;padding:4px 10px;font-size:12px;font-weight:700;cursor:pointer}
+    .mwx-sm.go{background:#0d4a2a;border-color:#2e9b63}
+    .mwx-addrow{display:flex;gap:8px;margin:8px 0 12px}
+    .mwx-addrow input,.mwx-willbox textarea{flex:1;background:#14060a;border:1px solid #7a1424;border-radius:9px;color:#fff;padding:8px 10px;font-family:inherit}
+    .mwx-willbox textarea{width:100%;min-height:80px;box-sizing:border-box;resize:vertical}
+    .mwx-rp-h{margin:12px 0 5px;font-weight:800;color:#ff8896}
+    .mwx-rp-l{font-size:13px;padding:5px 9px;border-left:3px solid #7a1424;margin-bottom:4px;background:rgba(255,255,255,.03);border-radius:0 8px 8px 0}
+    .mwx-rp-l.death{border-color:#ff3b52}.mwx-rp-l.win{border-color:#ffd27a;font-weight:700}
+    .mwx-rp-p{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 4px}
+    .mwx-rp-p span{font-size:12px;background:rgba(255,255,255,.07);border-radius:9px;padding:3px 9px}
+    .mwx-rp-p span.dead{opacity:.55;text-decoration:line-through}
+    @media(max-width:700px){.mwx-fab{padding:8px 10px;font-size:13px}.mwx-rolecard{top:4px;font-size:12px}}
+    `;
+    document.head.appendChild(css);
+
+    /* ---------------- toast + result popup ---------------- */
+    const toastEl = el("div", "mwx-toast");
+    document.body.appendChild(toastEl);
+    let toastTimer = null;
+    function toast(message, ms) {
+        toastEl.textContent = message;
+        toastEl.classList.add("show");
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => toastEl.classList.remove("show"), ms || 3500);
+    }
+    window.mwToast = toast;
+
+    const resultEl = el("div", "mwx-result");
+    resultEl.innerHTML = `<div class="box"><div id="mwxResTitle"></div><div class="big" id="mwxResBig"></div><div id="mwxResSub" style="opacity:.8;margin-top:6px"></div></div>`;
+    document.body.appendChild(resultEl);
+    let resultTimer = null;
+    function showResult(title, big, sub, bad) {
+        resultEl.querySelector("#mwxResTitle").textContent = title;
+        const b = resultEl.querySelector("#mwxResBig");
+        b.textContent = big;
+        b.className = "big " + (bad ? "bad" : "good");
+        resultEl.querySelector("#mwxResSub").textContent = sub || "";
+        resultEl.classList.add("open");
+        clearTimeout(resultTimer);
+        resultTimer = setTimeout(() => resultEl.classList.remove("open"), 3000);
+    }
+
+    /* ---------------- generic modal ---------------- */
+    function makeModal(id, title, sub) {
+        const m = el("div", "mwx-modal");
+        m.id = id;
+        m.innerHTML = `<div class="mwx-card"><button class="mwx-close" type="button">✕ Close</button><h2>${title}</h2><div class="mwx-sub">${sub || ""}</div><div class="mwx-body"></div></div>`;
+        m.addEventListener("click", e => { if (e.target === m) m.classList.remove("open"); });
+        m.querySelector(".mwx-close").addEventListener("click", () => m.classList.remove("open"));
+        document.body.appendChild(m);
+        return m;
+    }
+
+    /* ---------------- ROLE GUIDE (Details) ---------------- */
+    const guide = makeModal("mwxGuide", "📖 Role Details", "What every role does.");
+    function openGuide(focusRole) {
+        const body = guide.querySelector(".mwx-body");
+        body.innerHTML = "";
+        ROLE_ORDER.forEach(name => {
+            const info = ROLE_INFO[name];
+            if (!info) return;
+            const row = el("div", "mwx-role" + (name === focusRole ? " hl" : ""));
+            row.dataset.role = name;
+            row.innerHTML = `<div class="ic">${info.icon}</div><div><b>${esc(name)}</b><span class="mwx-tag ${info.team}">${info.team}</span><p>${esc(info.text)}</p></div>`;
+            body.appendChild(row);
+        });
+        guide.classList.add("open");
+        const hl = body.querySelector(".hl");
+        if (hl) setTimeout(() => hl.scrollIntoView({ block: "center" }), 30);
+    }
+
+    /* ---------------- host role setup: new role rows + Details buttons ---------------- */
+    function addDetailsButton(input, roleName) {
+        if (!input || input.dataset.mwxDetails) return;
+        input.dataset.mwxDetails = "1";
+        const b = el("button", "mwx-details-btn", "Details");
+        b.type = "button";
+        b.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); openGuide(roleName); });
+        input.insertAdjacentElement("afterend", b);
+    }
+
+    function installRoleSetup() {
+        const civ = document.getElementById("civilianCount");
+        if (!civ) return false;
+
+        if (!document.getElementById("mwxNewRows") && !document.getElementById("bodyguardCount")) {
+            const box = el("div", "mwx-newrows");
+            box.id = "mwxNewRows";
+            box.innerHTML = `<div class="ttl">MORE ROLES</div>`;
+
+            EXTRA_ROLE_ROWS.forEach(r => {
+                const row = el("div", "mwx-row");
+                const label = el("label", "", esc(r.label));
+                label.htmlFor = r.key + "Count";
+                const input = el("input");
+                input.type = "number";
+                input.min = "0";
+                input.max = (r.key === "mayor" || r.key === "amnesiac" || r.key === "executioner") ? "1" : "9";
+                input.value = "0";
+                input.id = r.key + "Count";
+                input.addEventListener("input", () => {
+                    if (r.key === "mayor" || r.key === "amnesiac" || r.key === "executioner") {
+                        if (Number(input.value) > 1) input.value = 1;
+                    }
+                    if (Number(input.value) < 0) input.value = 0;
+                    if (typeof updateCivilianCount === "function") updateCivilianCount();
+                });
+                row.append(label, input);
+                box.appendChild(row);
+                addDetailsButton(input, r.role);
+            });
+
+            const guideBtn = el("button", "mwx-sm", "📖 Details of all roles");
+            guideBtn.type = "button";
+            guideBtn.style.marginTop = "6px";
+            guideBtn.addEventListener("click", () => openGuide());
+            box.appendChild(guideBtn);
+
+            const civRow = civ.closest("div, li, tr, p, label") || civ.parentElement;
+            const anchor = (civRow && civRow.parentElement && civRow !== document.body) ? civRow : civ;
+            anchor.parentElement.insertBefore(box, anchor);
+        }
+
+        Object.entries(COUNT_ID_ROLE).forEach(([id, role]) => addDetailsButton(document.getElementById(id), role));
+
+        EXTRA_ROLE_ROWS.forEach(r => {
+            const input = document.getElementById(r.key + "Count");
+            if (!input) return;
+            addDetailsButton(input, r.role);
+            if (!input.dataset.mwxClamp) {
+                input.dataset.mwxClamp = "1";
+                input.addEventListener("input", () => {
+                    const single = r.key === "mayor" || r.key === "amnesiac" || r.key === "executioner";
+                    if (single && Number(input.value) > 1) input.value = 1;
+                    if (Number(input.value) < 0) input.value = 0;
+                });
+            }
+        });
+        return true;
+    }
+
+    /* The lobby may be built after load: keep trying while the page is used. */
+    setInterval(installRoleSetup, 800);
+    installRoleSetup();
+
+    /* ---------------- floating dock (Roles / Friends / Will / Replay) ---------------- */
+    const dock = el("div", "mwx-dock");
+    const btnRoles = el("button", "mwx-fab", "📖 Roles");
+    const btnFriends = el("button", "mwx-fab", `👥 Friends<span class="mwx-dot" id="mwxFriendDot" style="display:none">0</span>`);
+    const btnWill = el("button", "mwx-fab", "📜 Last Words");
+    const btnReplay = el("button", "mwx-fab", "🎞️ Game Replay");
+    [btnRoles, btnFriends, btnWill, btnReplay].forEach(b => { b.type = "button"; });
+    btnWill.style.display = "none";
+    btnReplay.style.display = "none";
+    dock.append(btnFriends, btnRoles, btnWill, btnReplay);
+    document.body.appendChild(dock);
+    btnRoles.addEventListener("click", () => openGuide(typeof myRole !== "undefined" ? myRole : undefined));
+
+    /* ---------------- role card (your role + secret info) ---------------- */
+    const roleCard = el("div", "mwx-rolecard");
+    document.body.appendChild(roleCard);
+    let lastExtra = null;
+
+    function renderRoleCard() {
+        const role = typeof myRole !== "undefined" ? myRole : "";
+        const phase = typeof currentPhase !== "undefined" ? currentPhase : "";
+        const info = ROLE_INFO[role];
+        if (!role || !info || phase === "lobby" || phase === "gameover" || !phase) {
+            roleCard.style.display = "none";
+            return;
+        }
+        let extra = "";
+        if (role === "Executioner" && lastExtra && lastExtra.execTarget) {
+            extra = `<div class="exec">🎯 Your target: ${esc(lastExtra.execTarget)} - get them voted out!</div>`;
+        }
+        if (role === "Vigilante" && lastExtra) {
+            extra = `<div class="exec">Innocent kills: ${lastExtra.vigilanteInnocent || 0}/${lastExtra.vigilanteMax || 2}</div>`;
+        }
+        roleCard.innerHTML = `<b>${info.icon} ${esc(role)}</b><span class="mwx-tag ${info.team}">${info.team}</span><div class="sub">${esc(info.text)}</div>${extra}`;
+        roleCard.style.display = "block";
+    }
+
+    /* ---------------- gameInformation listener ---------------- */
+    let deadChatOn = false;
+    let emotesOn = false;
+
+    socket.on("gameInformation", data => {
+        if (!data) return;
+        lastExtra = data.extra || null;
+        renderRoleCard();
+        updateExtraControls(data);
+
+        const ph = data.phase;
+        btnWill.style.display = (ph === "night" || ph === "day") && lastExtra && data.players.find(p => p.id === socket.id && p.alive) ? "block" : "none";
+
+        const canChat = Boolean(lastExtra && lastExtra.canDeadChat);
+        if (canChat && !deadChatOn) { socket.emit("deadChatHistory", { roomCode: getRoom() }); }
+        deadChatOn = canChat;
+        deadBox.style.display = canChat ? "flex" : "none";
+        const me = data.players.find(p => p.id === socket.id);
+        deadBox.querySelector(".hdt").textContent = me && me.alive ? "🔮 Medium - Dead Chat" : "☠️ Dead Chat";
+
+        const showEmotes = ph === "day" && me && me.alive;
+        emotesOn = Boolean(showEmotes);
+        emoteBar.style.display = showEmotes ? "flex" : "none";
+        if (lastExtra && lastExtra.emotes && !emoteBar.dataset.built) buildEmotes(lastExtra.emotes);
+
+        if (ph !== "gameover") {
+            btnReplay.style.display = "none";
+        }
+    });
+
+    /* extra roles: button text, skip button, hints */
+    let skipBtn = null;
+    function updateExtraControls(data) {
+        const role = typeof myRole !== "undefined" ? myRole : "";
+        const turnRole = EXTRA_TURN_ROLES[data.nightTurn];
+        const isMyExtra = data.phase === "night" && ACTION_TEXT[role] && turnRole === role;
+        const confirmBtn = document.getElementById("confirmAction");
+
+        if (skipBtn) { skipBtn.remove(); skipBtn = null; }
+
+        if (isMyExtra && confirmBtn) {
+            const hasTargets = (data.actionTargets || []).length > 0;
+            if (hasTargets) {
+                confirmBtn.textContent = ACTION_TEXT[role].button;
+                skipBtn = el("button", "mwx-skip", "⏭️ Skip tonight");
+                skipBtn.type = "button";
+                skipBtn.addEventListener("click", () => {
+                    socket.emit("roleChoose", { roomCode: getRoom(), skip: true });
+                });
+                confirmBtn.insertAdjacentElement("afterend", skipBtn);
+                const msg = document.getElementById("actionMessage");
+                if (msg) msg.textContent = "🎯 " + ACTION_TEXT[role].hint;
+            }
+        }
+    }
+
+    socket.on("extraActionDone", d => {
+        if (!d) return;
+        toast(d.message || "Done.", 3200);
+        const msg = document.getElementById("actionMessage");
+        if (msg && d.message) msg.textContent = d.message;
+        if (skipBtn) { skipBtn.remove(); skipBtn = null; }
+        const sel = document.getElementById("targetPlayer");
+        const conf = document.getElementById("confirmAction");
+        if (sel) sel.style.display = "none";
+        if (conf) conf.style.display = "none";
+    });
+
+    socket.on("extraNotice", d => { if (d && d.message) toast(d.message, 4500); });
+
+    socket.on("sheriffResult", d => {
+        if (!d) return;
+        showResult("⭐ SHERIFF REPORT: " + d.playerName, d.result, "", d.result === "SUSPICIOUS");
+        const msg = document.getElementById("actionMessage");
+        if (msg) msg.textContent = `⭐ ${d.playerName} is ${d.result}.`;
+    });
+
+    socket.on("lastWords", d => {
+        if (d && d.message) toast(`📜 ${d.playerName}: "${d.message}"`, 6000);
+    });
+
+    /* ---------------- dead chat ---------------- */
+    const deadBox = el("div", "mwx-dead");
+    deadBox.innerHTML = `<div class="hd"><span class="hdt">☠️ Dead Chat</span><span>▾</span></div><div class="msgs"></div><div class="inrow"><input maxlength="200" placeholder="Talk to the dead..."><button type="button">Send</button></div>`;
+    document.body.appendChild(deadBox);
+    deadBox.querySelector(".hd").addEventListener("click", () => deadBox.classList.toggle("min"));
+    const deadMsgs = deadBox.querySelector(".msgs");
+    const deadInput = deadBox.querySelector("input");
+    function sendDead() {
+        const v = deadInput.value.trim();
+        if (!v) return;
+        socket.emit("deadChatSend", { roomCode: getRoom(), message: v });
+        deadInput.value = "";
+    }
+    deadBox.querySelector("button").addEventListener("click", sendDead);
+    deadInput.addEventListener("keydown", e => { if (e.key === "Enter") sendDead(); });
+    function addDeadLine(m) {
+        const d = el("div");
+        d.innerHTML = `<b class="${m.fromMedium ? "med" : ""}">${m.fromMedium ? "🔮 " : ""}${esc(m.playerName)}:</b> ${esc(m.message)}`;
+        deadMsgs.appendChild(d);
+        deadMsgs.scrollTop = deadMsgs.scrollHeight;
+    }
+    socket.on("deadChatMessage", addDeadLine);
+    socket.on("deadChatHistory", list => { deadMsgs.innerHTML = ""; (list || []).forEach(addDeadLine); });
+
+    /* ---------------- last words (will) ---------------- */
+    const willModal = makeModal("mwxWill", "📜 Last Words", "A short message everyone will read if you die (max 140 characters).");
+    willModal.querySelector(".mwx-body").innerHTML = `<div class="mwx-willbox"><textarea maxlength="140" placeholder="Example: I was a Civilian. Trust the Detective."></textarea></div><div style="margin-top:10px;display:flex;gap:8px"><button class="mwx-sm go" type="button" id="mwxWillSave">Save</button><button class="mwx-sm" type="button" id="mwxWillClear">Clear</button></div>`;
+    btnWill.addEventListener("click", () => {
+        willModal.querySelector("textarea").value = (lastExtra && lastExtra.will) || "";
+        willModal.classList.add("open");
+    });
+    function saveWill(text) {
+        socket.emit("setWill", { roomCode: getRoom(), message: text }, res => {
+            toast(res && res.ok ? (text ? "📜 Last words saved." : "Last words cleared.") : (res && res.message) || "Could not save.");
+            if (res && res.ok) { willModal.classList.remove("open"); if (lastExtra) lastExtra.will = res.will; }
+        });
+    }
+    willModal.querySelector("#mwxWillSave").addEventListener("click", () => saveWill(willModal.querySelector("textarea").value));
+    willModal.querySelector("#mwxWillClear").addEventListener("click", () => { willModal.querySelector("textarea").value = ""; saveWill(""); });
+
+    /* ---------------- emotes ---------------- */
+    const emoteBar = el("div", "mwx-emotes");
+    document.body.appendChild(emoteBar);
+    function buildEmotes(list) {
+        emoteBar.dataset.built = "1";
+        list.forEach(e => {
+            const b = el("button", "", e);
+            b.type = "button";
+            b.addEventListener("click", () => socket.emit("sendEmote", { roomCode: getRoom(), emote: e }));
+            emoteBar.appendChild(b);
+        });
+    }
+    socket.on("emote", d => {
+        if (!d) return;
+        const f = el("div", "mwx-float", `<span class="e">${esc(d.emote)}</span><span class="n">${esc(d.playerName)}</span>`);
+        f.style.left = (15 + Math.random() * 70) + "%";
+        f.style.bottom = "90px";
+        document.body.appendChild(f);
+        setTimeout(() => f.remove(), 2700);
+    });
+
+    /* ---------------- friends list ---------------- */
+    const friendsModal = makeModal("mwxFriends", "👥 Friends", "Add friends, see who is online and join their room.");
+    friendsModal.querySelector(".mwx-body").innerHTML = `
+        <div class="mwx-addrow"><input id="mwxFriendName" maxlength="24" placeholder="Friend's username"><button class="mwx-sm go" type="button" id="mwxFriendAdd">Add</button></div>
+        <div id="mwxReqs"></div><div id="mwxFriendList"></div>`;
+    let friendsTimer = null;
+    function refreshFriends() { socket.emit("friendsGet"); }
+    btnFriends.addEventListener("click", () => {
+        friendsModal.classList.add("open");
+        refreshFriends();
+        clearInterval(friendsTimer);
+        friendsTimer = setInterval(() => {
+            if (!friendsModal.classList.contains("open")) { clearInterval(friendsTimer); return; }
+            refreshFriends();
+        }, 8000);
+    });
+    friendsModal.querySelector("#mwxFriendAdd").addEventListener("click", () => {
+        const input = friendsModal.querySelector("#mwxFriendName");
+        const v = input.value.trim();
+        if (!v) return;
+        socket.emit("friendAdd", { username: v });
+        input.value = "";
+    });
+    friendsModal.querySelector("#mwxFriendName").addEventListener("keydown", e => { if (e.key === "Enter") friendsModal.querySelector("#mwxFriendAdd").click(); });
+
+    socket.on("friendsNotice", d => { if (d && d.message) { toast(d.message, 3800); } });
+    socket.on("friendsData", d => {
+        const dot = btnFriends.querySelector("#mwxFriendDot") || { style: {} };
+        const reqs = friendsModal.querySelector("#mwxReqs");
+        const list = friendsModal.querySelector("#mwxFriendList");
+        reqs.innerHTML = ""; list.innerHTML = "";
+        if (!d || d.guest) {
+            list.innerHTML = `<div class="mwx-sub">Sign in with an account to use the friends list.</div>`;
+            dot.style.display = "none";
+            return;
+        }
+        dot.style.display = d.requests.length ? "inline-block" : "none";
+        dot.textContent = d.requests.length;
+
+        if (d.requests.length) reqs.appendChild(el("div", "mwx-rp-h", "Friend requests"));
+        d.requests.forEach(r => {
+            const row = el("div", "mwx-frow", `<span class="nm">${esc(r.displayName)}</span>`);
+            const yes = el("button", "mwx-sm go", "Accept"); yes.type = "button";
+            const no = el("button", "mwx-sm", "Decline"); no.type = "button";
+            yes.addEventListener("click", () => socket.emit("friendRespond", { username: r.username, accept: true }));
+            no.addEventListener("click", () => socket.emit("friendRespond", { username: r.username, accept: false }));
+            row.append(yes, no);
+            reqs.appendChild(row);
+        });
+
+        if (!d.friends.length) list.innerHTML = `<div class="mwx-sub">No friends yet. Type a username above and press Add.</div>`;
+        d.friends.sort((a, b) => Number(b.online) - Number(a.online)).forEach(f => {
+            const row = el("div", "mwx-frow", `<span class="nm"><span class="on ${f.online ? "y" : ""}"></span>${esc(f.displayName)}</span><span class="st">${esc(f.status)}</span>`);
+            if (f.roomCode) {
+                const join = el("button", "mwx-sm go", "Join"); join.type = "button";
+                join.addEventListener("click", () => socket.emit("friendJoin", { username: f.username }));
+                row.appendChild(join);
+            }
+            const rm = el("button", "mwx-sm", "✕"); rm.type = "button"; rm.title = "Remove friend";
+            rm.addEventListener("click", () => { if (confirm("Remove " + f.displayName + " from your friends?")) socket.emit("friendRemove", { username: f.username }); });
+            row.appendChild(rm);
+            list.appendChild(row);
+        });
+    });
+    socket.on("friendJoinReady", d => {
+        if (!d || !d.roomCode) return;
+        friendsModal.classList.remove("open");
+        socket.emit("joinRoom", { playerName: "Player", roomCode: d.roomCode });
+    });
+    setTimeout(refreshFriends, 1500);
+
+    /* ---------------- game replay ---------------- */
+    const replayModal = makeModal("mwxReplay", "🎞️ Game Replay", "What everybody did, night by night.");
+    let replayData = null;
+    socket.on("gameOver", () => {
+        setTimeout(() => socket.emit("getReplay", { roomCode: getRoom() }), 700);
+    });
+    socket.on("gameReplay", d => {
+        replayData = d;
+        btnReplay.style.display = "block";
+    });
+    btnReplay.addEventListener("click", () => {
+        if (!replayData) return;
+        const body = replayModal.querySelector(".mwx-body");
+        body.innerHTML = "";
+        const pl = el("div", "mwx-rp-p");
+        replayData.players.forEach(p => pl.appendChild(el("span", p.alive ? "" : "dead", `${esc(p.name)} - ${esc(p.role || "?")}`)));
+        body.appendChild(el("div", "mwx-rp-h", "Final roles"));
+        body.appendChild(pl);
+        let lastKey = "";
+        replayData.entries.forEach(e => {
+            const key = (e.phase === "day" ? "☀️ Day " : "🌙 Night ") + e.night;
+            if (key !== lastKey) { body.appendChild(el("div", "mwx-rp-h", key)); lastKey = key; }
+            body.appendChild(el("div", "mwx-rp-l " + (e.kind === "death" ? "death" : e.kind === "win" ? "win" : ""), esc(e.text)));
+        });
+        replayModal.classList.add("open");
+    });
+    socket.on("gameRestarted", () => { replayData = null; btnReplay.style.display = "none"; });
+
+    /* hide the floating docks on screens where they make no sense (login) */
+    function updateDockVisibility() {
+        const auth = document.getElementById("authScreen") || document.getElementById("loginScreen");
+        const hidden = auth && auth.offsetParent !== null;
+        dock.style.display = hidden ? "none" : "flex";
+    }
+    setInterval(updateDockVisibility, 1000);
+})();
 
