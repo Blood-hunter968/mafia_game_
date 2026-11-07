@@ -1196,9 +1196,14 @@ function startPhaseTimer(roomCode) {
 ========================================================= */
 
 const NIGHT_TURN_ORDER = [
+    "escort",
     "mafia",
+    "framer",
     "doctor",
+    "bodyguard",
     "detective",
+    "sheriff",
+    "vigilante",
     "cupid"
 ];
 
@@ -1566,7 +1571,8 @@ function isMafiaTeam(role) {
         "Mafia",
         "Godfather",
         "Grandmafia",
-        "Baby Mafia"
+        "Baby Mafia",
+        "Framer"
     ].includes(role);
 }
 
@@ -1582,7 +1588,8 @@ function isDetectiveMafia(role) {
     return [
         "Mafia",
         "Grandmafia",
-        "Baby Mafia"
+        "Baby Mafia",
+        "Framer"
     ].includes(role);
 }
 
@@ -1642,6 +1649,24 @@ function assignRoles(players, settings) {
     for (let i = 0; i < settings.lover; i++) {
         roles.push("Cupid");
     }
+
+    const EXTRA_ASSIGN = [
+        ["bodyguard", "Bodyguard"],
+        ["vigilante", "Vigilante"],
+        ["sheriff", "Sheriff"],
+        ["mayor", "Mayor"],
+        ["escort", "Escort"],
+        ["framer", "Framer"],
+        ["medium", "Medium"],
+        ["executioner", "Executioner"],
+        ["amnesiac", "Amnesiac"]
+    ];
+
+    EXTRA_ASSIGN.forEach(([key, roleName]) => {
+        for (let i = 0; i < (Number(settings[key]) || 0); i++) {
+            roles.push(roleName);
+        }
+    });
 
     for (let i = 0; i < settings.civilian; i++) {
         roles.push("Civilian");
@@ -2165,6 +2190,12 @@ function sendGameInformation(roomCode) {
                     getCupidTargets(
                         room,
                         player
+                    ),
+
+                extra:
+                    buildExtraInfo(
+                        room,
+                        player
                     )
             }
         );
@@ -2201,7 +2232,7 @@ function awardTeamWin(room, team) {
         if (!p || !p.role) return;
         if (team === "mafia" && isMafiaTeam(p.role)) {
             recordStat(p, "mafiaWins");
-        } else if (team === "civilians" && !isMafiaTeam(p.role) && p.role !== "Jester") {
+        } else if (team === "civilians" && !isMafiaTeam(p.role) && p.role !== "Jester" && p.role !== "Executioner") {
             recordStat(p, "civilianWins");
         }
     });
@@ -2261,6 +2292,47 @@ function checkWinner(roomCode) {
 
         return true;
     }
+    /* =====================================================
+       EXECUTIONER WIN
+       The Executioner wins when their secret target is
+       voted out by the town.
+    ===================================================== */
+
+    if (room.executionerWinnerId) {
+        const executioner =
+            room.players.find(
+                p => p.id === room.executionerWinnerId
+            );
+
+        room.executionerWinnerId = null;
+
+        if (executioner) {
+            room.phase = "gameover";
+
+            grantGameRewards(room, p => p === executioner);
+
+            replayLog(room, `🪓 Executioner ${executioner.name} got their target voted out and wins!`, "win");
+
+            announce(
+                roomCode,
+                `🪓 ${executioner.name} was the Executioner and wins!`,
+                "special"
+            );
+
+            io.to(roomCode).emit(
+                "gameOver",
+                {
+                    winner: "Executioner",
+                    message:
+                        `${executioner.name} got their target voted out and wins the game!`,
+                    stats: room.stats
+                }
+            );
+
+            return true;
+        }
+    }
+
 
     const mafiaAlive =
         room.players.filter(
@@ -2286,7 +2358,9 @@ function checkWinner(roomCode) {
 
         // Permanent stat: Civilian team win (everyone except Mafia team + Jester).
         awardTeamWin(room, "civilians");
-        grantGameRewards(room, p => !isMafiaTeam(p.role) && p.role !== "Jester");
+        grantGameRewards(room, p => !isMafiaTeam(p.role) && p.role !== "Jester" && p.role !== "Executioner");
+
+        replayLog(room, "🎉 The Mafia team was eliminated. Civilians win!", "win");
 
         announce(
             roomCode,
@@ -2321,6 +2395,8 @@ function checkWinner(roomCode) {
         // Permanent stat: Mafia team win (every Mafia-team member).
         awardTeamWin(room, "mafia");
         grantGameRewards(room, p => isMafiaTeam(p.role));
+
+        replayLog(room, "☠️ The Mafia team took control. Mafia wins!", "win");
 
         announce(
             roomCode,
@@ -2490,6 +2566,9 @@ function endNight(roomCode) {
     room.nightTurn = null;
     room.nightTurnIndex = 0;
 
+    room.nightNotes = [];
+    replayNightActions(room);
+
     let babyMafiaCreated = false;
 
     /* =====================================================
@@ -2614,6 +2693,8 @@ function endNight(roomCode) {
         room.nightActions.mafia
     ).forEach(
         ([attackerId, targetId]) => {
+            if (isNightBlocked(room, attackerId)) return;
+
 
             if (!mafiaVotes[targetId]) {
                 mafiaVotes[targetId] = [];
@@ -2748,6 +2829,32 @@ function endNight(roomCode) {
             target &&
             target.alive &&
             !isMafiaTeam(target.role) &&
+            !protectedPlayers.has(mafiaTarget) &&
+            (room._guardian = findGuardian(room, mafiaTarget))
+        ) {
+            const guardian = room._guardian;
+
+            eliminatedPlayers =
+                eliminatePlayerWithCupid(
+                    room,
+                    guardian
+                );
+
+            room.nightNotes.push(
+                `🛡️ ${guardian.name} (the Bodyguard) gave their life to protect ${target.name}.`
+            );
+
+            replayLog(
+                room,
+                `🛡️ Bodyguard ${guardian.name} died protecting ${target.name}`,
+                "bodyguard"
+            );
+        }
+
+        else if (
+            target &&
+            target.alive &&
+            !isMafiaTeam(target.role) &&
             !protectedPlayers.has(mafiaTarget)
         ) {
 
@@ -2770,6 +2877,14 @@ function endNight(roomCode) {
             }
         }
     }
+    /* =====================================================
+       VIGILANTE
+    ===================================================== */
+
+    eliminatedPlayers = eliminatedPlayers.concat(
+        resolveVigilantes(room, protectedPlayers)
+    );
+
 
     /* =====================================================
        CHECK WINNER
@@ -2800,7 +2915,7 @@ function endNight(roomCode) {
         room.detectiveCheckAnnounce !== false &&
         Object.values(room.nightActions.detective || {}).some(targetId => {
             const checked = room.players.find(p => p.id === targetId);
-            return Boolean(checked && isDetectiveMafia(checked.role));
+            return Boolean(checked && (isDetectiveMafia(checked.role) || isNightFramed(room, checked.id)));
         });
 
     // Doctor: did a Doctor actually choose someone tonight?
@@ -2819,8 +2934,7 @@ function endNight(roomCode) {
             ? " The detective knows one of the mafia."
             : "";
 
-    if (doctorSavedTarget) {
-
+    if (doctorSavedTarget && !eliminatedPlayers.length) {
         // Doctor protected the attacked player.
         announce(
             roomCode,
@@ -2839,7 +2953,7 @@ function endNight(roomCode) {
 
         announce(
             roomCode,
-            `☀️ ${names.join(", ")} ${verb} killed.${doctorLine}${detectiveLine}`,
+            nightKillText(room, names, verb, doctorLine, detectiveLine, doctorSavedTarget),
             "danger"
         );
 
@@ -2953,6 +3067,8 @@ function endVoting(roomCode) {
 
     clearPhaseTimer(room);
 
+    replayDayVotes(room);
+
     const voteCounts = {};
 
     for (
@@ -2980,7 +3096,7 @@ function endVoting(roomCode) {
         }
 
         voteCounts[targetId] =
-            (voteCounts[targetId] || 0) + 1;
+            (voteCounts[targetId] || 0) + (voter.role === "Mayor" ? 2 : 1);
     }
 
     /* =====================================================
@@ -3103,11 +3219,15 @@ function endVoting(roomCode) {
         return;
     }
 
+    room._deathCause = "vote";
+
     const eliminatedPlayers =
         eliminatePlayerWithCupid(
             room,
             eliminatedPlayer
         );
+
+    room._deathCause = null;
 
     const godfatherDeath =
         eliminatedPlayers.some(
@@ -6131,6 +6251,16 @@ io.on(
                     civilian:
                         Number(input.civilian) || 0,
 
+                    bodyguard: Math.max(0, Math.floor(Number(input.bodyguard) || 0)),
+                    vigilante: Math.max(0, Math.floor(Number(input.vigilante) || 0)),
+                    sheriff: Math.max(0, Math.floor(Number(input.sheriff) || 0)),
+                    mayor: Math.max(0, Math.floor(Number(input.mayor) || 0)),
+                    escort: Math.max(0, Math.floor(Number(input.escort) || 0)),
+                    framer: Math.max(0, Math.floor(Number(input.framer) || 0)),
+                    medium: Math.max(0, Math.floor(Number(input.medium) || 0)),
+                    executioner: Math.max(0, Math.floor(Number(input.executioner) || 0)),
+                    amnesiac: Math.max(0, Math.floor(Number(input.amnesiac) || 0)),
+
                     grandmaEnabled:
                         Boolean(
                             input.grandmaEnabled
@@ -6152,7 +6282,8 @@ io.on(
                     settings.detective +
                     settings.jester +
                     settings.lover +
-                    settings.civilian;
+                    settings.civilian +
+                    extraRoleCount(settings);
 
                 if (
                     total !==
@@ -6188,7 +6319,8 @@ io.on(
                 if (
                     settings.mafia +
                     settings.godfather +
-                    settings.grandmafia <
+                    settings.grandmafia +
+                    settings.framer <
                     1
                 ) {
 
@@ -6202,6 +6334,14 @@ io.on(
                    VOICE CHAT SELECTION
                    (validated before anything starts)
                 ========================= */
+
+                if (settings.mayor > 1 || settings.amnesiac > 1 || settings.executioner > 1) {
+
+                    return socket.emit(
+                        "gameError",
+                        "You can have at most 1 Mayor, 1 Amnesiac and 1 Executioner!"
+                    );
+                }
 
                 const voiceInput =
                     data.voice && typeof data.voice === "object"
@@ -6278,6 +6418,8 @@ assignRoles(
     room.players,
     settings
 );
+
+setupRoleExtras(room);
 
                 emitPublicMatches();
 
@@ -6703,6 +6845,17 @@ assignRoles(
                     );
                 }
 
+                if (isNightBlocked(room, socket.id)) {
+                    room.nightActions.doctor[socket.id] = NIGHT_BLOCKED;
+                    socket.emit("extraActionDone", {
+                        role: "Doctor",
+                        blocked: true,
+                        message: "🚫 You were blocked tonight! Your action did nothing."
+                    });
+                    checkNightActions(data.roomCode);
+                    return;
+                }
+
                 room.nightActions.doctor[
                     socket.id
                 ] =
@@ -6794,6 +6947,17 @@ assignRoles(
                     );
                 }
 
+                if (isNightBlocked(room, socket.id)) {
+                    room.nightActions.detective[socket.id] = NIGHT_BLOCKED;
+                    socket.emit("extraActionDone", {
+                        role: "Detective",
+                        blocked: true,
+                        message: "🚫 You were blocked tonight! Your action did nothing."
+                    });
+                    checkNightActions(data.roomCode);
+                    return;
+                }
+
                 room.nightActions.detective[
                     socket.id
                 ] =
@@ -6801,7 +6965,7 @@ assignRoles(
 
                 room.stats.detectiveInvestigations += 1;
 
-                const detectiveFoundMafia = isDetectiveMafia(target.role);
+                const detectiveFoundMafia = isDetectiveMafia(target.role) || isNightFramed(room, target.id);
 
                 // Permanent stat: only a CORRECT Detective Mafia result earns points.
                 if (detectiveFoundMafia) {
@@ -7351,6 +7515,991 @@ assignRoles(
         );
     }
 );
+
+/* =========================================================
+   MAFIA WARS - EXTRA ROLES AND FEATURES
+   Roles:    Bodyguard, Vigilante, Sheriff, Mayor, Escort,
+             Framer, Medium, Executioner, Amnesiac
+   Features: dead chat, last words (will), emotes, friends list,
+             game replay summary, host role setup for new roles
+   Everything is validated here on the server.
+   All the older roles and features keep working as before.
+========================================================= */
+
+const EXTRA_ROLE_KEYS = [
+    "bodyguard", "vigilante", "sheriff", "mayor", "escort",
+    "framer", "medium", "executioner", "amnesiac"
+];
+
+const EXTRA_ROLE_TURN = {
+    Escort: "escort",
+    Framer: "framer",
+    Bodyguard: "bodyguard",
+    Sheriff: "sheriff",
+    Vigilante: "vigilante"
+};
+
+const EXTRA_TURN_ROLE = {
+    escort: "Escort",
+    framer: "Framer",
+    bodyguard: "Bodyguard",
+    sheriff: "Sheriff",
+    vigilante: "Vigilante"
+};
+
+const NIGHT_SKIPPED = "__skip__";
+const NIGHT_BLOCKED = "__blocked__";
+const VIGILANTE_MAX_INNOCENT_KILLS = 2;
+const EMOTE_LIST = ["👍", "👎", "😂", "😡", "🤔", "😱", "🔥", "🤝"];
+const EMOTE_COOLDOWN_MS = 1200;
+const LAST_WORDS_MAX = 140;
+const DEAD_CHAT_MAX = 200;
+
+function extraRoleCount(settings) {
+    return EXTRA_ROLE_KEYS.reduce(
+        (sum, key) => sum + (Number(settings && settings[key]) || 0),
+        0
+    );
+}
+
+function isNightBlocked(room, playerId) {
+    return Boolean(room && room.nightBlocked && room.nightBlocked[playerId]);
+}
+
+function isNightFramed(room, playerId) {
+    return Boolean(room && room.nightFramed && room.nightFramed[playerId]);
+}
+
+function playerNameById(room, id) {
+    const p = room && room.players.find(x => x.id === id);
+    return p ? p.name : "Someone";
+}
+
+/* ---------- Game replay log ---------- */
+
+function replayLog(room, text, kind) {
+    if (!room) return;
+    if (!Array.isArray(room.replay)) room.replay = [];
+    if (room.replay.length >= 500) return;
+
+    room.replay.push({
+        night: room.nightNumber || 1,
+        phase: room.phase === "day" ? "day" : "night",
+        kind: kind || "info",
+        text: String(text).slice(0, 240)
+    });
+}
+
+function replayNightActions(room) {
+    const na = room.nightActions || {};
+    const nm = id => playerNameById(room, id);
+
+    const log = (map, icon, verb, role) => {
+        Object.entries(map || {}).forEach(([actorId, targetId]) => {
+            if (targetId === NIGHT_SKIPPED) return;
+
+            if (targetId === NIGHT_BLOCKED) {
+                replayLog(room, `🚫 ${role} ${nm(actorId)} was blocked and did nothing`, "block");
+                return;
+            }
+
+            replayLog(room, `${icon} ${role} ${nm(actorId)} ${verb} ${nm(targetId)}`, role.toLowerCase());
+        });
+    };
+
+    log(na.escort, "🚧", "blocked", "Escort");
+
+    const attackers = {};
+    Object.entries(na.mafia || {}).forEach(([attackerId, targetId]) => {
+        if (isNightBlocked(room, attackerId)) {
+            replayLog(room, `🚫 Mafia ${nm(attackerId)} was blocked`, "block");
+            return;
+        }
+        (attackers[targetId] = attackers[targetId] || []).push(attackerId);
+    });
+
+    Object.entries(attackers).forEach(([targetId, ids]) => {
+        replayLog(
+            room,
+            `🔪 Mafia (${ids.map(nm).join(", ")}) attacked ${nm(targetId)}`,
+            "mafia"
+        );
+    });
+
+    log(na.framer, "🎭", "framed", "Framer");
+    log(na.doctor, "💚", "protected", "Doctor");
+    log(na.bodyguard, "🛡️", "guarded", "Bodyguard");
+    log(na.detective, "🔎", "investigated", "Detective");
+    log(na.sheriff, "⭐", "investigated", "Sheriff");
+
+    Object.entries(na.cupid || {}).forEach(([cupidId, pair]) => {
+        if (pair && pair.firstId && pair.secondId) {
+            replayLog(
+                room,
+                `💘 Cupid ${nm(cupidId)} linked ${nm(pair.firstId)} ❤️ ${nm(pair.secondId)}`,
+                "cupid"
+            );
+        }
+    });
+}
+
+function replayDayVotes(room) {
+    const tally = {};
+
+    Object.entries(room.votes || {}).forEach(([voterId, targetId]) => {
+        const voter = room.players.find(p => p.id === voterId);
+        if (!voter || !voter.alive) return;
+        (tally[targetId] = tally[targetId] || []).push(voter.name + (voter.role === "Mayor" ? " (Mayor x2)" : ""));
+    });
+
+    Object.entries(tally).forEach(([targetId, voters]) => {
+        replayLog(
+            room,
+            `🗳️ ${playerNameById(room, targetId)} got votes from: ${voters.join(", ")}`,
+            "vote"
+        );
+    });
+}
+
+/* ---------- Per-game setup / reset ---------- */
+
+function clearRoleExtras(room) {
+    room.replay = [];
+    room.vigilanteInnocent = {};
+    room.firstDeathHandled = false;
+    room.executionerWinnerId = null;
+    room.executionerTargets = {};
+    room.nightBlocked = {};
+    room.nightFramed = {};
+    room.nightNotes = [];
+    room.deadChatLog = [];
+    room._guardian = null;
+    room._deathCause = null;
+
+    room.players.forEach(player => {
+        player.will = "";
+    });
+}
+
+function assignExecutionerTarget(room, executioner) {
+    const candidates = room.players.filter(p =>
+        p.id !== executioner.id &&
+        p.alive &&
+        p.connected !== false &&
+        !isMafiaTeam(p.role) &&
+        !["Jester", "Executioner", "Amnesiac"].includes(p.role)
+    );
+
+    if (!candidates.length) {
+        // Nobody to hunt: play as a normal Civilian.
+        executioner.role = "Civilian";
+        io.to(executioner.id).emit("roleChanged", { role: "Civilian" });
+        return;
+    }
+
+    const target = candidates[Math.floor(Math.random() * candidates.length)];
+    room.executionerTargets[executioner.id] = target.id;
+}
+
+function setupRoleExtras(room) {
+    clearRoleExtras(room);
+
+    replayLog(room, "🎬 The game started.", "info");
+
+    room.players
+        .filter(p => p.role === "Executioner")
+        .forEach(p => assignExecutionerTarget(room, p));
+}
+
+/* ---------- Wrappers around the existing game functions ---------- */
+
+const _origHasLivingRoleForTurn = hasLivingRoleForTurn;
+hasLivingRoleForTurn = function (room, turn) {
+    const role = EXTRA_TURN_ROLE[turn];
+
+    if (role) {
+        return Boolean(room) && room.players.some(
+            p => p.alive && p.connected !== false && p.role === role
+        );
+    }
+
+    return _origHasLivingRoleForTurn(room, turn);
+};
+
+const _origHasHiddenTurn = hasHiddenTurn;
+hasHiddenTurn = function (room, turn) {
+    const role = EXTRA_TURN_ROLE[turn];
+
+    // Same rule as Doctor/Detective: if the role exists in this game but is
+    // dead, the turn still happens so nobody can tell who is dead.
+    if (role) {
+        return Boolean(room) && room.players.some(p => p.role === role);
+    }
+
+    return _origHasHiddenTurn(room, turn);
+};
+
+const _origNightTurnName = nightTurnName;
+nightTurnName = function (turn) {
+    if (EXTRA_TURN_ROLE[turn]) return EXTRA_TURN_ROLE[turn].toUpperCase();
+    return _origNightTurnName(turn);
+};
+
+const _origCurrentTurnActionsDone = currentTurnActionsDone;
+currentTurnActionsDone = function (room) {
+    if (
+        room &&
+        room.phase === "night" &&
+        !room.hiddenNightTurn &&
+        EXTRA_TURN_ROLE[room.nightTurn]
+    ) {
+        const role = EXTRA_TURN_ROLE[room.nightTurn];
+        const done = (room.nightActions && room.nightActions[room.nightTurn]) || {};
+
+        return !room.players.some(
+            p => p.alive && p.connected !== false && p.role === role && !done[p.id]
+        );
+    }
+
+    return _origCurrentTurnActionsDone(room);
+};
+
+const _origGetActionTargets = getActionTargets;
+getActionTargets = function (room, player) {
+    if (room && player && player.alive && room.phase === "night") {
+        const turn = EXTRA_ROLE_TURN[player.role];
+
+        // The Framer is also a Mafia member, so only take over during the
+        // Framer's own turn; the Mafia kill turn uses the original code.
+        if (turn && (player.role !== "Framer" || room.nightTurn === "framer")) {
+            if (room.nightTurn !== turn) return [];
+
+            const done = room.nightActions && room.nightActions[turn] && room.nightActions[turn][player.id];
+            if (done) return [];
+
+            return room.players
+                .filter(p =>
+                    p.alive &&
+                    p.connected !== false &&
+                    p.id !== player.id &&
+                    !(turn === "framer" && isMafiaTeam(p.role))
+                )
+                .map(p => p.id);
+        }
+    }
+
+    return _origGetActionTargets(room, player);
+};
+
+const _origResetNightActions = resetNightActions;
+resetNightActions = function (room) {
+    _origResetNightActions(room);
+
+    room.nightActions.escort = {};
+    room.nightActions.framer = {};
+    room.nightActions.bodyguard = {};
+    room.nightActions.sheriff = {};
+    room.nightActions.vigilante = {};
+
+    room.nightBlocked = {};
+    room.nightFramed = {};
+};
+
+const _origResetGameState = resetGameState;
+resetGameState = function (room) {
+    _origResetGameState(room);
+    clearRoleExtras(room);
+};
+
+const _origMigratePlayerReferences = migratePlayerReferences;
+migratePlayerReferences = function (room, oldId, newId) {
+    _origMigratePlayerReferences(room, oldId, newId);
+
+    if (!room || oldId === newId) return;
+
+    ["nightBlocked", "nightFramed", "vigilanteInnocent", "executionerTargets"].forEach(key => {
+        const map = room[key];
+        if (!map) return;
+
+        if (Object.prototype.hasOwnProperty.call(map, oldId)) {
+            map[newId] = map[oldId];
+            delete map[oldId];
+        }
+
+        Object.keys(map).forEach(k => {
+            if (map[k] === oldId) map[k] = newId;
+        });
+    });
+
+    if (room.executionerWinnerId === oldId) room.executionerWinnerId = newId;
+};
+
+/* ---------- Extra data sent to each player ---------- */
+
+function canUseDeadChat(room, player) {
+    if (!room || !player || !room.gameStarted) return false;
+    if (room.phase === "lobby" || room.phase === "gameover") return false;
+
+    if (!player.alive) return true;
+
+    return player.role === "Medium" && room.phase === "night";
+}
+
+function buildExtraInfo(room, player) {
+    const targetId = room.executionerTargets && room.executionerTargets[player.id];
+    const target = targetId ? room.players.find(p => p.id === targetId) : null;
+
+    return {
+        execTarget: player.role === "Executioner" && target ? target.name : null,
+        will: player.will || "",
+        vigilanteInnocent:
+            player.role === "Vigilante"
+                ? (room.vigilanteInnocent && room.vigilanteInnocent[player.id]) || 0
+                : 0,
+        vigilanteMax: VIGILANTE_MAX_INNOCENT_KILLS,
+        canDeadChat: canUseDeadChat(room, player),
+        emotes: EMOTE_LIST
+    };
+}
+
+/* ---------- Night resolution helpers (used by endNight) ---------- */
+
+function findGuardian(room, targetId) {
+    return room.players.find(p =>
+        p.alive &&
+        p.role === "Bodyguard" &&
+        p.id !== targetId &&
+        room.nightActions.bodyguard &&
+        room.nightActions.bodyguard[p.id] === targetId
+    ) || null;
+}
+
+function resolveVigilantes(room, protectedPlayers) {
+    const out = [];
+
+    Object.entries(room.nightActions.vigilante || {}).forEach(([vigilanteId, targetId]) => {
+        if (targetId === NIGHT_SKIPPED || targetId === NIGHT_BLOCKED) return;
+
+        const vigilante = room.players.find(p => p.id === vigilanteId);
+        const target = room.players.find(p => p.id === targetId);
+
+        if (!vigilante || !vigilante.alive || !target || !target.alive) return;
+
+        if (protectedPlayers.has(targetId)) {
+            replayLog(room, `💚 The doctor stopped ${vigilante.name}'s shot at ${target.name}`, "save");
+            return;
+        }
+
+        const dead = eliminatePlayerWithCupid(room, target);
+        if (!dead.length) return;
+
+        dead.forEach(p => out.push(p));
+
+        room.nightNotes.push("🔫 Someone was shot during the night.");
+        replayLog(
+            room,
+            `🔫 Vigilante ${vigilante.name} shot ${target.name} (${target.role})`,
+            "vigilante"
+        );
+
+        if (!isMafiaTeam(target.role)) {
+            const count = (room.vigilanteInnocent[vigilante.id] || 0) + 1;
+            room.vigilanteInnocent[vigilante.id] = count;
+
+            if (count >= VIGILANTE_MAX_INNOCENT_KILLS) {
+                if (vigilante.alive) {
+                    const guilt = eliminatePlayerWithCupid(room, vigilante);
+                    guilt.forEach(p => out.push(p));
+
+                    room.nightNotes.push(
+                        `💔 ${vigilante.name} (the Vigilante) died of guilt after killing ${VIGILANTE_MAX_INNOCENT_KILLS} innocent players.`
+                    );
+                    replayLog(
+                        room,
+                        `💔 Vigilante ${vigilante.name} died of guilt (${count} innocent kills)`,
+                        "vigilante"
+                    );
+                }
+            } else {
+                io.to(vigilante.id).emit("extraNotice", {
+                    message: `⚠️ You killed an innocent player (${count}/${VIGILANTE_MAX_INNOCENT_KILLS}). One more and you die!`
+                });
+            }
+        }
+    });
+
+    return out;
+}
+
+function nightKillText(room, names, verb, doctorLine, detectiveLine, doctorSaved) {
+    const notes = (room.nightNotes || []).join(" ");
+    const guarded = Boolean(room._guardian);
+    room._guardian = null;
+
+    let line = guarded && notes
+        ? "☀️ " + notes
+        : `☀️ ${names.join(", ")} ${verb} killed.` + (notes ? " " + notes : "");
+
+    if (doctorSaved) {
+        line += " The doctor saved the attacked person.";
+    } else if (!guarded) {
+        line += doctorLine;
+    }
+
+    return line + detectiveLine;
+}
+
+/* ---------- Everything that happens after somebody dies ---------- */
+
+function afterEliminations(room, eliminated) {
+    if (!room || !Array.isArray(eliminated) || !eliminated.length) return;
+
+    const cause = room._deathCause || "night";
+
+    eliminated.forEach(dead => {
+        replayLog(
+            room,
+            cause === "vote"
+                ? `⚰️ ${dead.name} (${dead.role}) was voted out`
+                : `⚰️ ${dead.name} (${dead.role}) died`,
+            "death"
+        );
+
+        // Last words (the player's will) are revealed to everyone.
+        if (dead.will) {
+            const message = String(dead.will).slice(0, LAST_WORDS_MAX);
+
+            io.to(room.code || findRoomCodeOfRoom(room)).emit("lastWords", {
+                playerName: dead.name,
+                message
+            });
+
+            announce(
+                findRoomCodeOfRoom(room),
+                `📜 ${dead.name}'s last words: "${message}"`,
+                "info"
+            );
+
+            dead.will = "";
+        }
+    });
+
+    // Executioner: the target was voted out by the town -> the Executioner wins.
+    // If the target dies any other way, the Executioner becomes a Civilian.
+    room.players
+        .filter(p => p.role === "Executioner" && p.alive)
+        .forEach(executioner => {
+            const targetId = room.executionerTargets[executioner.id];
+            if (!targetId) return;
+
+            if (eliminated[0] && eliminated[0].id === targetId && cause === "vote") {
+                room.executionerWinnerId = executioner.id;
+                return;
+            }
+
+            if (eliminated.some(p => p.id === targetId)) {
+                executioner.role = "Civilian";
+                delete room.executionerTargets[executioner.id];
+
+                io.to(executioner.id).emit("roleChanged", { role: "Civilian" });
+                io.to(executioner.id).emit("extraNotice", {
+                    message: "Your target died, so you are now a plain Civilian."
+                });
+            }
+        });
+
+    // Amnesiac: takes the role (and abilities) of the FIRST player who dies.
+    if (!room.firstDeathHandled) {
+        room.firstDeathHandled = true;
+
+        const first = eliminated[0];
+
+        room.players
+            .filter(p => p.role === "Amnesiac" && p.alive && !eliminated.some(d => d.id === p.id))
+            .forEach(amnesiac => {
+                if (!first || !first.role || first.role === "Amnesiac") return;
+
+                amnesiac.role = first.role;
+
+                io.to(amnesiac.id).emit("roleChanged", { role: amnesiac.role });
+                io.to(amnesiac.id).emit("extraNotice", {
+                    message: `🧠 You remembered who you were... You are now the ${amnesiac.role}!`
+                });
+
+                replayLog(room, `🧠 Amnesiac ${amnesiac.name} became ${amnesiac.role}`, "amnesiac");
+
+                if (amnesiac.role === "Executioner") {
+                    assignExecutionerTarget(room, amnesiac);
+                }
+            });
+    }
+}
+
+function findRoomCodeOfRoom(room) {
+    for (const code of Object.keys(rooms)) {
+        if (rooms[code] === room) return code;
+    }
+    return null;
+}
+
+const _origEliminatePlayerWithCupid = eliminatePlayerWithCupid;
+eliminatePlayerWithCupid = function (room, player) {
+    const eliminated = _origEliminatePlayerWithCupid(room, player);
+
+    try {
+        afterEliminations(room, eliminated);
+    } catch (error) {
+        console.error("afterEliminations error:", error);
+    }
+
+    return eliminated;
+};
+
+/* ---------- Sheriff rules ---------- */
+
+function isSheriffSuspicious(room, target) {
+    if (!target) return false;
+
+    // The Godfather looks innocent (same as with the Detective).
+    if (target.role === "Godfather") return false;
+
+    if (isMafiaTeam(target.role)) return true;
+    if (isNightFramed(room, target.id)) return true;
+
+    // Unlike the Detective, the Sheriff also finds chaotic neutral players.
+    return ["Jester", "Executioner"].includes(target.role);
+}
+
+/* =========================================================
+   SOCKET EVENTS FOR THE NEW ROLES AND FEATURES
+========================================================= */
+
+io.on("connection", socket => {
+
+    /* ---------- One generic night action for the new roles ---------- */
+
+    socket.on("roleChoose", data => {
+        const room = rooms[String(data?.roomCode || "")];
+
+        if (!room || room.phase !== "night") return;
+
+        const player = room.players.find(p => p.id === socket.id && p.alive);
+        if (!player) return;
+
+        const turn = EXTRA_ROLE_TURN[player.role];
+
+        if (!turn || room.nightTurn !== turn) {
+            return socket.emit("actionError", "It is not your turn!");
+        }
+
+        const actions = room.nightActions[turn] || (room.nightActions[turn] = {});
+
+        if (actions[socket.id]) {
+            return socket.emit("actionError", "You already used your action tonight!");
+        }
+
+        const roomCode = String(data.roomCode);
+
+        // Skip tonight.
+        if (data.skip) {
+            actions[socket.id] = NIGHT_SKIPPED;
+            socket.emit("extraActionDone", { role: player.role, message: "You skipped tonight." });
+            checkNightActions(roomCode);
+            return;
+        }
+
+        const target = room.players.find(p => p.id === data.targetId);
+
+        if (
+            !target ||
+            !target.alive ||
+            target.connected === false ||
+            target.id === socket.id ||
+            (turn === "framer" && isMafiaTeam(target.role))
+        ) {
+            return socket.emit("actionError", "You cannot choose that player.");
+        }
+
+        // The Escort blocked this player earlier tonight.
+        if (isNightBlocked(room, socket.id)) {
+            actions[socket.id] = NIGHT_BLOCKED;
+            socket.emit("extraActionDone", {
+                role: player.role,
+                blocked: true,
+                message: "🚫 You were blocked tonight! Your action did nothing."
+            });
+            checkNightActions(roomCode);
+            return;
+        }
+
+        actions[socket.id] = target.id;
+
+        if (turn === "escort") {
+            room.nightBlocked[target.id] = true;
+            io.to(target.id).emit("extraNotice", {
+                message: "🚫 Someone distracted you. You are blocked tonight!"
+            });
+            socket.emit("extraActionDone", { role: player.role, message: `🚧 You blocked ${target.name}.` });
+        } else if (turn === "framer") {
+            room.nightFramed[target.id] = true;
+            socket.emit("extraActionDone", { role: player.role, message: `🎭 You framed ${target.name}.` });
+        } else if (turn === "bodyguard") {
+            socket.emit("extraActionDone", { role: player.role, message: `🛡️ You are guarding ${target.name}.` });
+        } else if (turn === "vigilante") {
+            socket.emit("extraActionDone", { role: player.role, message: `🔫 You will shoot ${target.name} tonight.` });
+        } else if (turn === "sheriff") {
+            const suspicious = isSheriffSuspicious(room, target);
+
+            socket.emit("sheriffResult", {
+                playerName: target.name,
+                result: suspicious ? "SUSPICIOUS" : "NOT SUSPICIOUS"
+            });
+
+            // Same behaviour as the Detective: 3 seconds to read the result.
+            clearNightTurnTimer(room);
+            room.nightTurnTimer = setTimeout(() => {
+                const current = rooms[roomCode];
+
+                if (!current || current.phase !== "night" || current.nightTurn !== "sheriff") return;
+
+                current.nightTurnTimer = null;
+                checkNightActions(roomCode);
+            }, 3000);
+
+            return;
+        }
+
+        checkNightActions(roomCode);
+    });
+
+    /* ---------- Dead chat (dead players + the Medium at night) ---------- */
+
+    function deadChatRecipients(room) {
+        return room.players.filter(p =>
+            p.connected !== false &&
+            (!p.alive || (p.role === "Medium" && p.alive && room.phase === "night"))
+        );
+    }
+
+    socket.on("deadChatSend", data => {
+        const roomCode = String(data?.roomCode || "");
+        const room = rooms[roomCode];
+        if (!room) return;
+
+        const player = room.players.find(p => p.id === socket.id);
+        if (!player || !canUseDeadChat(room, player)) return;
+
+        const message = String(data.message || "").trim().slice(0, DEAD_CHAT_MAX);
+        if (!message) return;
+
+        const entry = {
+            fromId: socket.id,
+            playerName: player.name,
+            fromMedium: player.alive,
+            message,
+            time: Date.now()
+        };
+
+        room.deadChatLog = room.deadChatLog || [];
+        room.deadChatLog.push(entry);
+        if (room.deadChatLog.length > 80) room.deadChatLog.shift();
+
+        deadChatRecipients(room).forEach(p => io.to(p.id).emit("deadChatMessage", entry));
+    });
+
+    socket.on("deadChatHistory", data => {
+        const room = rooms[String(data?.roomCode || "")];
+        if (!room) return;
+
+        const player = room.players.find(p => p.id === socket.id);
+        if (!player || !canUseDeadChat(room, player)) return;
+
+        socket.emit("deadChatHistory", room.deadChatLog || []);
+    });
+
+    /* ---------- Last words (will) ---------- */
+
+    socket.on("setWill", (data, callback) => {
+        const reply = typeof callback === "function" ? callback : () => {};
+        const room = rooms[String(data?.roomCode || "")];
+
+        if (!room || !room.gameStarted || room.phase === "gameover") {
+            return reply({ ok: false, message: "You can only write last words during a game." });
+        }
+
+        const player = room.players.find(p => p.id === socket.id);
+
+        if (!player || !player.alive) {
+            return reply({ ok: false, message: "Only living players can write last words." });
+        }
+
+        player.will = String(data.message || "").replace(/\s+/g, " ").trim().slice(0, LAST_WORDS_MAX);
+
+        reply({ ok: true, will: player.will });
+    });
+
+    /* ---------- Quick emotes during the day / voting ---------- */
+
+    socket.on("sendEmote", data => {
+        const room = rooms[String(data?.roomCode || "")];
+        if (!room || room.phase !== "day") return;
+
+        const player = room.players.find(p => p.id === socket.id && p.alive);
+        if (!player) return;
+
+        const emote = String(data.emote || "");
+        if (!EMOTE_LIST.includes(emote)) return;
+
+        const now = Date.now();
+        if (player._lastEmoteAt && now - player._lastEmoteAt < EMOTE_COOLDOWN_MS) return;
+        player._lastEmoteAt = now;
+
+        io.to(String(data.roomCode)).emit("emote", {
+            fromId: player.id,
+            playerName: player.name,
+            emote
+        });
+    });
+
+    /* ---------- Game replay summary ---------- */
+
+    socket.on("getReplay", data => {
+        const room = rooms[String(data?.roomCode || "")];
+        if (!room || room.phase !== "gameover") return;
+
+        if (!room.players.some(p => p.id === socket.id)) return;
+
+        socket.emit("gameReplay", {
+            entries: room.replay || [],
+            players: room.players
+                .filter(p => p.connected !== false)
+                .map(p => ({ name: p.name, role: p.role, alive: p.alive }))
+        });
+    });
+
+    /* ---------- Friends list (registered accounts only) ---------- */
+
+    function myAccount() {
+        const key = getSocketAccountKey(socket);
+        const user = key ? accountsDb.users[key] : null;
+
+        if (!user) return null;
+
+        if (!Array.isArray(user.friends)) user.friends = [];
+        if (!Array.isArray(user.friendRequests)) user.friendRequests = [];
+
+        return { key, user };
+    }
+
+    function accountKeyByName(name) {
+        const lower = String(name || "").trim().toLowerCase();
+        if (!lower) return null;
+
+        for (const [key, user] of Object.entries(accountsDb.users)) {
+            if (String(user.username).toLowerCase() === lower) return key;
+        }
+
+        for (const [key, user] of Object.entries(accountsDb.users)) {
+            if (user.displayName && String(user.displayName).toLowerCase() === lower) return key;
+        }
+
+        return null;
+    }
+
+    function onlineSocketIds(accountKey) {
+        const ids = [];
+
+        socketAccounts.forEach((key, id) => {
+            if (key === accountKey && io.of("/").sockets.has(id)) ids.push(id);
+        });
+
+        return ids;
+    }
+
+    function friendRoomInfo(accountKey) {
+        const ids = onlineSocketIds(accountKey);
+
+        if (!ids.length) return { online: false, status: "Offline", roomCode: null };
+
+        for (const id of ids) {
+            const code = findRoomCodeBySocket(id);
+            const room = code ? rooms[code] : null;
+
+            if (room) {
+                if (room.gameStarted) {
+                    return { online: true, status: "In a game", roomCode: null };
+                }
+
+                if (room.allowPeopleToJoin !== false) {
+                    return { online: true, status: "In a lobby", roomCode: code };
+                }
+
+                return { online: true, status: "In a lobby (closed)", roomCode: null };
+            }
+        }
+
+        return { online: true, status: "Online", roomCode: null };
+    }
+
+    function publicFriend(key) {
+        const user = accountsDb.users[key];
+        if (!user) return null;
+
+        return {
+            username: user.username,
+            displayName: getDisplayName(user),
+            ...friendRoomInfo(key)
+        };
+    }
+
+    function sendFriends(targetSocketId, accountKey) {
+        const user = accountsDb.users[accountKey];
+        if (!user) return;
+
+        io.to(targetSocketId).emit("friendsData", {
+            ok: true,
+            friends: (user.friends || []).map(publicFriend).filter(Boolean),
+            requests: (user.friendRequests || []).map(publicFriend).filter(Boolean)
+        });
+    }
+
+    function refreshFriendsOf(accountKey) {
+        onlineSocketIds(accountKey).forEach(id => sendFriends(id, accountKey));
+    }
+
+    function notice(message) {
+        socket.emit("friendsNotice", { message });
+    }
+
+    socket.on("friendsGet", () => {
+        const me = myAccount();
+
+        if (!me) {
+            return socket.emit("friendsData", { ok: false, guest: true, friends: [], requests: [] });
+        }
+
+        sendFriends(socket.id, me.key);
+    });
+
+    socket.on("friendAdd", data => {
+        const me = myAccount();
+        if (!me) return notice("Sign in with an account to use friends.");
+
+        const otherKey = accountKeyByName(data?.username);
+
+        if (!otherKey) return notice("No player with that username was found.");
+        if (otherKey === me.key) return notice("You cannot add yourself.");
+
+        const other = accountsDb.users[otherKey];
+        if (!Array.isArray(other.friends)) other.friends = [];
+        if (!Array.isArray(other.friendRequests)) other.friendRequests = [];
+
+        if (me.user.friends.includes(otherKey)) return notice("You are already friends.");
+
+        // They already asked me -> accept right away.
+        if (me.user.friendRequests.includes(otherKey)) {
+            me.user.friendRequests = me.user.friendRequests.filter(k => k !== otherKey);
+            me.user.friends.push(otherKey);
+            if (!other.friends.includes(me.key)) other.friends.push(me.key);
+
+            saveAccounts();
+            notice(`You and ${getDisplayName(other)} are now friends!`);
+            refreshFriendsOf(me.key);
+            refreshFriendsOf(otherKey);
+            return;
+        }
+
+        if (other.friendRequests.includes(me.key)) return notice("Friend request already sent.");
+
+        other.friendRequests.push(me.key);
+        saveAccounts();
+
+        notice(`Friend request sent to ${getDisplayName(other)}.`);
+
+        onlineSocketIds(otherKey).forEach(id => {
+            io.to(id).emit("friendsNotice", {
+                message: `👥 ${getDisplayName(me.user)} sent you a friend request!`
+            });
+        });
+
+        refreshFriendsOf(otherKey);
+    });
+
+    socket.on("friendRespond", data => {
+        const me = myAccount();
+        if (!me) return;
+
+        const otherKey = accountKeyByName(data?.username);
+        if (!otherKey || !me.user.friendRequests.includes(otherKey)) return;
+
+        const other = accountsDb.users[otherKey];
+        if (!Array.isArray(other.friends)) other.friends = [];
+
+        me.user.friendRequests = me.user.friendRequests.filter(k => k !== otherKey);
+
+        if (data.accept) {
+            if (!me.user.friends.includes(otherKey)) me.user.friends.push(otherKey);
+            if (!other.friends.includes(me.key)) other.friends.push(me.key);
+
+            onlineSocketIds(otherKey).forEach(id => {
+                io.to(id).emit("friendsNotice", {
+                    message: `✅ ${getDisplayName(me.user)} accepted your friend request!`
+                });
+            });
+        }
+
+        saveAccounts();
+        refreshFriendsOf(me.key);
+        refreshFriendsOf(otherKey);
+    });
+
+    socket.on("friendRemove", data => {
+        const me = myAccount();
+        if (!me) return;
+
+        const otherKey = accountKeyByName(data?.username);
+        if (!otherKey) return;
+
+        me.user.friends = me.user.friends.filter(k => k !== otherKey);
+
+        const other = accountsDb.users[otherKey];
+        if (other && Array.isArray(other.friends)) {
+            other.friends = other.friends.filter(k => k !== me.key);
+        }
+
+        saveAccounts();
+        refreshFriendsOf(me.key);
+        refreshFriendsOf(otherKey);
+    });
+
+    socket.on("friendJoin", data => {
+        const me = myAccount();
+        if (!me) return notice("Sign in with an account to use friends.");
+
+        const otherKey = accountKeyByName(data?.username);
+
+        if (!otherKey || !me.user.friends.includes(otherKey)) {
+            return notice("That player is not in your friends list.");
+        }
+
+        const info = friendRoomInfo(otherKey);
+
+        if (!info.roomCode) {
+            return notice(
+                info.online
+                    ? `Your friend is "${info.status}" - you cannot join right now.`
+                    : "Your friend is offline."
+            );
+        }
+
+        if (findRoomCodeBySocket(socket.id) === info.roomCode) {
+            return notice("You are already in that room.");
+        }
+
+        socket.emit("friendJoinReady", { roomCode: info.roomCode });
+    });
+});
+
 
 /* =========================================================
    SERVER START
