@@ -1,3 +1,82 @@
+require("dotenv").config({ path: ".env.local" });
+require("dotenv").config();
+const { Pool } = require("pg");
+
+const pool = process.env.DATABASE_URL
+    ? new Pool({ connectionString: process.env.DATABASE_URL, max: 4 })
+    : null;
+
+if (pool) pool.on("error", e => console.error("[db] connection error:", e.message));
+
+async function dbSave(key, value) {
+    await pool.query(
+        "INSERT INTO kv_store (key, value, updated_at) VALUES ($1, $2::jsonb, now()) " +
+        "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
+        [key, JSON.stringify(value)]
+    );
+}
+
+async function dbLoad(key) {
+    const r = await pool.query("SELECT value FROM kv_store WHERE key = $1", [key]);
+    return r.rows[0] ? r.rows[0].value : null;
+}
+
+/* One save at a time, and always the newest data last. */
+function makeDbSaver(key, getData, fileFallback) {
+    let promise = null;
+    let dirty = false;
+
+    return function save() {
+        if (!pool) { fileFallback(); return Promise.resolve(); }
+
+        dirty = true;
+
+        if (!promise) {
+            promise = (async () => {
+                try {
+                    while (dirty) {
+                        dirty = false;
+                        await dbSave(key, getData());
+                    }
+                } catch (error) {
+                    console.error("[db] Could not save '" + key + "' to Neon:", error);
+                } finally {
+                    promise = null;
+                }
+            })();
+        }
+
+        return promise;
+    };
+}
+
+async function initDatabase() {
+    if (!pool) {
+        console.warn("[db] DATABASE_URL is not set. Using local files (data is lost when Render restarts).");
+        return;
+    }
+
+    await pool.query(
+        "CREATE TABLE IF NOT EXISTS kv_store (" +
+        "key TEXT PRIMARY KEY, " +
+        "value JSONB NOT NULL, " +
+        "updated_at TIMESTAMPTZ NOT NULL DEFAULT now())"
+    );
+
+    const accounts = await dbLoad("accounts");
+    if (accounts && typeof accounts.users === "object") {
+        accountsDb = accounts;
+        console.log("[db] Loaded " + Object.keys(accountsDb.users).length + " accounts from Neon.");
+    } else {
+        await writeAccountsNow();
+        console.log("[db] Neon was empty. Saved the current accounts.");
+    }
+
+    const questions = await dbLoad("questions");
+    if (Array.isArray(questions) && questions.length) questionsDb = questions;
+    else await writeQuestionsNow();
+}
+
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
@@ -9,7 +88,16 @@ const io = new Server(server, {
     maxHttpBufferSize: 6 * 1024 * 1024
 });
 
-app.use(express.static("public"));
+const PUBLIC_DIR = require("path").join(__dirname, "public");
+app.use(express.static(PUBLIC_DIR));
+app.get("/", (req, res) => {
+    res.sendFile(require("path").join(PUBLIC_DIR, "index.html"), (err) => {
+        if (err) {
+            console.error("index.html not found at:", PUBLIC_DIR, err.message);
+            res.status(500).send("index.html missing on server: " + PUBLIC_DIR);
+        }
+    });
+});
 
 const rooms = {};
 
@@ -61,7 +149,7 @@ try {
 
 let accountsSaveTimer = null;
 
-function writeAccountsNow() {
+function writeAccountsFile() {
     try {
         const tempFile = ACCOUNTS_FILE + ".tmp";
         fs.writeFileSync(tempFile, JSON.stringify(accountsDb));
@@ -70,6 +158,8 @@ function writeAccountsNow() {
         console.error("Could not save accounts file:", error);
     }
 }
+
+const writeAccountsNow = makeDbSaver("accounts", () => accountsDb, writeAccountsFile);
 
 function saveAccounts() {
     if (accountsSaveTimer) return;
@@ -80,12 +170,11 @@ function saveAccounts() {
     }, 500);
 }
 
-function flushAccountsAndExit() {
-    if (accountsSaveTimer) {
-        clearTimeout(accountsSaveTimer);
-        accountsSaveTimer = null;
-    }
-    writeAccountsNow();
+async function flushAccountsAndExit() {
+    if (accountsSaveTimer) { clearTimeout(accountsSaveTimer); accountsSaveTimer = null; }
+    if (questionsSaveTimer) { clearTimeout(questionsSaveTimer); questionsSaveTimer = null; }
+    await writeAccountsNow();
+    await writeQuestionsNow();
     process.exit(0);
 }
 
@@ -237,6 +326,7 @@ function totalStats(stats) {
 
 /* Adds +1 to one stat of an ACCOUNT player. Skip players are ignored. */
 function recordStat(player, stat) {
+    trackMatchAction(player, stat);   // MVP system: counts for guests too
     if (!player || !player.account) return;
     if (!STAT_KEYS.includes(stat)) return;
 
@@ -1084,6 +1174,9 @@ function getOwnedTiers(user) {
 function grantGameRewards(room, winnerTest) {
     if (!room) return;
 
+    /* MVP + permanent profile statistics: once per completed match. */
+    finalizeMatch(room, winnerTest);
+
     room.players.forEach(player => {
         if (!player || !player.account || !player.role || player.connected === false) return;
 
@@ -1109,6 +1202,406 @@ function grantGameRewards(room, winnerTest) {
 }
 
 /* =========================================================
+   MVP SYSTEM + PERSISTENT PLAYER PROFILES
+   - Every player's performance is tracked during the match.
+   - When the match ends the SERVER scores everybody, picks the
+     PLAYER OF THE MATCH and sends the announcement to the room.
+   - The host has no way to change the result.
+   - Account players get permanent profile statistics, saved once
+     per completed match (same accounts.json file as everything else,
+     so keep DATA_DIR on a persistent disk on Render).
+   - Guests can be MVP for the match screen, but nothing is saved.
+========================================================= */
+
+const MVP_POINTS = {
+    kill: 3,          // successful kill
+    detect: 4,        // correct detective detection
+    save: 4,          // successful doctor save
+    win: 5,           // winning team / winning neutral
+    survive: 2,       // alive when the match ended
+    correctVote: 1,   // Civilian voted for a Mafia member (role-fair credit)
+    soloWin: 4        // extra credit for neutral roles that win alone (Jester, Executioner...)
+};
+
+/* Level XP for being the MVP. */
+XP_VALUES.mvp = 25;
+
+const NEUTRAL_ROLES = ["Jester", "Executioner", "Amnesiac"];
+const PROFILE_HISTORY_LIMIT = 25;
+const PROFILE_MATCH_ID_LIMIT = 80;
+
+function teamOfRole(role) {
+    if (isMafiaTeam(role)) return "mafia";
+    if (NEUTRAL_ROLES.includes(role)) return "neutral";
+    return "civilian";
+}
+
+function emptyTeamStats() {
+    return { games: 0, wins: 0, kills: 0, saves: 0, detects: 0 };
+}
+
+/* Persistent profile numbers. Kills / saves / detections totals keep coming from user.stats. */
+function ensureProfile(user) {
+    if (!user.profile || typeof user.profile !== "object") user.profile = {};
+    const p = user.profile;
+
+    p.games = Math.max(0, Math.floor(Number(p.games) || 0));
+    p.wins = Math.max(0, Math.floor(Number(p.wins) || 0));
+    p.mvps = Math.max(0, Math.floor(Number(p.mvps) || 0));
+    p.streak = Math.max(0, Math.floor(Number(p.streak) || 0));
+    p.bestStreak = Math.max(0, Math.floor(Number(p.bestStreak) || 0));
+    p.tutorialCompleted = Boolean(p.tutorialCompleted);
+
+    if (!p.teams || typeof p.teams !== "object") p.teams = {};
+    ["mafia", "civilian", "neutral"].forEach(team => {
+        p.teams[team] = { ...emptyTeamStats(), ...(p.teams[team] || {}) };
+    });
+
+    if (!p.roles || typeof p.roles !== "object") p.roles = {};
+    if (!Array.isArray(p.history)) p.history = [];
+    if (!Array.isArray(p.matchIds)) p.matchIds = [];
+
+    return p;
+}
+
+/* Called from recordStat(): counts the action for the CURRENT match (guests too). */
+function trackMatchAction(player, stat) {
+    if (!player || !player.matchPerf) return;
+
+    const keys = { kills: "kills", saves: "saves", detects: "detects", civilianVotes: "votes" };
+    const key = keys[stat];
+    if (key) player.matchPerf[key] += 1;
+}
+
+/* Called once when a brand-new game starts (after roles are assigned). */
+function beginMatchTracking(room) {
+    room.match = {
+        id: crypto.randomBytes(8).toString("hex"),
+        startedAt: Date.now(),
+        finalized: false
+    };
+
+    room.players.forEach(player => {
+        if (!player) return;
+        player.matchPerf = { kills: 0, saves: 0, detects: 0, votes: 0, startRole: player.role || null };
+    });
+}
+
+/* Role-aware score. Every role has something it can earn. */
+function scoreMatchPlayer(player, won, alive) {
+    const perf = player.matchPerf || { kills: 0, saves: 0, detects: 0, votes: 0 };
+    const breakdown = [];
+    const add = (label, count, each) => {
+        if (count > 0) breakdown.push({ label, count, points: count * each });
+    };
+
+    add("Successful kills", perf.kills, MVP_POINTS.kill);
+    add("Correct detections", perf.detects, MVP_POINTS.detect);
+    add("Doctor saves", perf.saves, MVP_POINTS.save);
+    add("Correct votes", perf.votes, MVP_POINTS.correctVote);
+
+    if (won) {
+        add("Winning team", 1, MVP_POINTS.win);
+        if (teamOfRole(perf.startRole || player.role) === "neutral") add("Won the solo objective", 1, MVP_POINTS.soloWin);
+    }
+
+    if (alive) add("Survived until the end", 1, MVP_POINTS.survive);
+
+    return {
+        score: breakdown.reduce((sum, row) => sum + row.points, 0),
+        breakdown
+    };
+}
+
+/* Same result for everybody: only a hash of the match id + player decides a perfect tie. */
+function mvpTieKey(matchId, player) {
+    return crypto
+        .createHash("sha256")
+        .update(String(matchId) + ":" + String(player.account || player.name || player.id))
+        .digest("hex");
+}
+
+/*
+   Runs ONCE per completed match (guarded by room.match.finalized):
+   1. scores every player
+   2. picks the MVP (score > won > actions > survived > hash tie-break)
+   3. saves permanent profile stats for account players (no duplicates)
+   4. sends the PLAYER OF THE MATCH announcement to the room
+*/
+function finalizeMatch(room, winnerTest) {
+    try {
+        if (!room || !room.match || room.match.finalized) return;
+        room.match.finalized = true;
+
+        const matchId = room.match.id;
+        const contenders = [];
+
+        room.players.forEach(player => {
+            if (!player || !player.role || !player.matchPerf) return;
+
+            const won = Boolean(winnerTest && winnerTest(player));
+            const alive = Boolean(player.alive);
+            const result = scoreMatchPlayer(player, won, alive);
+            const perf = player.matchPerf;
+
+            contenders.push({
+                player,
+                won,
+                alive,
+                score: result.score,
+                breakdown: result.breakdown,
+                actions: perf.kills + perf.saves + perf.detects + perf.votes,
+                tie: mvpTieKey(matchId, player)
+            });
+        });
+
+        if (!contenders.length) return;
+
+        contenders.sort((a, b) =>
+            b.score - a.score ||
+            Number(b.won) - Number(a.won) ||
+            b.actions - a.actions ||
+            Number(b.alive) - Number(a.alive) ||
+            (a.tie < b.tie ? -1 : a.tie > b.tie ? 1 : 0)
+        );
+
+        const mvp = contenders[0];
+
+        /* ----- permanent account statistics (once per match, never twice) ----- */
+        contenders.forEach(entry => {
+            const user = entry.player.account ? accountsDb.users[entry.player.account] : null;
+            if (!user) return;
+
+            const profile = ensureProfile(user);
+            if (profile.matchIds.includes(matchId)) return;
+
+            const perf = entry.player.matchPerf;
+            const startRole = perf.startRole || entry.player.role;
+            const team = teamOfRole(startRole);
+            const isMvp = entry === mvp;
+
+            profile.matchIds.push(matchId);
+            if (profile.matchIds.length > PROFILE_MATCH_ID_LIMIT) {
+                profile.matchIds.splice(0, profile.matchIds.length - PROFILE_MATCH_ID_LIMIT);
+            }
+
+            profile.games += 1;
+            if (entry.won) {
+                profile.wins += 1;
+                profile.streak += 1;
+                profile.bestStreak = Math.max(profile.bestStreak, profile.streak);
+            } else {
+                profile.streak = 0;
+            }
+
+            const teamStats = profile.teams[team];
+            teamStats.games += 1;
+            if (entry.won) teamStats.wins += 1;
+            teamStats.kills += perf.kills;
+            teamStats.saves += perf.saves;
+            teamStats.detects += perf.detects;
+
+            const roleStats = profile.roles[startRole] || { games: 0, wins: 0, mvps: 0, kills: 0, saves: 0, detects: 0 };
+            roleStats.games += 1;
+            if (entry.won) roleStats.wins += 1;
+            if (isMvp) roleStats.mvps += 1;
+            roleStats.kills += perf.kills;
+            roleStats.saves += perf.saves;
+            roleStats.detects += perf.detects;
+            profile.roles[startRole] = roleStats;
+
+            if (isMvp) {
+                profile.mvps += 1;
+                awardXp(user, "mvp");
+            }
+
+            profile.history.unshift({
+                id: matchId,
+                t: Date.now(),
+                role: startRole,
+                team,
+                won: entry.won,
+                alive: entry.alive,
+                mvp: isMvp,
+                score: entry.score,
+                kills: perf.kills,
+                saves: perf.saves,
+                detects: perf.detects,
+                players: contenders.length,
+                startedAt: Number(room.match.startedAt) || null,
+                endedAt: Date.now(),
+                durationMs: Math.max(0, Date.now() - (Number(room.match.startedAt) || Date.now())),
+                participants: contenders.map(item => ({
+                    name: item.player.account && accountsDb.users[item.player.account]
+                        ? getDisplayName(accountsDb.users[item.player.account])
+                        : String(item.player.name || "Player"),
+                    role: String(item.player.matchPerf?.startRole || item.player.role || "Unknown"),
+                    won: Boolean(item.won),
+                    mvp: item === mvp
+                })),
+                timeline: [
+                    ...(Array.isArray(room.replay) ? room.replay.slice(-299).map(event => ({
+                        night: Number(event.night) || 1,
+                        phase: event.phase === "day" ? "day" : "night",
+                        kind: String(event.kind || "info").slice(0, 24),
+                        text: String(event.text || "").slice(0, 240)
+                    })) : []),
+                    {
+                        night: Number(room.nightNumber) || 1,
+                        phase: room.phase === "day" ? "day" : "night",
+                        kind: "win",
+                        text: "Match completed. Winning players: " + contenders.filter(item => item.won).map(item => item.player.name).join(", ")
+                    }
+                ]
+            });
+            if (profile.history.length > PROFILE_HISTORY_LIMIT) profile.history.length = PROFILE_HISTORY_LIMIT;
+        });
+
+        saveAccounts();
+
+        /* ----- the announcement ----- */
+        const mvpUser = mvp.player.account ? accountsDb.users[mvp.player.account] : null;
+        const payload = {
+            matchId,
+            name: mvpUser ? getDisplayName(mvpUser) : mvp.player.name,
+            guest: !mvpUser,
+            playerId: mvp.player.id,
+            look: getLookOfPlayer(mvp.player),
+            tier: mvpUser ? getEquippedTierKey(mvpUser) : null,
+            badge: mvpUser ? (mvpUser.badge || "member") : null,
+            role: mvp.player.role,
+            team: teamOfRole(mvp.player.matchPerf.startRole || mvp.player.role),
+            won: mvp.won,
+            alive: mvp.alive,
+            score: mvp.score,
+            breakdown: mvp.breakdown,
+            stats: {
+                kills: mvp.player.matchPerf.kills,
+                saves: mvp.player.matchPerf.saves,
+                detects: mvp.player.matchPerf.detects,
+                votes: mvp.player.matchPerf.votes
+            },
+            mvpCount: mvpUser ? ensureProfile(mvpUser).mvps : null,
+            runnersUp: contenders.slice(1, 4).map(entry => ({
+                name: entry.player.account && accountsDb.users[entry.player.account]
+                    ? getDisplayName(accountsDb.users[entry.player.account])
+                    : entry.player.name,
+                score: entry.score
+            }))
+        };
+
+        /* A moment after the victory screen appears. */
+        setTimeout(() => {
+            room.players.forEach(player => {
+                if (player && player.connected !== false && player.id) {
+                    io.to(player.id).emit("mvpResult", { ...payload, you: player === mvp.player });
+                }
+            });
+        }, 1500);
+    } catch (error) {
+        console.error("MVP / profile update failed:", error);
+    }
+}
+
+const PROFILE_ACHIEVEMENTS = [
+    { id: "first_blood",  icon: "🔪", name: "First Blood",        desc: "Eliminate your first player",                 test: c => c.kills >= 1 },
+    { id: "hitman",       icon: "💀", name: "Hitman",             desc: "25 total kills",                              test: c => c.kills >= 25 },
+    { id: "guardian",     icon: "🛡️", name: "Guardian Angel",     desc: "10 successful saves",                         test: c => c.saves >= 10 },
+    { id: "sherlock",     icon: "🔎", name: "Sherlock",           desc: "10 correct detections",                       test: c => c.detects >= 10 },
+    { id: "first_win",    icon: "🏆", name: "First Victory",      desc: "Win a match",                                 test: c => c.wins >= 1 },
+    { id: "veteran",      icon: "🎖️", name: "Veteran",            desc: "Play 50 matches",                             test: c => c.games >= 50 },
+    { id: "streak3",      icon: "🔥", name: "On Fire",            desc: "Win 3 matches in a row",                      test: c => c.bestStreak >= 3 },
+    { id: "streak5",      icon: "⚡", name: "Unstoppable",        desc: "Win 5 matches in a row",                      test: c => c.bestStreak >= 5 },
+    { id: "mvp1",         icon: "⭐", name: "Player of the Match", desc: "Earn your first MVP award",                  test: c => c.mvps >= 1 },
+    { id: "mvp10",        icon: "👑", name: "MVP Legend",         desc: "Earn 10 MVP awards",                          test: c => c.mvps >= 10 },
+    { id: "triple",       icon: "🎭", name: "Triple Threat",      desc: "Play on the Mafia, Civilian and Neutral teams", test: c => c.teams.mafia.games > 0 && c.teams.civilian.games > 0 && c.teams.neutral.games > 0 },
+    { id: "level10",      icon: "🌟", name: "Rising Star",        desc: "Reach level 10",                              test: c => c.level >= 10 }
+];
+
+/* Public profile of one ACCOUNT (never includes passwords, PIN, shop points or owned items). */
+function buildFullProfile(user) {
+    const profile = ensureProfile(user);
+    const stats = { ...emptyStats(), ...(user.stats || {}) };
+    const info = levelInfo(ensureProgress(user).xp);
+
+    const favourite = Object.entries(profile.roles)
+        .sort((a, b) => (b[1].games - a[1].games) || a[0].localeCompare(b[0]))[0];
+
+    const context = {
+        kills: Number(stats.kills) || 0,
+        saves: Number(stats.saves) || 0,
+        detects: Number(stats.detects) || 0,
+        wins: profile.wins,
+        games: profile.games,
+        bestStreak: profile.bestStreak,
+        mvps: profile.mvps,
+        teams: profile.teams,
+        level: info.level
+    };
+
+    return {
+        ok: true,
+        username: user.username,
+        displayName: getDisplayName(user),
+        badge: user.badge || "member",
+        tier: getEquippedTierKey(user),
+        look: getLookOfUser(user),
+        memberSince: Number(user.created) || null,
+        level: info.level,
+        xpIntoLevel: info.xpIntoLevel,
+        xpNeeded: info.xpNeeded,
+        rankPoints: totalStats(user.stats),
+        totals: {
+            games: profile.games,
+            wins: profile.wins,
+            winRate: profile.games ? Math.round((profile.wins / profile.games) * 1000) / 10 : 0,
+            kills: context.kills,
+            saves: context.saves,
+            detects: context.detects,
+            favouriteRole: favourite ? favourite[0] : null,
+            bestStreak: profile.bestStreak,
+            currentStreak: profile.streak,
+            mvps: profile.mvps
+        },
+        teams: ["mafia", "civilian", "neutral"].map(team => {
+            const t = profile.teams[team];
+            return {
+                team,
+                games: t.games,
+                wins: t.wins,
+                winRate: t.games ? Math.round((t.wins / t.games) * 1000) / 10 : 0,
+                kills: t.kills,
+                saves: t.saves,
+                detects: t.detects
+            };
+        }),
+        roles: Object.entries(profile.roles)
+            .map(([role, r]) => ({
+                role,
+                games: r.games,
+                wins: r.wins,
+                mvps: r.mvps || 0,
+                winRate: r.games ? Math.round((r.wins / r.games) * 1000) / 10 : 0
+            }))
+            .sort((a, b) => b.games - a.games || a.role.localeCompare(b.role))
+            .slice(0, 12),
+        history: profile.history.slice(0, 15).map(item => ({
+            id: item.id, t: item.t, role: item.role, team: item.team, won: item.won,
+            alive: item.alive, mvp: item.mvp, score: item.score, kills: item.kills,
+            saves: item.saves, detects: item.detects, players: item.players,
+            hasTimeline: Array.isArray(item.timeline) && item.timeline.length > 0
+        })),
+        achievements: PROFILE_ACHIEVEMENTS.map(a => ({
+            id: a.id,
+            icon: a.icon,
+            name: a.name,
+            desc: a.desc,
+            unlocked: Boolean(a.test(context))
+        }))
+    };
+}
+
+/* =========================================================
    PUBLIC MATCHMAKING
 ========================================================= */
 
@@ -1126,6 +1619,7 @@ function getPublicMatches() {
             return {
                 roomCode,
                 playerCount: connectedPlayers.length,
+                maxPlayers: getRoomMaxPlayers(room),
                 hostName: connectedPlayers.find(player => player.id === room.host)?.name || connectedPlayers[0]?.name || "Host",
                 hostBadge: getBadgeOf(connectedPlayers.find(player => player.id === room.host)?.id || connectedPlayers[0]?.id),
                 hostTier: getTierOfPlayer(connectedPlayers.find(player => player.id === room.host) || connectedPlayers[0])
@@ -1170,7 +1664,19 @@ function startPhaseTimer(roomCode) {
     if (!room || (room.phase !== "night" && room.phase !== "day")) return;
 
     clearPhaseTimer(room);
-    room.phaseEndsAt = Date.now() + PHASE_TIME_LIMIT;
+
+    // Day = discussion time (chat only) + voting time. Both are set by the host.
+    // Night phases keep the old fixed limit (night turns have their own timer).
+    let phaseLimit = PHASE_TIME_LIMIT;
+    room.votingOpensAt = null;
+
+    if (room.phase === "day") {
+        const t = getRoomTimers(room);
+        phaseLimit = (t.discussion + t.voting) * 1000;
+        room.votingOpensAt = t.discussion > 0 ? Date.now() + t.discussion * 1000 : null;
+    }
+
+    room.phaseEndsAt = Date.now() + phaseLimit;
 
     room.phaseTimer = setTimeout(() => {
         const currentRoom = rooms[roomCode];
@@ -1179,13 +1685,13 @@ function startPhaseTimer(roomCode) {
         currentRoom.phaseTimer = null;
 
         if (currentRoom.phase === "night") {
-            announce(roomCode, "⏰ 2 minutes are over. Night is ending even if someone did not choose an action.", "info");
+            announce(roomCode, "⏰ Time is over. Night is ending even if someone did not choose an action.", "info");
             endNight(roomCode);
         } else if (currentRoom.phase === "day") {
-            announce(roomCode, "⏰ 2 minutes are over. Voting is ending even if someone did not vote.", "info");
+            announce(roomCode, "⏰ Time is over. Voting is ending even if someone did not vote.", "info");
             endVoting(roomCode);
         }
-    }, PHASE_TIME_LIMIT);
+    }, phaseLimit);
 }
 
 
@@ -1410,11 +1916,13 @@ function startNightTurn(roomCode, requestedIndex = 0) {
     // (dead Doctor/Detective) turn simply ends early at a random moment,
     // exactly like a living player who finished quickly.
     room.hiddenNightTurn = !hasLivingRoleForTurn(room, room.nightTurn);
-    room.nightTurnEndsAt = Date.now() + NIGHT_TURN_TIME_LIMIT;
+    const turnDisplayMs = nightTurnDurationMs(room, room.nightTurn);
+
+    room.nightTurnEndsAt = Date.now() + turnDisplayMs;
 
     const turnLengthMs = room.hiddenNightTurn
-        ? randomHiddenTurnMs()
-        : NIGHT_TURN_TIME_LIMIT;
+        ? randomHiddenTurnMs(turnDisplayMs)
+        : turnDisplayMs;
 
     room.nightTurnTimer = setTimeout(() => {
         const currentRoom = rooms[roomCode];
@@ -1672,7 +2180,7 @@ function assignRoles(players, settings) {
         roles.push("Civilian");
     }
 
-    shuffle(roles);
+    shuffleRolesFairly(roles, players);
 
     players.forEach((player, index) => {
 
@@ -1804,6 +2312,12 @@ function emitLobby(roomCode) {
 
             soundboardPlayerIds:
                 getSoundboardPlayerIds(room),
+
+            maxPlayers:
+                getRoomMaxPlayers(room),
+
+            timers:
+                getRoomTimers(room),
 
             roomCode
         }
@@ -2128,6 +2642,15 @@ function sendGameInformation(roomCode) {
 
                 soundboardPlayerIds:
                     getSoundboardPlayerIds(room),
+
+                maxPlayers:
+                    getRoomMaxPlayers(room),
+
+                timers:
+                    getRoomTimers(room),
+
+                votingOpensAt:
+                    room.votingOpensAt || null,
 
                 stats:
                     room.stats || {
@@ -3636,7 +4159,7 @@ if (!questionsDb.length) {
 
 let questionsSaveTimer = null;
 
-function writeQuestionsNow() {
+function writeQuestionsFile() {
     try {
         const tempFile = QUESTIONS_FILE + ".tmp";
         fs.writeFileSync(tempFile, JSON.stringify(questionsDb));
@@ -3645,6 +4168,8 @@ function writeQuestionsNow() {
         console.error("Could not save questions file:", error);
     }
 }
+
+const writeQuestionsNow = makeDbSaver("questions", () => questionsDb, writeQuestionsFile);
 
 function saveQuestions() {
     if (questionsSaveTimer) return;
@@ -3963,6 +4488,10 @@ io.on(
 
                 socket.data.authFails = 0;
 
+                if (user.banned) {
+                    return socket.emit("authResult", { ok: false, error: "This account is banned." });
+                }
+
                 // Both credentials are known right now, so (re)build the two "show" secrets.
                 let changed = false;
 
@@ -4080,7 +4609,8 @@ io.on(
                     username: user.username,
                     displayName: getDisplayName(user),
                     created: user.created || 0,
-                    createdByOwner: user.createdBy === "owner"
+                    createdByOwner: user.createdBy === "owner",
+                    banned: Boolean(user.banned)
                 }))
                 .sort((a, b) => b.created - a.created || a.username.localeCompare(b.username));
 
@@ -4528,7 +5058,7 @@ io.on(
             const token = String(data?.token || "");
             const key = accountSessions.get(token);
 
-            if (!key || !accountsDb.users[key]) {
+            if (!key || !accountsDb.users[key] || accountsDb.users[key].banned) {
                 return socket.emit("authResult", {
                     ok: false,
                     resume: true,
@@ -4564,6 +5094,69 @@ io.on(
             const token = String(data?.token || "");
             if (token) accountSessions.delete(token);
             socketAccounts.delete(socket.id);
+        });
+
+        /* Tutorial completion is stored inside the existing account record (and therefore Neon kv_store). */
+        socket.on("getTutorialState", () => {
+            const key = getSocketAccountKey(socket);
+            const user = key ? accountsDb.users[key] : null;
+            socket.emit("tutorialState", { completed: user ? Boolean(ensureProfile(user).tutorialCompleted) : false, registered: Boolean(user) });
+        });
+
+        socket.on("saveTutorialState", (data, callback) => {
+            const key = getSocketAccountKey(socket);
+            const user = key ? accountsDb.users[key] : null;
+            if (user) {
+                ensureProfile(user).tutorialCompleted = Boolean(data?.completed);
+                saveAccounts();
+            }
+            if (typeof callback === "function") callback({ ok: true, saved: Boolean(user) });
+        });
+
+        /* A player may inspect only match timelines included in their own saved profile history. */
+        socket.on("getMatchTimeline", data => {
+            const key = getSocketAccountKey(socket);
+            const user = key ? accountsDb.users[key] : null;
+            const matchId = String(data?.matchId || "").slice(0, 80);
+            if (!user || !matchId) return socket.emit("matchTimelineData", { ok: false, error: "Sign in to view saved match timelines." });
+            const entry = ensureProfile(user).history.find(item => item.id === matchId);
+            if (!entry) return socket.emit("matchTimelineData", { ok: false, error: "That match is not in your history." });
+            socket.emit("matchTimelineData", { ok: true, match: entry });
+        });
+
+        /* Full statistics profile of one ACCOUNT (public: opened by clicking a username). */
+        socket.on("getFullProfile", data => {
+            const now = Date.now();
+            if (now - (socket.data.fullProfileAt || 0) < 200) return;
+            socket.data.fullProfileAt = now;
+
+            let user = null;
+            let hideLogin = false;
+
+            if (data?.playerId) {
+                /* From a room: the login name stays private, we find the account on the server. */
+                const code = findRoomCodeBySocket(socket.id);
+                const room = code ? rooms[code] : null;
+                const target = room
+                    ? room.players.find(p => p.id === String(data.playerId))
+                    : null;
+                user = target && target.account ? accountsDb.users[target.account] : null;
+                hideLogin = true;
+            } else {
+                const key = String(data?.username || "").trim().toLowerCase();
+                user = accountsDb.users[key];
+            }
+
+            if (!user) {
+                return socket.emit("fullProfileData", { ok: false });
+            }
+
+            const profile = buildFullProfile(user);
+            const viewerKey = getSocketAccountKey(socket);
+            profile.canViewTimeline = Boolean(viewerKey && accountsDb.users[viewerKey] === user);
+            if (hideLogin) delete profile.username;
+
+            socket.emit("fullProfileData", profile);
         });
 
         socket.on("getRanks", () => {
@@ -4652,6 +5245,7 @@ io.on(
                     .filter(level => level <= info.level)
                     .map(level => ({ level, icon: LEVEL_REWARDS[level].icon, name: LEVEL_REWARDS[level].name })),
                 memberSince: Number(user.created) || null,
+                mvps: ensureProfile(user).mvps,
                 stats: {
                     kills: Number(stats.kills) || 0,
                     saves: Number(stats.saves) || 0,
@@ -5742,6 +6336,11 @@ io.on(
                     // in the morning announcement.
                     detectiveCheckAnnounce: true,
 
+                    // Host options: room size, timers (seconds) and banned players.
+                    maxPlayers: DEFAULT_MAX_PLAYERS,
+                    timers: { ...DEFAULT_TIMERS },
+                    banned: { accounts: [], names: [], ips: [] },
+
                     hiddenNightTurn: false,
                     nightEndTimer: null,
 
@@ -5914,6 +6513,20 @@ io.on(
                     );
                 }
 
+                if (isBannedFromRoom(room, socket, playerName)) {
+                    return socket.emit(
+                        "joinError",
+                        "You were banned from this room by the host."
+                    );
+                }
+
+                if (room.players.filter(p => p.connected !== false).length >= getRoomMaxPlayers(room)) {
+                    return socket.emit(
+                        "joinError",
+                        "This room is full."
+                    );
+                }
+
                 room.players.push(
                     {
                         id:
@@ -5990,6 +6603,13 @@ io.on(
                 return socket.emit(
                     "rejoinError",
                     "No disconnected player with that name was found in this room."
+                );
+            }
+
+            if (oldPlayer.kicked || isBannedFromRoom(room, socket, playerName)) {
+                return socket.emit(
+                    "rejoinError",
+                    "You were removed from this room by the host."
                 );
             }
 
@@ -6421,6 +7041,9 @@ assignRoles(
 
 setupRoleExtras(room);
 
+/* MVP system: start tracking this match. */
+beginMatchTracking(room);
+
                 emitPublicMatches();
 
                 announce(
@@ -6518,7 +7141,7 @@ setupRoleExtras(room);
                 socket.emit(
                     "nightActionPopup",
                     {
-                        kind: "mafia",
+                        kind: isNightBlocked(room, socket.id) ? "blocked" : "mafia",
                         targetName: target.name
                     }
                 );
@@ -6621,9 +7244,9 @@ setupRoleExtras(room);
                 ] =
                     target.id;
 
-                socket.emit(
-                    "grandmafiaSpecialDone"
-                );
+                socket.emit("nightActionPopup", { kind: "grandmafia", targetName: target.name });
+
+                socket.emit("grandmafiaSpecialDone");
 
                 checkNightActions(
                     data.roomCode
@@ -6847,10 +7470,11 @@ setupRoleExtras(room);
 
                 if (isNightBlocked(room, socket.id)) {
                     room.nightActions.doctor[socket.id] = NIGHT_BLOCKED;
+                    socket.emit("nightActionPopup", { kind: "blocked" });
                     socket.emit("extraActionDone", {
                         role: "Doctor",
                         blocked: true,
-                        message: "🚫 You were blocked tonight! Your action did nothing."
+                        message: "🚫 Your ability has been blocked!"
                     });
                     checkNightActions(data.roomCode);
                     return;
@@ -6949,10 +7573,11 @@ setupRoleExtras(room);
 
                 if (isNightBlocked(room, socket.id)) {
                     room.nightActions.detective[socket.id] = NIGHT_BLOCKED;
+                    socket.emit("nightActionPopup", { kind: "blocked" });
                     socket.emit("extraActionDone", {
                         role: "Detective",
                         blocked: true,
-                        message: "🚫 You were blocked tonight! Your action did nothing."
+                        message: "🚫 Your ability has been blocked!"
                     });
                     checkNightActions(data.roomCode);
                     return;
@@ -7076,6 +7701,15 @@ setupRoleExtras(room);
                     return socket.emit(
                         "actionError",
                         "You already voted!"
+                    );
+                }
+
+                // Discussion time: everybody talks first, voting opens afterwards.
+                if (room.votingOpensAt && Date.now() < room.votingOpensAt) {
+                    const wait = Math.ceil((room.votingOpensAt - Date.now()) / 1000);
+                    return socket.emit(
+                        "actionError",
+                        `Discussion time! Voting opens in ${wait} second${wait === 1 ? "" : "s"}.`
                     );
                 }
 
@@ -7550,7 +8184,10 @@ const EXTRA_TURN_ROLE = {
 const NIGHT_SKIPPED = "__skip__";
 const NIGHT_BLOCKED = "__blocked__";
 const VIGILANTE_MAX_INNOCENT_KILLS = 2;
-const EMOTE_LIST = ["👍", "👎", "😂", "😡", "🤔", "😱", "🔥", "🤝"];
+const EMOTE_LIST = [
+    "👍", "👎", "😂", "😡", "🤔", "😱", "🔥", "🤝", "😭", "😎",
+    "🤡", "💀", "👀", "🙏", "❤️", "🤫", "😈", "🕵️", "🔪", "🏆"
+];
 const EMOTE_COOLDOWN_MS = 1200;
 const LAST_WORDS_MAX = 140;
 const DEAD_CHAT_MAX = 200;
@@ -7661,6 +8298,82 @@ function replayDayVotes(room) {
     });
 }
 
+/* ---------- Night turn length: 20 seconds per acting player ---------- */
+
+const NIGHT_TURN_BASE_MS = 20 * 1000;
+const NIGHT_TURN_MAX_MS = 60 * 1000;
+
+function nightTurnActorCount(room, turn) {
+    const roleByTurn = { doctor: "Doctor", detective: "Detective", cupid: "Cupid", ...EXTRA_TURN_ROLE };
+
+    const living = room.players.filter(p => p.alive && p.connected !== false);
+
+    let count;
+
+    if (turn === "mafia") {
+        count = living.filter(p => isMafiaTeam(p.role)).length;
+    } else {
+        count = living.filter(p => p.role === roleByTurn[turn]).length;
+
+        // A hidden turn (the role is dead) must look exactly like a living one.
+        if (!count) count = room.players.filter(p => p.role === roleByTurn[turn]).length;
+    }
+
+    return Math.max(1, count);
+}
+
+// 1 player = 20 seconds, 2 players = 40 seconds, 3 or more = 60 seconds.
+function nightTurnDurationMs(room, turn) {
+    // Every night turn lasts the same time (default 30 seconds, host can change it in the lobby),
+    // no matter how many players have that role.
+    return getRoomTimers(room).turn * 1000;
+}
+
+randomHiddenTurnMs = function (limit) {
+    const max = Math.max(5000, Number(limit) || NIGHT_TURN_BASE_MS);
+
+    // Sometimes run the full length, like a living player who is slow.
+    if (Math.random() < 0.15) return max;
+
+    return Math.round(4000 + Math.random() * (max - 4000 - 1000));
+};
+
+/* ---------- Much more random roles ---------- */
+
+shuffle = function (array) {
+    // Cryptographic random numbers, three full passes.
+    for (let pass = 0; pass < 3; pass++) {
+        for (let i = array.length - 1; i > 0; i--) {
+            const j = crypto.randomInt(0, i + 1);
+            [array[i], array[j]] = [array[j], array[i]];
+        }
+    }
+
+    return array;
+};
+
+// Nobody gets the same special role twice in a row if it can be avoided.
+function shuffleRolesFairly(roles, players) {
+    let best = null;
+    let bestRepeats = Infinity;
+
+    for (let attempt = 0; attempt < 40; attempt++) {
+        shuffle(roles);
+
+        const repeats = players.reduce((n, p, i) =>
+            n + (p.lastGameRole && p.lastGameRole !== "Civilian" && roles[i] === p.lastGameRole ? 1 : 0), 0);
+
+        if (repeats < bestRepeats) {
+            bestRepeats = repeats;
+            best = roles.slice();
+            if (!repeats) break;
+        }
+    }
+
+    best.forEach((r, i) => { roles[i] = r; });
+    return roles;
+}
+
 /* ---------- Per-game setup / reset ---------- */
 
 function clearRoleExtras(room) {
@@ -7705,6 +8418,8 @@ function setupRoleExtras(room) {
     clearRoleExtras(room);
 
     replayLog(room, "🎬 The game started.", "info");
+
+    room.players.forEach(p => { p.lastGameRole = p.role; });
 
     room.players
         .filter(p => p.role === "Executioner")
@@ -7852,6 +8567,7 @@ function buildExtraInfo(room, player) {
     return {
         execTarget: player.role === "Executioner" && target ? target.name : null,
         will: player.will || "",
+        execTargetId: player.role === "Executioner" && target ? target.id : null,
         vigilanteInnocent:
             player.role === "Vigilante"
                 ? (room.vigilanteInnocent && room.vigilanteInnocent[player.id]) || 0
@@ -7894,6 +8610,7 @@ function resolveVigilantes(room, protectedPlayers) {
         if (!dead.length) return;
 
         dead.forEach(p => out.push(p));
+        trackMatchAction(vigilante, "kills");
 
         room.nightNotes.push("🔫 Someone was shot during the night.");
         replayLog(
@@ -7965,23 +8682,7 @@ function afterEliminations(room, eliminated) {
             "death"
         );
 
-        // Last words (the player's will) are revealed to everyone.
-        if (dead.will) {
-            const message = String(dead.will).slice(0, LAST_WORDS_MAX);
-
-            io.to(room.code || findRoomCodeOfRoom(room)).emit("lastWords", {
-                playerName: dead.name,
-                message
-            });
-
-            announce(
-                findRoomCodeOfRoom(room),
-                `📜 ${dead.name}'s last words: "${message}"`,
-                "info"
-            );
-
-            dead.will = "";
-        }
+        startLastWords(room, dead);
     });
 
     // Executioner: the target was voted out by the town -> the Executioner wins.
@@ -8022,8 +8723,9 @@ function afterEliminations(room, eliminated) {
                 amnesiac.role = first.role;
 
                 io.to(amnesiac.id).emit("roleChanged", { role: amnesiac.role });
-                io.to(amnesiac.id).emit("extraNotice", {
-                    message: `🧠 You remembered who you were... You are now the ${amnesiac.role}!`
+                io.to(amnesiac.id).emit("amnesiacStole", {
+                    fromName: first.name,
+                    role: amnesiac.role
                 });
 
                 replayLog(room, `🧠 Amnesiac ${amnesiac.name} became ${amnesiac.role}`, "amnesiac");
@@ -8033,6 +8735,23 @@ function afterEliminations(room, eliminated) {
                 }
             });
     }
+}
+
+const LAST_WORDS_SECONDS = 20;
+
+function startLastWords(room, dead) {
+    dead.lastWordsUntil = Date.now() + LAST_WORDS_SECONDS * 1000;
+    dead.lastWordsUsed = false;
+
+    io.to(dead.id).emit("lastWordsPrompt", {
+        seconds: LAST_WORDS_SECONDS,
+        endsAt: dead.lastWordsUntil
+    });
+
+    setTimeout(() => {
+        if (!dead.lastWordsUsed) io.to(dead.id).emit("lastWordsClosed", {});
+        dead.lastWordsUntil = 0;
+    }, LAST_WORDS_SECONDS * 1000 + 300);
 }
 
 function findRoomCodeOfRoom(room) {
@@ -8069,6 +8788,12 @@ function isSheriffSuspicious(room, target) {
     // Unlike the Detective, the Sheriff also finds chaotic neutral players.
     return ["Jester", "Executioner"].includes(target.role);
 }
+
+const publicChatLog = [];
+const pendingJoinRequests = new Map();   // requester socket id -> { hostId, roomCode }
+const CHAT_TEXT_MAX = 200;
+const CHAT_HISTORY_MAX = 80;
+const GROUP_MEMBERS_MAX = 10;
 
 /* =========================================================
    SOCKET EVENTS FOR THE NEW ROLES AND FEATURES
@@ -8123,10 +8848,11 @@ io.on("connection", socket => {
         // The Escort blocked this player earlier tonight.
         if (isNightBlocked(room, socket.id)) {
             actions[socket.id] = NIGHT_BLOCKED;
+            socket.emit("nightActionPopup", { kind: "blocked" });
             socket.emit("extraActionDone", {
                 role: player.role,
                 blocked: true,
-                message: "🚫 You were blocked tonight! Your action did nothing."
+                message: "🚫 Your ability has been blocked!"
             });
             checkNightActions(roomCode);
             return;
@@ -8136,16 +8862,17 @@ io.on("connection", socket => {
 
         if (turn === "escort") {
             room.nightBlocked[target.id] = true;
-            io.to(target.id).emit("extraNotice", {
-                message: "🚫 Someone distracted you. You are blocked tonight!"
-            });
+            socket.emit("nightActionPopup", { kind: "escort", targetName: target.name });
             socket.emit("extraActionDone", { role: player.role, message: `🚧 You blocked ${target.name}.` });
         } else if (turn === "framer") {
             room.nightFramed[target.id] = true;
+            socket.emit("nightActionPopup", { kind: "framer", targetName: target.name });
             socket.emit("extraActionDone", { role: player.role, message: `🎭 You framed ${target.name}.` });
         } else if (turn === "bodyguard") {
+            socket.emit("nightActionPopup", { kind: "bodyguard", targetName: target.name });
             socket.emit("extraActionDone", { role: player.role, message: `🛡️ You are guarding ${target.name}.` });
         } else if (turn === "vigilante") {
+            socket.emit("nightActionPopup", { kind: "vigilante", targetName: target.name });
             socket.emit("extraActionDone", { role: player.role, message: `🔫 You will shoot ${target.name} tonight.` });
         } else if (turn === "sheriff") {
             const suspicious = isSheriffSuspicious(room, target);
@@ -8217,7 +8944,42 @@ io.on("connection", socket => {
         socket.emit("deadChatHistory", room.deadChatLog || []);
     });
 
-    /* ---------- Last words (will) ---------- */
+    /* ---------- Last words: 20 seconds after you die ---------- */
+
+    socket.on("lastWordsSend", (data, callback) => {
+        const reply = typeof callback === "function" ? callback : () => {};
+        const code = String(data?.roomCode || "");
+        const room = rooms[code];
+
+        if (!room) return reply({ ok: false });
+
+        const player = room.players.find(p => p.id === socket.id);
+
+        if (
+            !player ||
+            player.alive ||
+            player.lastWordsUsed ||
+            !player.lastWordsUntil ||
+            Date.now() > player.lastWordsUntil
+        ) {
+            return reply({ ok: false, message: "Your time for last words is over." });
+        }
+
+        const message = String(data.message || "").replace(/\s+/g, " ").trim().slice(0, LAST_WORDS_MAX);
+
+        if (!message) return reply({ ok: false, message: "Write something first." });
+
+        player.lastWordsUsed = true;
+        player.lastWordsUntil = 0;
+
+        io.to(code).emit("lastWords", { playerName: player.name, message });
+        announce(code, `📜 ${player.name}'s last words: "${message}"`, "info");
+        replayLog(room, `📜 ${player.name}'s last words: "${message}"`, "info");
+
+        reply({ ok: true });
+    });
+
+    /* ---------- Old pre-written will (kept for older clients) ---------- */
 
     socket.on("setWill", (data, callback) => {
         const reply = typeof callback === "function" ? callback : () => {};
@@ -8348,17 +9110,43 @@ io.on("connection", socket => {
         return {
             username: user.username,
             displayName: getDisplayName(user),
+            convo: "dm:" + key,
             ...friendRoomInfo(key)
         };
+    }
+
+    function unreadOf(user) {
+        if (!user.chatUnread || typeof user.chatUnread !== "object") user.chatUnread = {};
+        return user.chatUnread;
+    }
+
+    function groupsOf(accountKey) {
+        const all = accountsDb.friendGroups || {};
+        return Object.values(all).filter(g => g.members.includes(accountKey));
     }
 
     function sendFriends(targetSocketId, accountKey) {
         const user = accountsDb.users[accountKey];
         if (!user) return;
 
+        const unread = unreadOf(user);
+        const friends = (user.friends || []).map(publicFriend).filter(Boolean);
+
+        const groups = groupsOf(accountKey).map(g => ({
+            id: g.id,
+            name: g.name,
+            convo: "grp:" + g.id,
+            members: g.members.map(k => accountsDb.users[k] ? getDisplayName(accountsDb.users[k]) : "?")
+        }));
+
+        const unreadTotal = Object.values(unread).reduce((sum, n) => sum + (Number(n) || 0), 0);
+
         io.to(targetSocketId).emit("friendsData", {
             ok: true,
-            friends: (user.friends || []).map(publicFriend).filter(Boolean),
+            friends,
+            groups,
+            unread,
+            unreadTotal,
             requests: (user.friendRequests || []).map(publicFriend).filter(Boolean)
         });
     }
@@ -8472,6 +9260,8 @@ io.on("connection", socket => {
         refreshFriendsOf(otherKey);
     });
 
+    /* ----- join a friend's room: the room owner must say yes ----- */
+
     socket.on("friendJoin", data => {
         const me = myAccount();
         if (!me) return notice("Sign in with an account to use friends.");
@@ -8496,7 +9286,341 @@ io.on("connection", socket => {
             return notice("You are already in that room.");
         }
 
-        socket.emit("friendJoinReady", { roomCode: info.roomCode });
+        const room = rooms[info.roomCode];
+        const hostSocket = room && io.of("/").sockets.get(room.host);
+
+        if (!room || !hostSocket) return notice("The room owner is not available.");
+
+        const existing = pendingJoinRequests.get(socket.id);
+        if (existing && existing.roomCode === info.roomCode) {
+            return notice("You already asked to join. Wait for the host to answer.");
+        }
+
+        pendingJoinRequests.set(socket.id, { hostId: room.host, roomCode: info.roomCode });
+
+        setTimeout(() => {
+            const current = pendingJoinRequests.get(socket.id);
+            if (current && current.roomCode === info.roomCode) {
+                pendingJoinRequests.delete(socket.id);
+                io.to(socket.id).emit("friendsNotice", { message: "⌛ The host did not answer your join request." });
+            }
+        }, 30000);
+
+        io.to(room.host).emit("friendJoinRequest", {
+            requesterId: socket.id,
+            name: getDisplayName(me.user),
+            roomCode: info.roomCode
+        });
+
+        notice("📨 Join request sent. Waiting for the host...");
+    });
+
+    socket.on("friendJoinRespond", data => {
+        const requesterId = String(data?.requesterId || "");
+        const request = pendingJoinRequests.get(requesterId);
+
+        if (!request || request.hostId !== socket.id) return;
+
+        pendingJoinRequests.delete(requesterId);
+
+        const room = rooms[request.roomCode];
+
+        if (!data.accept) {
+            io.to(requesterId).emit("friendsNotice", { message: "❌ The host declined your join request." });
+            return;
+        }
+
+        if (!room || room.host !== socket.id || room.gameStarted) {
+            io.to(requesterId).emit("friendsNotice", { message: "That room is no longer open." });
+            return;
+        }
+
+        io.to(requesterId).emit("friendJoinReady", { roomCode: request.roomCode });
+    });
+
+    /* ----- private chat between friends ----- */
+
+    function mapMessages(list, myKey) {
+        return (list || []).map(m => ({
+            mine: m.from === myKey,
+            name: accountsDb.users[m.from] ? getDisplayName(accountsDb.users[m.from]) : "?",
+            text: m.text,
+            time: m.time
+        }));
+    }
+
+    function cleanText(value) {
+        return String(value || "").replace(/\s+/g, " ").trim().slice(0, CHAT_TEXT_MAX);
+    }
+
+    function socketOf(id) {
+        return io.of("/").sockets.get(id);
+    }
+
+    function dmKey(a, b) {
+        return [a, b].sort().join("|");
+    }
+
+    socket.on("dmOpen", data => {
+        const me = myAccount();
+        if (!me) return;
+
+        const otherKey = accountKeyByName(data?.username);
+        if (!otherKey || !me.user.friends.includes(otherKey)) return;
+
+        socket._openConvo = "dm:" + otherKey;
+
+        const unread = unreadOf(me.user);
+        if (unread["dm:" + otherKey]) {
+            delete unread["dm:" + otherKey];
+            saveAccounts();
+        }
+
+        const list = (accountsDb.friendChats && accountsDb.friendChats[dmKey(me.key, otherKey)]) || [];
+
+        socket.emit("dmHistory", {
+            username: accountsDb.users[otherKey].username,
+            messages: mapMessages(list, me.key)
+        });
+
+        sendFriends(socket.id, me.key);
+    });
+
+    socket.on("dmSend", data => {
+        const me = myAccount();
+        if (!me) return;
+
+        const otherKey = accountKeyByName(data?.username);
+        if (!otherKey || !me.user.friends.includes(otherKey)) return;
+
+        const text = cleanText(data.text);
+        if (!text) return;
+
+        const now = Date.now();
+        if (socket._lastChatAt && now - socket._lastChatAt < 500) return;
+        socket._lastChatAt = now;
+
+        if (!accountsDb.friendChats) accountsDb.friendChats = {};
+
+        const key = dmKey(me.key, otherKey);
+        const list = accountsDb.friendChats[key] || (accountsDb.friendChats[key] = []);
+
+        list.push({ from: me.key, text, time: now });
+        while (list.length > CHAT_HISTORY_MAX) list.shift();
+
+        const other = accountsDb.users[otherKey];
+
+        const payload = (mine, withUser) => ({
+            scope: "dm",
+            with: withUser.username,
+            mine,
+            name: getDisplayName(me.user),
+            text,
+            time: now
+        });
+
+        onlineSocketIds(me.key).forEach(id => io.to(id).emit("chatMessage", payload(true, other)));
+
+        const recipients = onlineSocketIds(otherKey);
+        let seen = false;
+
+        recipients.forEach(id => {
+            const target = socketOf(id);
+
+            if (target && target._openConvo === "dm:" + me.key) {
+                seen = true;
+                io.to(id).emit("chatMessage", payload(false, me.user));
+            }
+        });
+
+        if (!seen) {
+            const unread = unreadOf(other);
+            unread["dm:" + me.key] = (unread["dm:" + me.key] || 0) + 1;
+
+            recipients.forEach(id => {
+                io.to(id).emit("chatNotify", { fromName: getDisplayName(me.user), text });
+            });
+
+            refreshFriendsOf(otherKey);
+        }
+
+        saveAccounts();
+    });
+
+    /* ----- group chats ----- */
+
+    socket.on("groupCreate", data => {
+        const me = myAccount();
+        if (!me) return notice("Sign in with an account to use groups.");
+
+        const name = cleanText(data?.name).slice(0, 24);
+        if (!name) return notice("Give your group a name.");
+
+        const keys = [];
+
+        (Array.isArray(data?.usernames) ? data.usernames : []).forEach(u => {
+            const k = accountKeyByName(u);
+            if (k && me.user.friends.includes(k) && !keys.includes(k)) keys.push(k);
+        });
+
+        if (!keys.length) return notice("Pick at least one friend for the group.");
+
+        const members = [me.key, ...keys].slice(0, GROUP_MEMBERS_MAX);
+
+        if (!accountsDb.friendGroups) accountsDb.friendGroups = {};
+
+        const id = Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-3);
+
+        accountsDb.friendGroups[id] = { id, name, owner: me.key, members, messages: [] };
+        saveAccounts();
+
+        members.forEach(k => {
+            if (k !== me.key) {
+                onlineSocketIds(k).forEach(sid => io.to(sid).emit("friendsNotice", {
+                    message: `👥 ${getDisplayName(me.user)} added you to the group "${name}"`
+                }));
+            }
+            refreshFriendsOf(k);
+        });
+
+        notice(`👥 Group "${name}" created!`);
+    });
+
+    function groupFor(id, key) {
+        const g = accountsDb.friendGroups && accountsDb.friendGroups[String(id || "")];
+        return g && g.members.includes(key) ? g : null;
+    }
+
+    socket.on("groupOpen", data => {
+        const me = myAccount();
+        if (!me) return;
+
+        const g = groupFor(data?.id, me.key);
+        if (!g) return;
+
+        socket._openConvo = "grp:" + g.id;
+
+        const unread = unreadOf(me.user);
+        if (unread["grp:" + g.id]) {
+            delete unread["grp:" + g.id];
+            saveAccounts();
+        }
+
+        socket.emit("groupHistory", {
+            id: g.id,
+            name: g.name,
+            messages: mapMessages(g.messages, me.key)
+        });
+
+        sendFriends(socket.id, me.key);
+    });
+
+    socket.on("groupSend", data => {
+        const me = myAccount();
+        if (!me) return;
+
+        const g = groupFor(data?.id, me.key);
+        if (!g) return;
+
+        const text = cleanText(data.text);
+        if (!text) return;
+
+        const now = Date.now();
+        if (socket._lastChatAt && now - socket._lastChatAt < 500) return;
+        socket._lastChatAt = now;
+
+        g.messages.push({ from: me.key, text, time: now });
+        while (g.messages.length > CHAT_HISTORY_MAX) g.messages.shift();
+
+        g.members.forEach(k => {
+            const u = accountsDb.users[k];
+            if (!u) return;
+
+            let seen = false;
+
+            onlineSocketIds(k).forEach(sid => {
+                const target = socketOf(sid);
+
+                if (target && target._openConvo === "grp:" + g.id) {
+                    seen = true;
+                    io.to(sid).emit("chatMessage", {
+                        scope: "group",
+                        id: g.id,
+                        mine: k === me.key,
+                        name: getDisplayName(me.user),
+                        text,
+                        time: now
+                    });
+                }
+            });
+
+            if (!seen && k !== me.key) {
+                const unread = unreadOf(u);
+                unread["grp:" + g.id] = (unread["grp:" + g.id] || 0) + 1;
+
+                onlineSocketIds(k).forEach(sid => io.to(sid).emit("chatNotify", {
+                    fromName: `${getDisplayName(me.user)} (${g.name})`,
+                    text
+                }));
+
+                refreshFriendsOf(k);
+            }
+        });
+
+        saveAccounts();
+    });
+
+    socket.on("groupLeave", data => {
+        const me = myAccount();
+        if (!me) return;
+
+        const g = groupFor(data?.id, me.key);
+        if (!g) return;
+
+        g.members = g.members.filter(k => k !== me.key);
+
+        if (!g.members.length) delete accountsDb.friendGroups[g.id];
+
+        const unread = unreadOf(me.user);
+        delete unread["grp:" + g.id];
+
+        saveAccounts();
+        refreshFriendsOf(me.key);
+        g.members.forEach(refreshFriendsOf);
+    });
+
+    socket.on("chatClose", () => {
+        socket._openConvo = null;
+    });
+
+    /* ----- public chat (everybody who opened the Chat tab) ----- */
+
+    socket.on("pubChatJoin", () => {
+        socket.join("mw:pubchat");
+        socket.emit("pubChatHistory", publicChatLog.slice(-50));
+    });
+
+    socket.on("pubChatLeave", () => {
+        socket.leave("mw:pubchat");
+    });
+
+    socket.on("pubChatSend", data => {
+        const me = myAccount();
+        if (!me) return notice("Sign in with an account to chat.");
+
+        const text = cleanText(data?.text);
+        if (!text) return;
+
+        const now = Date.now();
+        if (socket._lastPubAt && now - socket._lastPubAt < 700) return;
+        socket._lastPubAt = now;
+
+        const entry = { name: getDisplayName(me.user), text, time: now };
+
+        publicChatLog.push(entry);
+        while (publicChatLog.length > 100) publicChatLog.shift();
+
+        io.to("mw:pubchat").emit("pubChatMessage", entry);
     });
 });
 
@@ -8507,6 +9631,336 @@ io.on("connection", socket => {
 
 const PORT = process.env.PORT || 2001;
 
-server.listen(PORT, "0.0.0.0", () => {
-    console.log(`Mafia Wars is running on port ${PORT}`);
+initDatabase()
+    .then(() => {
+        server.listen(PORT, "0.0.0.0", () => {
+            console.log("Mafia Wars is running on port " + PORT);
+        });
+    })
+    .catch(error => {
+        console.error("Could not connect to the database. Not starting, so no data is overwritten:", error);
+        process.exit(1);
+    });
+
+
+/* =========================================================
+   MAFIA WARS - ROOM OPTIONS, KICK / BAN, PACKAGES
+   - Host: room size (max players), adjustable timers
+   - Host: kick / ban (lobby and during the game)
+   - Owner: role "Packages" (presets) every host can load in the lobby
+   Everything is validated here on the server.
+========================================================= */
+
+const DEFAULT_MAX_PLAYERS = 20;
+const MIN_MAX_PLAYERS = 4;
+const MAX_MAX_PLAYERS = 30;
+
+// All values are SECONDS.
+const DEFAULT_TIMERS = { turn: 30, discussion: 60, voting: 60 };
+const TIMER_LIMITS = {
+    turn:       { min: 10, max: 120 },
+    discussion: { min: 0,  max: 300 },
+    voting:     { min: 15, max: 300 }
+};
+
+function getRoomMaxPlayers(room) {
+    const n = Math.floor(Number(room && room.maxPlayers));
+    return Number.isFinite(n) && n >= MIN_MAX_PLAYERS && n <= MAX_MAX_PLAYERS ? n : DEFAULT_MAX_PLAYERS;
+}
+
+function getRoomTimers(room) {
+    const saved = (room && room.timers) || {};
+    const out = {};
+
+    Object.keys(DEFAULT_TIMERS).forEach(key => {
+        const n = Math.floor(Number(saved[key]));
+        const lim = TIMER_LIMITS[key];
+        out[key] = Number.isFinite(n) && n >= lim.min && n <= lim.max ? n : DEFAULT_TIMERS[key];
+    });
+
+    return out;
+}
+
+function socketIp(socket) {
+    try {
+        const fwd = String(socket.handshake.headers["x-forwarded-for"] || "").split(",")[0].trim();
+        return fwd || socket.handshake.address || "";
+    } catch (_) {
+        return "";
+    }
+}
+
+function isBannedFromRoom(room, socket, name) {
+    const ban = room && room.banned;
+    if (!ban) return false;
+
+    const account = getSocketAccountKey(socket);
+    if (account && ban.accounts.includes(account)) return true;
+
+    if (ban.names.includes(String(name || "").trim().toLowerCase())) return true;
+
+    // IP bans only apply to guests, so a shared network never blocks a signed-in player.
+    if (!account && ban.ips.includes(socketIp(socket))) return true;
+
+    return false;
+}
+
+io.on("connection", socket => {
+
+    /* ---------- Host: room size + timers (lobby only) ---------- */
+
+    socket.on("setRoomOptions", data => {
+        const roomCode = String(data?.roomCode || "").trim().toUpperCase();
+        const room = rooms[roomCode];
+
+        if (!room || room.host !== socket.id) return;
+
+        if (room.phase !== "lobby") {
+            return socket.emit("gameError", "Room options can only be changed in the lobby.");
+        }
+
+        if (data.maxPlayers !== undefined) {
+            const n = Math.floor(Number(data.maxPlayers));
+            const connected = room.players.filter(p => p.connected !== false).length;
+
+            if (!Number.isFinite(n) || n < MIN_MAX_PLAYERS || n > MAX_MAX_PLAYERS) {
+                return socket.emit("gameError", `Players must be from ${MIN_MAX_PLAYERS} to ${MAX_MAX_PLAYERS}.`);
+            }
+
+            if (n < connected) {
+                return socket.emit("gameError", `${connected} players are already in the room. Kick someone first or pick a bigger number.`);
+            }
+
+            room.maxPlayers = n;
+        }
+
+        if (data.timers && typeof data.timers === "object") {
+            const next = { ...getRoomTimers(room) };
+
+            for (const key of Object.keys(DEFAULT_TIMERS)) {
+                if (data.timers[key] === undefined) continue;
+
+                const n = Math.floor(Number(data.timers[key]));
+                const lim = TIMER_LIMITS[key];
+
+                if (!Number.isFinite(n) || n < lim.min || n > lim.max) {
+                    return socket.emit("gameError", `${key} time must be ${lim.min}-${lim.max} seconds.`);
+                }
+
+                next[key] = n;
+            }
+
+            room.timers = next;
+        }
+
+        emitLobby(roomCode);
+        emitPublicMatches();
+    });
+
+    /* ---------- Host: kick / ban ---------- */
+
+    socket.on("kickPlayer", data => {
+        const roomCode = String(data?.roomCode || "").trim().toUpperCase();
+        const room = rooms[roomCode];
+
+        if (!room || room.host !== socket.id) return;
+
+        const targetId = String(data?.targetId || "");
+        const ban = false; // banning is Owner-only (account edit screen)
+
+        if (!targetId || targetId === socket.id) {
+            return socket.emit("gameError", "You cannot kick yourself.");
+        }
+
+        const index = room.players.findIndex(p => p.id === targetId);
+        if (index === -1) return;
+
+        const target = room.players[index];
+        const targetSocket = io.sockets.sockets.get(targetId);
+
+        if (!room.banned) room.banned = { accounts: [], names: [], ips: [] };
+
+        if (ban) {
+            if (target.account && !room.banned.accounts.includes(target.account)) room.banned.accounts.push(target.account);
+
+            const lowerName = String(target.name || "").trim().toLowerCase();
+            if (lowerName && !room.banned.names.includes(lowerName)) room.banned.names.push(lowerName);
+
+            if (targetSocket && !target.account) {
+                const ip = socketIp(targetSocket);
+                if (ip && !room.banned.ips.includes(ip)) room.banned.ips.push(ip);
+            }
+        }
+
+        if (targetSocket) {
+            targetSocket.emit("kickedFromRoom", {
+                banned: ban,
+                message: ban
+                    ? "You were banned from the room by the host."
+                    : "You were kicked from the room by the host."
+            });
+            targetSocket.leave(roomCode);
+        }
+
+        const inGame = room.gameStarted && room.phase !== "lobby";
+
+        if (!inGame) {
+            // LOBBY: the player simply leaves the room.
+            room.players.splice(index, 1);
+
+            announce(roomCode, `${ban ? "⛔" : "🥾"} ${target.name} was ${ban ? "banned" : "kicked"} by the host.`, "danger");
+            emitLobby(roomCode);
+            broadcastVoiceState(roomCode);
+            emitPublicMatches();
+            return;
+        }
+
+        /* IN GAME: the player object stays (roles / votes / Cupid links keep working),
+           exactly like a disconnected player who is never allowed to rejoin.
+           It is NOT marked dead, so a kicked Jester can never "win" by being kicked. */
+        target.connected = false;
+        target.kicked = true;
+        target.voiceAllowed = false;
+
+        // Remove their pending actions / vote so nothing waits for them.
+        Object.values(room.nightActions || {}).forEach(group => { delete group[targetId]; });
+        if (room.votes) delete room.votes[targetId];
+
+        announce(roomCode, `${ban ? "⛔" : "🥾"} ${target.name} was ${ban ? "banned" : "kicked"} by the host.`, "danger");
+
+        broadcastVoiceState(roomCode);
+
+        if (checkWinner(roomCode)) {
+            clearPhaseTimer(room);
+            sendGameInformation(roomCode);
+            return;
+        }
+
+        emitLobby(roomCode);
+        emitPublicMatches();
+        sendGameInformation(roomCode);
+
+        if (room.phase === "night") {
+            checkNightActions(roomCode);
+        }
+
+        if (room.phase === "day") {
+            const aliveIds = new Set(room.players.filter(p => p.alive && p.connected !== false).map(p => p.id));
+            const validVoteCount = Object.keys(room.votes || {}).filter(id => aliveIds.has(id)).length;
+
+            if (aliveIds.size && validVoteCount >= aliveIds.size) {
+                endVoting(roomCode);
+            }
+        }
+    });
+
+    /* ---------- Owner: ban / unban an ACCOUNT (Edit Account screen) ---------- */
+
+    socket.on("ownerAccountBan", (data, callback) => {
+        const reply = typeof callback === "function" ? callback : () => {};
+
+        if (socket.badge !== "owner" || !getSocketAccountKey(socket)) {
+            return reply({ ok: false, error: "Only the Owner can ban accounts." });
+        }
+
+        const key = String(data?.username || "").trim().toLowerCase();
+        const user = accountsDb.users[key];
+        if (!user) return reply({ ok: false, error: "Account not found." });
+
+        if (getSocketAccountKey(socket) === key) {
+            return reply({ ok: false, error: "You can't ban your own account." });
+        }
+
+        const banned = Boolean(data?.banned);
+        user.banned = banned ? true : undefined;
+
+        if (banned) {
+            dropSessionsOf(key);
+
+            for (const [socketId, accountKey] of socketAccounts.entries()) {
+                if (accountKey !== key) continue;
+                const target = io.sockets.sockets.get(socketId);
+
+                if (target) {
+                    target.emit("accountBanned", { message: "Your account was banned by the Owner." });
+                    const code = findRoomCodeBySocket(socketId);
+                    if (code) target.emit("kickedFromRoom", { banned: true, message: "Your account was banned by the Owner." });
+                }
+
+                socketAccounts.delete(socketId);
+            }
+        }
+
+        saveAccounts();
+        reply({ ok: true, banned });
+    });
+
+    /* ---------- Owner packages: free text offers (like Discord price lists) ---------- */
+
+    socket.on("packagesGet", callback => {
+        if (typeof callback === "function") callback({ ok: true, packages: getPackagesPayload() });
+    });
+
+    socket.on("ownerPackageSave", (data, callback) => {
+        const reply = typeof callback === "function" ? callback : () => {};
+
+        if (!requirePackageOwner(socket, reply)) return;
+
+        const name = String(data?.name || "").replace(/\s+/g, " ").trim().slice(0, 40);
+        const text = String(data?.text || "").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "").trim().slice(0, 1000);
+
+        if (!name) return reply({ ok: false, error: "Write a package name." });
+        if (!text) return reply({ ok: false, error: "Write what the package includes." });
+
+        const list = ensurePackagesDb();
+        const id = String(data?.id || "");
+        const existing = id ? list.find(p => p.id === id) : null;
+
+        if (id && !existing) return reply({ ok: false, error: "Package not found." });
+
+        if (existing) {
+            existing.name = name;
+            existing.text = text;
+            existing.updated = Date.now();
+        } else {
+            list.push({ id: crypto.randomBytes(6).toString("hex"), name, text, created: Date.now(), updated: Date.now() });
+        }
+
+        saveAccounts();
+        io.emit("packagesUpdated", getPackagesPayload());
+        reply({ ok: true, packages: getPackagesPayload() });
+    });
+
+    socket.on("ownerPackageDelete", (data, callback) => {
+        const reply = typeof callback === "function" ? callback : () => {};
+
+        if (!requirePackageOwner(socket, reply)) return;
+
+        const list = ensurePackagesDb();
+        const index = list.findIndex(p => p.id === String(data?.id || ""));
+
+        if (index === -1) return reply({ ok: false, error: "Package not found." });
+
+        list.splice(index, 1);
+        saveAccounts();
+        io.emit("packagesUpdated", getPackagesPayload());
+        reply({ ok: true, packages: getPackagesPayload() });
+    });
 });
+
+function ensurePackagesDb() {
+    if (!Array.isArray(accountsDb.packages)) accountsDb.packages = [];
+    return accountsDb.packages;
+}
+
+function getPackagesPayload() {
+    return ensurePackagesDb().map(p => ({ id: p.id, name: p.name, text: p.text || "" }));
+}
+
+function requirePackageOwner(socket, reply) {
+    if (socket.badge !== "owner" || !getSocketAccountKey(socket)) {
+        reply({ ok: false, error: "Only the signed-in Owner can manage packages." });
+        return false;
+    }
+    return true;
+}

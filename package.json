@@ -7,8 +7,10 @@
     "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.22.2",
-    "socket.io": "^4.8.3"
+    "dotenv": "^18.0.9",
+    "express": "^4.22.3",
+    "pg": "^8.23.1",
+    "socket.io": "^4.8.4"
   },
   "repository": {
     "type": "git",

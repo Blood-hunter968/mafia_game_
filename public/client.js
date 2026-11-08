@@ -14006,7 +14006,8 @@ socket.on("accountBanned", data => {
             statCell("🛡️", "Total Saves", t.saves || 0),
             statCell("🔎", "Total Detections", t.detects || 0),
             statCell("🎭", "Favourite Role", t.favouriteRole || "—"),
-            statCell("🔥", "Highest Win Streak", t.bestStreak || 0),
+            statCell("🔥", "Current Win Streak", t.currentStreak || 0),
+            statCell("🏅", "Highest Win Streak", t.bestStreak || 0),
             statCell("👑", "MVP Awards", t.mvps || 0)
         ].join("");
         card.appendChild(grid);
@@ -14082,6 +14083,7 @@ socket.on("accountBanned", data => {
                     <span>${esc(m.role)} · ${esc(TEAM_LABEL[m.team] || "")}${m.mvp ? " · 👑 MVP" : ""}</span>
                     <em>${esc(m.kills)}🔪 ${esc(m.saves)}🛡️ ${esc(m.detects)}🔎</em>
                     <small>${esc(when)}</small>
+                    ${data.canViewTimeline && m.id && m.hasTimeline ? `<button type="button" class="mwp-timeline-btn" data-match-id="${esc(m.id)}">VIEW TIMELINE</button>` : ""}
                 </div>`;
             }).join("");
         }
@@ -14097,6 +14099,11 @@ socket.on("accountBanned", data => {
         }
 
         overlay.appendChild(card);
+        hist.addEventListener("click", event => {
+            const button = event.target.closest(".mwp-timeline-btn");
+            if (!button) return;
+            socket.emit("getMatchTimeline", { matchId: button.dataset.matchId });
+        });
         hydrateAvatars(overlay);
 
         requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -14218,4 +14225,211 @@ socket.on("accountBanned", data => {
 
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
     else boot();
+})();
+
+
+/* =========================================================
+   MAFIA WARS TUTORIAL + SAVED MATCH TIMELINE
+   Uses the existing account socket session and existing Neon-backed
+   accounts store. Guests keep tutorial completion in local storage.
+========================================================= */
+(function () {
+    "use strict";
+    const tutorialPages = [
+        ["WELCOME TO MAFIA WARS", "Your goal depends on your secret role. Work with your team, pay attention to announcements and use your abilities at the right time."],
+        ["THE LOBBY", "Create a room to host a match or join a room with its room code. Wait for the host to configure the match before the game begins."],
+        ["HOST CONTROLS", "The host manages room settings, player limits, role counts and available game packages, then starts the match when everyone is ready."],
+        ["PLAYER LIST", "The player list shows who is in the room. Select a player's account card to view their public profile and statistics."],
+        ["CHAT", "Use the public room chat to discuss the game. Some roles or game states may have access to separate private chat areas."],
+        ["YOUR ROLE", "Your role card explains your team and ability. Read it carefully: Mafia, Town and Neutral roles can have different objectives."],
+        ["NIGHT PHASE", "During the night, roles with abilities make their choices. Follow the action prompt and submit your decision before the timer ends."],
+        ["DAY PHASE & VOTING", "During the day, discuss what happened and vote according to the game's rules. Check the timer and confirm your vote carefully."],
+        ["SOUNDBOARDS", "If the host grants you permission, you can play available soundboard effects in the lobby or during the game."],
+        ["REWARDS & INVENTORY", "Registered players can use available rewards and customization options. Your account keeps eligible purchases and equipped items."],
+        ["PROFILE & MATCH HISTORY", "Your profile shows your statistics, achievements and winning streak. Open Match History to revisit completed matches and view saved timelines."],
+        ["YOU'RE READY", "That's the essential guide. You can reopen this tutorial any time using the floating Tutorial button."]
+    ];
+    let page = 0;
+    let tutorialOverlay = null;
+    let tutorialBox = null;
+    let tutorialHighlight = null;
+    let tutorialAccount = false;
+
+    function saveTutorialDone(done) {
+        try { localStorage.setItem("mwTutorialCompleted", done ? "1" : "0"); } catch (_) {}
+        if (tutorialAccount) socket.emit("saveTutorialState", { completed: Boolean(done) });
+    }
+
+    function clearTutorialHighlight() {
+        if (tutorialHighlight) {
+            tutorialHighlight.classList.remove("mw-tutorial-highlight");
+            tutorialHighlight = null;
+        }
+    }
+
+    function highlightRelevant(text) {
+        clearTutorialHighlight();
+        const terms = {
+            "THE LOBBY": /create room|join room/i,
+            "HOST CONTROLS": /start game|settings|package/i,
+            "PLAYER LIST": /player list|view account/i,
+            "CHAT": /chat/i,
+            "SOUNDBOARDS": /soundboard/i,
+            "REWARDS & INVENTORY": /rewards|inventory/i,
+            "PROFILE & MATCH HISTORY": /profile|statistics|match history/i
+        };
+        const re = terms[text];
+        if (!re) return;
+        const candidates = Array.from(document.querySelectorAll("button,[role='button'],a"));
+        tutorialHighlight = candidates.find(el => {
+            const r = el.getBoundingClientRect();
+            return r.width > 0 && r.height > 0 && re.test((el.innerText || el.textContent || "").trim());
+        }) || null;
+        if (tutorialHighlight) {
+            tutorialHighlight.classList.add("mw-tutorial-highlight");
+            tutorialHighlight.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        }
+    }
+
+    function ensureTutorialOverlay() {
+        if (tutorialOverlay) return tutorialOverlay;
+        tutorialOverlay = document.createElement("div");
+        tutorialOverlay.id = "mwTutorialOverlay";
+        tutorialOverlay.innerHTML = `<div class="mw-tutorial-panel"><div class="mw-tutorial-kicker">MAFIA WARS • PLAYER GUIDE</div><button type="button" class="mw-tutorial-x" aria-label="Close">×</button><div class="mw-tutorial-count"></div><h2></h2><p></p><div class="mw-tutorial-progress"><i></i></div><div class="mw-tutorial-actions"><button type="button" class="mw-tutorial-skip">SKIP</button><span></span><button type="button" class="mw-tutorial-prev">PREVIOUS</button><button type="button" class="mw-tutorial-next">NEXT →</button></div></div>`;
+        document.body.appendChild(tutorialOverlay);
+        tutorialBox = tutorialOverlay.querySelector(".mw-tutorial-panel");
+        tutorialOverlay.querySelector(".mw-tutorial-x").addEventListener("click", closeTutorial);
+        tutorialOverlay.querySelector(".mw-tutorial-skip").addEventListener("click", showSkipConfirmation);
+        tutorialOverlay.querySelector(".mw-tutorial-prev").addEventListener("click", () => { page = Math.max(0, page - 1); renderTutorialPage(); });
+        tutorialOverlay.querySelector(".mw-tutorial-next").addEventListener("click", () => {
+            if (page >= tutorialPages.length - 1) { saveTutorialDone(true); closeTutorial(); return; }
+            page += 1; renderTutorialPage();
+        });
+        return tutorialOverlay;
+    }
+
+    function resetTutorialPanel() {
+        if (!tutorialBox) return;
+        tutorialBox.innerHTML = `<div class="mw-tutorial-kicker">MAFIA WARS • PLAYER GUIDE</div><button type="button" class="mw-tutorial-x" aria-label="Close">×</button><div class="mw-tutorial-count"></div><h2></h2><p></p><div class="mw-tutorial-progress"><i></i></div><div class="mw-tutorial-actions"><button type="button" class="mw-tutorial-skip">SKIP</button><span></span><button type="button" class="mw-tutorial-prev">PREVIOUS</button><button type="button" class="mw-tutorial-next">NEXT →</button></div>`;
+        tutorialBox.querySelector(".mw-tutorial-x").addEventListener("click", closeTutorial);
+        tutorialBox.querySelector(".mw-tutorial-skip").addEventListener("click", showSkipConfirmation);
+        tutorialBox.querySelector(".mw-tutorial-prev").addEventListener("click", () => { page = Math.max(0, page - 1); renderTutorialPage(); });
+        tutorialBox.querySelector(".mw-tutorial-next").addEventListener("click", () => {
+            if (page >= tutorialPages.length - 1) { saveTutorialDone(true); closeTutorial(); }
+            else { page += 1; renderTutorialPage(); }
+        });
+    }
+
+    function renderTutorialPage() {
+        const overlay = ensureTutorialOverlay();
+        const [heading, body] = tutorialPages[page];
+        overlay.querySelector(".mw-tutorial-count").textContent = `STEP ${page + 1} / ${tutorialPages.length}`;
+        overlay.querySelector("h2").textContent = heading;
+        overlay.querySelector("p").textContent = body;
+        overlay.querySelector(".mw-tutorial-progress i").style.width = `${((page + 1) / tutorialPages.length) * 100}%`;
+        overlay.querySelector(".mw-tutorial-prev").disabled = page === 0;
+        overlay.querySelector(".mw-tutorial-next").textContent = page === tutorialPages.length - 1 ? "FINISH ✓" : "NEXT →";
+        highlightRelevant(heading);
+    }
+
+    function openTutorial() {
+        page = 0;
+        ensureTutorialOverlay().style.display = "flex";
+        renderTutorialPage();
+    }
+
+    function closeTutorial() {
+        if (tutorialOverlay) tutorialOverlay.style.display = "none";
+        clearTutorialHighlight();
+    }
+
+    function showSkipConfirmation() {
+        const panel = tutorialBox;
+        if (!panel) return;
+        panel.innerHTML = `<div class="mw-tutorial-kicker">MAFIA WARS</div><h2>SKIP TUTORIAL?</h2><p>Would you like to see the tutorial now?</p><div class="mw-tutorial-actions mw-tutorial-confirm"><button type="button" class="mw-tutorial-no">NO</button><button type="button" class="mw-tutorial-yes">YES, SHOW ME</button></div>`;
+        panel.querySelector(".mw-tutorial-yes").addEventListener("click", () => { page = 0; resetTutorialPanel(); renderTutorialPage(); });
+        panel.querySelector(".mw-tutorial-no").addEventListener("click", () => { saveTutorialDone(true); closeTutorial(); });
+    }
+
+    function showFirstTimePrompt() {
+        if (document.getElementById("mwTutorialOverlay")) return;
+        const overlay = ensureTutorialOverlay();
+        const panel = tutorialBox;
+        panel.innerHTML = `<div class="mw-tutorial-kicker">WELCOME TO MAFIA WARS</div><h2>NEW TO THE GAME?</h2><p>Would you like a quick guide explaining the game's buttons, phases, roles and features?</p><div class="mw-tutorial-actions mw-tutorial-confirm"><button type="button" class="mw-tutorial-no">SKIP</button><button type="button" class="mw-tutorial-yes">START TUTORIAL</button></div>`;
+        panel.querySelector(".mw-tutorial-yes").addEventListener("click", () => { page = 0; resetTutorialPanel(); renderTutorialPage(); });
+        panel.querySelector(".mw-tutorial-no").addEventListener("click", showSkipConfirmation);
+        overlay.style.display = "flex";
+    }
+
+    function addTutorialButton() {
+        if (document.getElementById("mwTutorialButton")) return;
+        const button = document.createElement("button");
+        button.id = "mwTutorialButton";
+        button.type = "button";
+        button.textContent = "? TUTORIAL";
+        button.title = "Open the Mafia Wars tutorial";
+        button.addEventListener("click", openTutorial);
+        document.body.appendChild(button);
+    }
+
+    socket.on("tutorialState", data => {
+        tutorialAccount = Boolean(data && data.registered);
+        const completed = Boolean(data && data.completed);
+        if (!tutorialAccount) {
+            try { if (localStorage.getItem("mwTutorialCompleted") === "1") return; } catch (_) {}
+        } else if (completed) return;
+        setTimeout(showFirstTimePrompt, 900);
+    });
+
+    socket.on("authResult", data => {
+        if (!data || !data.ok) return;
+        tutorialAccount = !data.guest;
+        if (tutorialAccount) socket.emit("getTutorialState");
+        else {
+            let done = false;
+            try { done = localStorage.getItem("mwTutorialCompleted") === "1"; } catch (_) {}
+            if (!done) setTimeout(showFirstTimePrompt, 1100);
+        }
+    });
+
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", addTutorialButton);
+    else addTutorialButton();
+
+    socket.on("matchTimelineData", data => {
+        let overlay = document.getElementById("mwTimelineOverlay");
+        if (!overlay) {
+            overlay = document.createElement("div");
+            overlay.id = "mwTimelineOverlay";
+            overlay.addEventListener("click", event => { if (event.target === overlay) overlay.style.display = "none"; });
+            document.body.appendChild(overlay);
+        }
+        overlay.innerHTML = "";
+        const panel = document.createElement("div");
+        panel.className = "mw-timeline-panel";
+        const close = document.createElement("button");
+        close.className = "mw-timeline-close"; close.type = "button"; close.textContent = "×";
+        close.addEventListener("click", () => { overlay.style.display = "none"; });
+        const title = document.createElement("h2"); title.textContent = "MATCH TIMELINE";
+        panel.append(close, title);
+        if (!data || !data.ok) {
+            const error = document.createElement("p"); error.textContent = data?.error || "Timeline unavailable."; panel.appendChild(error);
+        } else {
+            const match = data.match || {};
+            const meta = document.createElement("p");
+            meta.className = "mw-timeline-meta";
+            meta.textContent = `${match.won ? "VICTORY" : "MATCH COMPLETED"} · ${match.role || "Player"} · ${match.players || 0} players`;
+            panel.appendChild(meta);
+            const list = document.createElement("div"); list.className = "mw-timeline-list";
+            (match.timeline || []).forEach(item => {
+                const row = document.createElement("div"); row.className = "mw-timeline-event";
+                const phase = document.createElement("span"); phase.className = "mw-timeline-phase";
+                phase.textContent = `${item.phase === "day" ? "DAY" : "NIGHT"} ${item.night || 1}`;
+                const text = document.createElement("p"); text.textContent = item.text || "Game event";
+                row.append(phase, text); list.appendChild(row);
+            });
+            if (!list.children.length) { const empty = document.createElement("p"); empty.textContent = "No timeline events were recorded for this match."; list.appendChild(empty); }
+            panel.appendChild(list);
+        }
+        overlay.appendChild(panel); overlay.style.display = "flex";
+    });
 })();
