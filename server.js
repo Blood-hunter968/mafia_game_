@@ -75,6 +75,8 @@ async function initDatabase() {
     const questions = await dbLoad("questions");
     if (Array.isArray(questions) && questions.length) questionsDb = questions;
     else await writeQuestionsNow();
+
+    pruneOldMatches();
 }
 
 const express = require("express");
@@ -100,6 +102,22 @@ app.get("/", (req, res) => {
 });
 
 const rooms = {};
+
+/* BOTS: remember every "connection" handler. A bot is given the very same
+   handlers a real player gets (through a fake socket), so every rule of the
+   game - blocks, Cupid links, Godfather, votes, stats - applies to bots too. */
+const BOT_CONNECTION_HANDLERS = [];
+{
+    const originalIoOn = io.on.bind(io);
+
+    io.on = function (event, handler) {
+        if (event === "connection" && typeof handler === "function") {
+            BOT_CONNECTION_HANDLERS.push(handler);
+        }
+
+        return originalIoOn(event, handler);
+    };
+}
 
 /* =========================================================
    ACCOUNTS + PERMANENT RANK STATISTICS
@@ -1227,7 +1245,7 @@ const MVP_POINTS = {
 XP_VALUES.mvp = 25;
 
 const NEUTRAL_ROLES = ["Jester", "Executioner", "Amnesiac"];
-const PROFILE_HISTORY_LIMIT = 25;
+const PROFILE_HISTORY_LIMIT = 50;
 const PROFILE_MATCH_ID_LIMIT = 80;
 
 function teamOfRole(role) {
@@ -1250,7 +1268,6 @@ function ensureProfile(user) {
     p.mvps = Math.max(0, Math.floor(Number(p.mvps) || 0));
     p.streak = Math.max(0, Math.floor(Number(p.streak) || 0));
     p.bestStreak = Math.max(0, Math.floor(Number(p.bestStreak) || 0));
-    p.tutorialCompleted = Boolean(p.tutorialCompleted);
 
     if (!p.teams || typeof p.teams !== "object") p.teams = {};
     ["mafia", "civilian", "neutral"].forEach(team => {
@@ -1367,6 +1384,17 @@ function finalizeMatch(room, winnerTest) {
 
         const mvp = contenders[0];
 
+        /* ----- winner label + MVP name (used by Match History) ----- */
+        const winnerLabel = winnerLabelOf(contenders);
+        const nameOf = entry => {
+            const u = entry.player.account ? accountsDb.users[entry.player.account] : null;
+            return u ? getDisplayName(u) : entry.player.name;
+        };
+        const mvpDisplayName = nameOf(mvp);
+        const unlockNotices = [];
+
+        tlLog(room, "win", "🏁 " + winnerLabel + " won the match. MVP: " + mvpDisplayName);
+
         /* ----- permanent account statistics (once per match, never twice) ----- */
         contenders.forEach(entry => {
             const user = entry.player.account ? accountsDb.users[entry.player.account] : null;
@@ -1374,6 +1402,10 @@ function finalizeMatch(room, winnerTest) {
 
             const profile = ensureProfile(user);
             if (profile.matchIds.includes(matchId)) return;
+
+            /* Remember what was already unlocked, so only NEW unlocks are announced. */
+            syncAchievementsSeen(user);
+            syncProfileCards(user);
 
             const perf = entry.player.matchPerf;
             const startRole = perf.startRole || entry.player.role;
@@ -1428,34 +1460,58 @@ function finalizeMatch(room, winnerTest) {
                 saves: perf.saves,
                 detects: perf.detects,
                 players: contenders.length,
-                startedAt: Number(room.match.startedAt) || null,
-                endedAt: Date.now(),
-                durationMs: Math.max(0, Date.now() - (Number(room.match.startedAt) || Date.now())),
-                participants: contenders.map(item => ({
-                    name: item.player.account && accountsDb.users[item.player.account]
-                        ? getDisplayName(accountsDb.users[item.player.account])
-                        : String(item.player.name || "Player"),
-                    role: String(item.player.matchPerf?.startRole || item.player.role || "Unknown"),
-                    won: Boolean(item.won),
-                    mvp: item === mvp
-                })),
-                timeline: [
-                    ...(Array.isArray(room.replay) ? room.replay.slice(-299).map(event => ({
-                        night: Number(event.night) || 1,
-                        phase: event.phase === "day" ? "day" : "night",
-                        kind: String(event.kind || "info").slice(0, 24),
-                        text: String(event.text || "").slice(0, 240)
-                    })) : []),
-                    {
-                        night: Number(room.nightNumber) || 1,
-                        phase: room.phase === "day" ? "day" : "night",
-                        kind: "win",
-                        text: "Match completed. Winning players: " + contenders.filter(item => item.won).map(item => item.player.name).join(", ")
-                    }
-                ]
+                winner: winnerLabel,
+                mvpName: mvpDisplayName,
+                nights: room.nightNumber || 1
             });
             if (profile.history.length > PROFILE_HISTORY_LIMIT) profile.history.length = PROFILE_HISTORY_LIMIT;
+
+            /* Winning streak + new achievements / profile cards. */
+            const newAch = syncAchievementsSeen(user);
+            const newCards = syncProfileCards(user);
+            unlockNotices.push({
+                playerId: entry.player.id,
+                won: entry.won,
+                streak: profile.streak,
+                bestStreak: profile.bestStreak,
+                achievements: newAch.map(a => ({ icon: a.icon, name: a.name, desc: a.desc })),
+                cards: newCards.map(c => ({ id: c.id, name: c.name }))
+            });
         });
+
+        /* ----- the full match record (timeline included), saved in Neon ----- */
+        const record = {
+            id: matchId,
+            t: Date.now(),
+            winner: winnerLabel,
+            mvp: { name: mvpDisplayName, role: mvp.player.matchPerf.startRole || mvp.player.role, score: mvp.score },
+            nights: room.nightNumber || 1,
+            accounts: contenders.map(entry => entry.player.account).filter(Boolean),
+            players: contenders.map(entry => ({
+                name: nameOf(entry),
+                role: entry.player.role,
+                startRole: entry.player.matchPerf.startRole || entry.player.role,
+                team: teamOfRole(entry.player.matchPerf.startRole || entry.player.role),
+                won: entry.won,
+                alive: entry.alive,
+                mvp: entry === mvp,
+                score: entry.score,
+                kills: entry.player.matchPerf.kills,
+                saves: entry.player.matchPerf.saves,
+                detects: entry.player.matchPerf.detects
+            })),
+            timeline: (room.timeline || []).slice(0, 700)
+        };
+        saveMatchRecord(record);
+
+        /* A moment after the MVP screen: streak / achievement / card unlock popups. */
+        setTimeout(() => {
+            unlockNotices.forEach(notice => {
+                if (notice.won || notice.achievements.length || notice.cards.length) {
+                    io.to(notice.playerId).emit("progressUnlocks", notice);
+                }
+            });
+        }, 7000);
 
         saveAccounts();
 
@@ -1512,11 +1568,214 @@ const PROFILE_ACHIEVEMENTS = [
     { id: "veteran",      icon: "🎖️", name: "Veteran",            desc: "Play 50 matches",                             test: c => c.games >= 50 },
     { id: "streak3",      icon: "🔥", name: "On Fire",            desc: "Win 3 matches in a row",                      test: c => c.bestStreak >= 3 },
     { id: "streak5",      icon: "⚡", name: "Unstoppable",        desc: "Win 5 matches in a row",                      test: c => c.bestStreak >= 5 },
+    { id: "streak10",     icon: "💥", name: "Untouchable",        desc: "Win 10 matches in a row",                     test: c => c.bestStreak >= 10 },
+    { id: "streak25",     icon: "🌋", name: "Living Legend",      desc: "Win 25 matches in a row",                     test: c => c.bestStreak >= 25 },
+    { id: "streak50",     icon: "♾️", name: "Immortal Boss",      desc: "Win 50 matches in a row",                     test: c => c.bestStreak >= 50 },
     { id: "mvp1",         icon: "⭐", name: "Player of the Match", desc: "Earn your first MVP award",                  test: c => c.mvps >= 1 },
     { id: "mvp10",        icon: "👑", name: "MVP Legend",         desc: "Earn 10 MVP awards",                          test: c => c.mvps >= 10 },
     { id: "triple",       icon: "🎭", name: "Triple Threat",      desc: "Play on the Mafia, Civilian and Neutral teams", test: c => c.teams.mafia.games > 0 && c.teams.civilian.games > 0 && c.teams.neutral.games > 0 },
     { id: "level10",      icon: "🌟", name: "Rising Star",        desc: "Reach level 10",                              test: c => c.level >= 10 }
 ];
+
+
+/* =========================================================
+   PROFILE CARDS + PLAYER TITLES + PROGRESS UNLOCKS
+   - Every account has one selected animated profile card.
+   - Cards unlock from real progress (wins, level, streaks, MVPs)
+     and stay unlocked forever (saved on the account in Neon).
+   - Titles are earned automatically from progress.
+========================================================= */
+
+const PROFILE_CARDS = [
+    { id: "classic",   name: "Classic Syndicate", hint: "Your starting card",          test: () => true },
+    { id: "spotlight", name: "Spotlight",         hint: "Win your first match",        test: c => c.wins >= 1 },
+    { id: "nightfall", name: "Nightfall",         hint: "Reach level 5",               test: c => c.level >= 5 },
+    { id: "ember",     name: "Ember Veins",       hint: "Win 5 matches in a row",      test: c => c.bestStreak >= 5 },
+    { id: "crown",     name: "MVP Crown",         hint: "Earn 3 MVP awards",           test: c => c.mvps >= 3 },
+    { id: "aurora",    name: "Aurora Pulse",      hint: "Win 10 matches in a row",     test: c => c.bestStreak >= 10 },
+    { id: "inferno",   name: "Inferno Legend",    hint: "Win 25 matches in a row",     test: c => c.bestStreak >= 25 },
+    { id: "immortal",  name: "Immortal",          hint: "Win 50 matches in a row",     test: c => c.bestStreak >= 50 }
+];
+
+/* First matching title wins (highest first). */
+const PROFILE_TITLES = [
+    { icon: "♾️", name: "Immortal Boss",  test: c => c.bestStreak >= 50 },
+    { icon: "🌋", name: "Living Legend",  test: c => c.bestStreak >= 25 },
+    { icon: "💥", name: "Untouchable",    test: c => c.bestStreak >= 10 },
+    { icon: "👑", name: "MVP Legend",     test: c => c.mvps >= 10 },
+    { icon: "⚡", name: "Unstoppable",    test: c => c.bestStreak >= 5 },
+    { icon: "🌟", name: "Rising Star",    test: c => c.level >= 10 },
+    { icon: "🎖️", name: "Made Man",       test: c => c.wins >= 10 },
+    { icon: "🏆", name: "Winner",         test: c => c.wins >= 1 },
+    { icon: "🎭", name: "Rookie",         test: c => c.games >= 1 },
+    { icon: "👤", name: "Newcomer",       test: () => true }
+];
+
+function profileContext(user) {
+    const profile = ensureProfile(user);
+    const stats = { ...emptyStats(), ...(user.stats || {}) };
+    const info = levelInfo(ensureProgress(user).xp);
+
+    return {
+        kills: Number(stats.kills) || 0,
+        saves: Number(stats.saves) || 0,
+        detects: Number(stats.detects) || 0,
+        wins: profile.wins,
+        games: profile.games,
+        streak: profile.streak,
+        bestStreak: profile.bestStreak,
+        mvps: profile.mvps,
+        teams: profile.teams,
+        level: info.level
+    };
+}
+
+function getProfileTitle(user) {
+    const c = profileContext(user);
+    const t = PROFILE_TITLES.find(x => x.test(c)) || PROFILE_TITLES[PROFILE_TITLES.length - 1];
+    return { icon: t.icon, name: t.name };
+}
+
+/* Saved on the account: { selected, unlocked: [ids] }.  Returns the cards that unlocked just now.
+   The very first time an account is checked, everything already earned is saved silently. */
+function syncProfileCards(user) {
+    const first = !user.cards || typeof user.cards !== "object";
+    if (first) user.cards = { selected: "classic", unlocked: [] };
+    if (!Array.isArray(user.cards.unlocked)) user.cards.unlocked = [];
+
+    const c = profileContext(user);
+    const fresh = [];
+
+    PROFILE_CARDS.forEach(card => {
+        if (card.test(c) && !user.cards.unlocked.includes(card.id)) {
+            user.cards.unlocked.push(card.id);
+            if (!first) fresh.push(card);
+        }
+    });
+
+    if (!PROFILE_CARDS.some(card => card.id === user.cards.selected) || !user.cards.unlocked.includes(user.cards.selected)) {
+        user.cards.selected = "classic";
+    }
+
+    return fresh;
+}
+
+/* Same idea for achievements: remember which ones the player has already been told about. */
+function syncAchievementsSeen(user) {
+    const first = !Array.isArray(user.achSeen);
+    if (first) user.achSeen = [];
+
+    const c = profileContext(user);
+    const fresh = [];
+
+    PROFILE_ACHIEVEMENTS.forEach(a => {
+        if (a.test(c) && !user.achSeen.includes(a.id)) {
+            user.achSeen.push(a.id);
+            if (!first) fresh.push(a);
+        }
+    });
+
+    return fresh;
+}
+
+function cardSummary(user) {
+    const c = profileContext(user);
+    return { level: c.level, wins: c.wins, streak: c.streak, best: c.bestStreak };
+}
+
+function getCardList(user) {
+    syncProfileCards(user);
+    return PROFILE_CARDS.map(card => ({
+        id: card.id,
+        name: card.name,
+        hint: card.hint,
+        unlocked: user.cards.unlocked.includes(card.id),
+        selected: user.cards.selected === card.id
+    }));
+}
+
+/* =========================================================
+   MATCH TIMELINE + MATCH HISTORY (saved in Neon, one row per match)
+========================================================= */
+
+const MATCHES_DIR = path.join(DATA_DIR, "matches");
+const matchCache = new Map();
+
+function safeMatchId(id) {
+    return String(id || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 40);
+}
+
+/* One timeline entry. k = phase | death | vote | action | announce | win | info */
+function tlLog(room, kind, text) {
+    if (!room || !text) return;
+    if (!Array.isArray(room.timeline)) room.timeline = [];
+    if (room.timeline.length >= 700) return;
+
+    room.timeline.push({
+        n: room.nightNumber || 1,
+        ph: room.phase === "day" ? "day" : "night",
+        k: kind || "info",
+        x: String(text).slice(0, 240)
+    });
+}
+
+async function saveMatchRecord(record) {
+    const id = safeMatchId(record && record.id);
+    if (!id) return;
+
+    matchCache.set(id, record);
+    if (matchCache.size > 40) matchCache.delete(matchCache.keys().next().value);
+
+    try {
+        if (pool) {
+            await dbSave("match:" + id, record);
+        } else {
+            fs.mkdirSync(MATCHES_DIR, { recursive: true });
+            fs.writeFileSync(path.join(MATCHES_DIR, id + ".json"), JSON.stringify(record));
+        }
+    } catch (error) {
+        console.error("[matches] Could not save match " + id + ":", error);
+    }
+}
+
+async function loadMatchRecord(rawId) {
+    const id = safeMatchId(rawId);
+    if (!id) return null;
+    if (matchCache.has(id)) return matchCache.get(id);
+
+    try {
+        let record = null;
+        if (pool) record = await dbLoad("match:" + id);
+        else {
+            const file = path.join(MATCHES_DIR, id + ".json");
+            if (fs.existsSync(file)) record = JSON.parse(fs.readFileSync(file, "utf8"));
+        }
+        if (record) matchCache.set(id, record);
+        return record;
+    } catch (error) {
+        console.error("[matches] Could not load match " + id + ":", error);
+        return null;
+    }
+}
+
+/* Old matches are removed after 120 days so the database stays small. */
+async function pruneOldMatches() {
+    if (!pool) return;
+    try {
+        await pool.query("DELETE FROM kv_store WHERE key LIKE 'match:%' AND updated_at < now() - interval '120 days'");
+    } catch (error) {
+        console.error("[matches] prune failed:", error.message);
+    }
+}
+
+function winnerLabelOf(contenders) {
+    const winners = contenders.filter(entry => entry.won);
+    if (!winners.length) return "Nobody";
+    const teams = new Set(winners.map(entry => teamOfRole(entry.player.matchPerf.startRole || entry.player.role)));
+    if (teams.size === 1 && teams.has("mafia")) return "Mafia Team";
+    if (teams.size === 1 && teams.has("civilian")) return "Civilian Team";
+    return "Neutral Team";
+}
 
 /* Public profile of one ACCOUNT (never includes passwords, PIN, shop points or owned items). */
 function buildFullProfile(user) {
@@ -1547,6 +1806,8 @@ function buildFullProfile(user) {
         tier: getEquippedTierKey(user),
         look: getLookOfUser(user),
         memberSince: Number(user.created) || null,
+        card: (syncProfileCards(user), user.cards.selected),
+        title: getProfileTitle(user),
         level: info.level,
         xpIntoLevel: info.xpIntoLevel,
         xpNeeded: info.xpNeeded,
@@ -1585,12 +1846,7 @@ function buildFullProfile(user) {
             }))
             .sort((a, b) => b.games - a.games || a.role.localeCompare(b.role))
             .slice(0, 12),
-        history: profile.history.slice(0, 15).map(item => ({
-            id: item.id, t: item.t, role: item.role, team: item.team, won: item.won,
-            alive: item.alive, mvp: item.mvp, score: item.score, kills: item.kills,
-            saves: item.saves, detects: item.detects, players: item.players,
-            hasTimeline: Array.isArray(item.timeline) && item.timeline.length > 0
-        })),
+        history: profile.history.slice(0, 15),
         achievements: PROFILE_ACHIEVEMENTS.map(a => ({
             id: a.id,
             icon: a.icon,
@@ -2108,6 +2364,10 @@ function isDetectiveMafia(role) {
 function announce(roomCode, message, type = "info") {
     if (!rooms[roomCode]) return;
 
+    if (rooms[roomCode].gameStarted && rooms[roomCode].phase !== "lobby") {
+        tlLog(rooms[roomCode], "announce", message);
+    }
+
     io.to(roomCode).emit(
         "announcement",
         {
@@ -2212,6 +2472,9 @@ function resetGameState(room) {
 
     room.settings = null;
 
+    // New match = bots forget everything from the old one.
+    if (typeof botResetRoom === "function") botResetRoom(room);
+
     room.grandmafiaUsed = false;
     room.grandmafiaTarget = null;
 
@@ -2274,7 +2537,9 @@ function getPublicPlayers(room, viewer) {
                 registered: Boolean(player.account),
                 alive: player.alive,
                 role: visibleRole,
-                connected: true
+                connected: true,
+                isBot: Boolean(player.isBot),
+                botLevel: player.isBot ? player.botLevel : null
             };
         });
 }
@@ -2318,6 +2583,9 @@ function emitLobby(roomCode) {
 
             timers:
                 getRoomTimers(room),
+
+            botLevel:
+                room.botLevel || "medium",
 
             roomCode
         }
@@ -2591,6 +2859,8 @@ function eliminatePlayerWithCupid(room, player) {
 
         room.grandmafiaTarget = null;
     }
+
+    eliminated.forEach(p => tlLog(room, "death", "☠️ " + p.name + " (" + p.role + ") was eliminated"));
 
     return eliminated;
 }
@@ -3425,6 +3695,7 @@ function endNight(roomCode) {
     ===================================================== */
 
     room.phase = "day";
+    tlLog(room, "phase", "☀️ Day " + (room.nightNumber || 1) + " begins");
 
     // Day voice is a shared channel for all living players.
     broadcastVoiceState(roomCode);
@@ -3544,6 +3815,7 @@ function startNextNight(roomCode) {
     room.phase = "night";
 
     room.nightNumber += 1;
+    tlLog(room, "phase", "🌙 Night " + room.nightNumber + " begins");
 
     // A "round" is each night/day cycle. Night 1 is counted
     // when the game starts below; later nights are counted here.
@@ -3849,8 +4121,9 @@ function cleanVoiceSelection(room, ids) {
         return { error: `You can select at most ${MAX_VOICE_PLAYERS} voice-chat players.` };
     }
 
+    // Bots never take a voice-chat slot.
     const valid = unique.filter(id =>
-        room.players.some(p => p.id === id && p.connected !== false)
+        room.players.some(p => p.id === id && p.connected !== false && !p.isBot)
     );
 
     return { ids: valid };
@@ -5096,35 +5369,89 @@ io.on(
             socketAccounts.delete(socket.id);
         });
 
-        /* Tutorial completion is stored inside the existing account record (and therefore Neon kv_store). */
-        socket.on("getTutorialState", () => {
-            const key = getSocketAccountKey(socket);
-            const user = key ? accountsDb.users[key] : null;
-            socket.emit("tutorialState", { completed: user ? Boolean(ensureProfile(user).tutorialCompleted) : false, registered: Boolean(user) });
-        });
-
-        socket.on("saveTutorialState", (data, callback) => {
-            const key = getSocketAccountKey(socket);
-            const user = key ? accountsDb.users[key] : null;
-            if (user) {
-                ensureProfile(user).tutorialCompleted = Boolean(data?.completed);
-                saveAccounts();
-            }
-            if (typeof callback === "function") callback({ ok: true, saved: Boolean(user) });
-        });
-
-        /* A player may inspect only match timelines included in their own saved profile history. */
-        socket.on("getMatchTimeline", data => {
-            const key = getSocketAccountKey(socket);
-            const user = key ? accountsDb.users[key] : null;
-            const matchId = String(data?.matchId || "").slice(0, 80);
-            if (!user || !matchId) return socket.emit("matchTimelineData", { ok: false, error: "Sign in to view saved match timelines." });
-            const entry = ensureProfile(user).history.find(item => item.id === matchId);
-            if (!entry) return socket.emit("matchTimelineData", { ok: false, error: "That match is not in your history." });
-            socket.emit("matchTimelineData", { ok: true, match: entry });
-        });
-
         /* Full statistics profile of one ACCOUNT (public: opened by clicking a username). */
+        /* =================================================
+           TUTORIAL / MATCH HISTORY / PROFILE CARDS
+        ================================================= */
+
+        socket.on("getTutorialState", callback => {
+            const reply = typeof callback === "function" ? callback : () => {};
+            const key = getSocketAccountKey(socket);
+            const user = key ? accountsDb.users[key] : null;
+            if (!user) return reply({ ok: true, guest: true, done: false });
+            reply({ ok: true, guest: false, done: Boolean(user.tutorialDone) });
+        });
+
+        socket.on("setTutorialDone", (data, callback) => {
+            const reply = typeof callback === "function" ? callback : () => {};
+            const key = getSocketAccountKey(socket);
+            const user = key ? accountsDb.users[key] : null;
+            if (!user) return reply({ ok: false });
+            user.tutorialDone = data && data.done === false ? false : true;
+            saveAccounts();
+            reply({ ok: true, done: user.tutorialDone });
+        });
+
+        socket.on("getMyMatchHistory", () => {
+            const key = getSocketAccountKey(socket);
+            const user = key ? accountsDb.users[key] : null;
+            if (!user) return socket.emit("myMatchHistory", { ok: false, error: "Sign in to keep a match history." });
+
+            const profile = ensureProfile(user);
+            socket.emit("myMatchHistory", {
+                ok: true,
+                currentStreak: profile.streak,
+                bestStreak: profile.bestStreak,
+                matches: profile.history.slice(0, PROFILE_HISTORY_LIMIT)
+            });
+        });
+
+        socket.on("getMatchTimeline", async data => {
+            const key = getSocketAccountKey(socket);
+            const user = key ? accountsDb.users[key] : null;
+            if (!user) return socket.emit("matchTimeline", { ok: false, error: "Sign in first." });
+
+            const now = Date.now();
+            if (now - (socket.data.timelineAt || 0) < 400) return;
+            socket.data.timelineAt = now;
+
+            const record = await loadMatchRecord(data && data.id);
+            if (!record) return socket.emit("matchTimeline", { ok: false, error: "This match is no longer saved." });
+
+            const staff = user.badge === "owner" || user.badge === "admin";
+            if (!staff && !(Array.isArray(record.accounts) && record.accounts.includes(key))) {
+                return socket.emit("matchTimeline", { ok: false, error: "You were not in this match." });
+            }
+
+            socket.emit("matchTimeline", { ok: true, match: record });
+        });
+
+        socket.on("getProfileCards", () => {
+            const key = getSocketAccountKey(socket);
+            const user = key ? accountsDb.users[key] : null;
+            if (!user) return socket.emit("profileCards", { ok: false, error: "Sign in to use profile cards." });
+
+            const list = getCardList(user);
+            saveAccounts();
+            socket.emit("profileCards", { ok: true, selected: user.cards.selected, cards: list, title: getProfileTitle(user), summary: cardSummary(user) });
+        });
+
+        socket.on("selectProfileCard", data => {
+            const key = getSocketAccountKey(socket);
+            const user = key ? accountsDb.users[key] : null;
+            if (!user) return socket.emit("profileCards", { ok: false, error: "Sign in to use profile cards." });
+
+            syncProfileCards(user);
+            const id = String(data && data.id || "");
+            if (!user.cards.unlocked.includes(id)) {
+                return socket.emit("profileCards", { ok: false, error: "That card is still locked." });
+            }
+
+            user.cards.selected = id;
+            saveAccounts();
+            socket.emit("profileCards", { ok: true, selected: id, cards: getCardList(user), title: getProfileTitle(user), summary: cardSummary(user), changed: true });
+        });
+
         socket.on("getFullProfile", data => {
             const now = Date.now();
             if (now - (socket.data.fullProfileAt || 0) < 200) return;
@@ -5152,8 +5479,6 @@ io.on(
             }
 
             const profile = buildFullProfile(user);
-            const viewerKey = getSocketAccountKey(socket);
-            profile.canViewTimeline = Boolean(viewerKey && accountsDb.users[viewerKey] === user);
             if (hideLogin) delete profile.username;
 
             socket.emit("fullProfileData", profile);
@@ -6772,17 +7097,19 @@ io.on(
             room.players.splice(index, 1);
             socket.leave(code);
 
-            if (!room.players.length) {
+            // A room that only has bots left is closed (a bot can't host).
+            if (!room.players.some(player => !player.isBot)) {
                 delete rooms[code];
                 emitPublicMatches();
                 return;
             }
 
             if (room.host === socket.id) {
-                room.host = room.players[0].id;
+                const nextHost = room.players.find(player => !player.isBot);
+                room.host = nextHost.id;
                 announce(
                     code,
-                    `👑 ${room.players[0].name} is now the host.`,
+                    `👑 ${nextHost.name} is now the host.`,
                     "info"
                 );
             }
@@ -8018,9 +8345,10 @@ beginMatchTracking(room);
                         room.host === socket.id
                     ) {
 
+                        // A bot can never become the host.
                         const newHost =
                             room.players.find(
-                                p => p.connected !== false
+                                p => p.connected !== false && !p.isBot
                             );
 
                         if (newHost) {
@@ -8216,6 +8544,7 @@ function playerNameById(room, id) {
 
 function replayLog(room, text, kind) {
     if (!room) return;
+    tlLog(room, kind === "vote" ? "vote" : kind === "win" ? "win" : "action", text);
     if (!Array.isArray(room.replay)) room.replay = [];
     if (room.replay.length >= 500) return;
 
@@ -8378,6 +8707,7 @@ function shuffleRolesFairly(roles, players) {
 
 function clearRoleExtras(room) {
     room.replay = [];
+    room.timeline = [];
     room.vigilanteInnocent = {};
     room.firstDeathHandled = false;
     room.executionerWinnerId = null;
@@ -8418,6 +8748,7 @@ function setupRoleExtras(room) {
     clearRoleExtras(room);
 
     replayLog(room, "🎬 The game started.", "info");
+    tlLog(room, "phase", "🌙 Night 1 begins");
 
     room.players.forEach(p => { p.lastGameRole = p.role; });
 
@@ -9964,3 +10295,1048 @@ function requirePackageOwner(socket, reply) {
     }
     return true;
 }
+
+
+/* =========================================================
+   MAFIA WARS - BOTS (Easy / Medium / Hard)
+
+   How it works
+   - A bot is a normal entry in room.players (isBot: true) with a fake
+     socket that owns the SAME event handlers a real player gets.
+     So when a bot picks a target it goes through mafiaChoose,
+     doctorChoose, votePlayer ... and every game rule still applies.
+   - One timer (botTick) looks at each room that has bots and lets
+     every living bot act after a human-like delay.
+   - Bots never earn account points / ranks (they have no account),
+     never take a voice-chat slot and can never be the host.
+   - The host adds / removes bots and picks the level in the lobby:
+       botAdd { roomCode, count, level }
+       botRemove { roomCode, botId } or { roomCode, all: true }
+       botSetLevel { roomCode, level, botId? }  (no botId = all bots)
+
+   Levels
+     easy   - slow, mostly random, rarely uses what it knows
+     medium - uses what it knows, follows the crowd, teammates agree
+     hard   - fast, uses everything, holds grudges, talks like a player
+========================================================= */
+
+const BOT_LEVELS = ["easy", "medium", "hard"];
+const BOT_LEVEL_LABEL = { easy: "Easy", medium: "Medium", hard: "Hard" };
+const BOT_MAX_ADD_AT_ONCE = 10;
+const BOT_TICK_MS = 500;
+const BOT_ROOM_IDLE_MS = 5 * 60 * 1000;
+
+/* Seconds a bot waits before acting: [min, max]. */
+const BOT_TIMING = {
+    easy:   { night: [4.0, 9.0], vote: [8, 22] },
+    medium: { night: [3.0, 7.0], vote: [5, 17] },
+    hard:   { night: [2.0, 5.5], vote: [3, 13] }
+};
+
+const BOT_NAMES = [
+    "Sam", "Alex", "Jordan", "Riley", "Casey", "Morgan", "Taylor", "Jamie",
+    "Quinn", "Avery", "Drew", "Blake", "Reese", "Skyler", "Cameron", "Parker",
+    "Rowan", "Sage", "Kai", "Nico", "Remy", "Zane", "Luca", "Milo",
+    "Nova", "Ivy", "Leo", "Max", "Ruby", "Finn"
+];
+
+const BOT_LINES = {
+    greet: [
+        "Hey everyone 👋", "Ready to play! 🎭", "Don't trust me, I'm a bot 🤖",
+        "Let's go! 🔥", "Who's the Mafia tonight? 😈"
+    ],
+    generic: [
+        "Hmm... who do we trust?", "I'm town, I promise 😅", "Anyone have any info?",
+        "Let's think before we vote.", "This is getting tense 😬",
+        "Who was acting weird last night?", "I have a bad feeling about this round."
+    ],
+    accuse: [
+        "I don't trust {n}.", "{n} has been very quiet... suspicious.",
+        "My gut says {n} is Mafia.", "Why is nobody talking about {n}?",
+        "I'm voting {n}. Change my mind.", "{n}, care to explain yourself?"
+    ],
+    defend: [
+        "I'm not Mafia, vote someone else!", "Please don't vote me, I'm town!",
+        "Why me? I haven't done anything!"
+    ],
+    jester: [
+        "Yeah okay, I'm totally Mafia 😈 vote me!", "Vote me out, I dare you 🤡",
+        "I might be the Mafia... or not. 😏"
+    ],
+    detectiveFound: [
+        "🔎 I investigated {n} and they are MAFIA! Vote {n}!",
+        "Trust me, {n} is Mafia. I checked. 🔎"
+    ],
+    sheriffFound: [
+        "⭐ {n} came back SUSPICIOUS for me. Let's vote {n}.",
+        "The Sheriff says {n} looks suspicious. ⭐"
+    ]
+};
+
+/* ---------- small helpers ---------- */
+
+function botRand(min, max) {
+    return min + Math.random() * (max - min);
+}
+
+function botPick(list) {
+    return list && list.length ? list[Math.floor(Math.random() * list.length)] : null;
+}
+
+function botChance(probability) {
+    return Math.random() < probability;
+}
+
+function botLine(kind, name) {
+    return String(botPick(BOT_LINES[kind]) || "").replace(/\{n\}/g, name || "someone");
+}
+
+/* Weighted random: higher score = more likely. */
+function botWeighted(list, scoreOf) {
+    if (!list.length) return null;
+
+    const weights = list.map(item => Math.max(0.01, Number(scoreOf(item)) || 0));
+    let roll = Math.random() * weights.reduce((sum, w) => sum + w, 0);
+
+    for (let i = 0; i < list.length; i++) {
+        roll -= weights[i];
+        if (roll <= 0) return list[i];
+    }
+
+    return list[list.length - 1];
+}
+
+/* Highest score wins (ties are random). */
+function botBest(list, scoreOf) {
+    if (!list.length) return null;
+
+    let best = -Infinity;
+    let top = [];
+
+    list.forEach(item => {
+        const score = Number(scoreOf(item)) || 0;
+
+        if (score > best + 1e-9) {
+            best = score;
+            top = [item];
+        } else if (Math.abs(score - best) <= 1e-9) {
+            top.push(item);
+        }
+    });
+
+    return botPick(top);
+}
+
+/* easy = random, medium = weighted random, hard = best score. */
+function botChoose(level, list, scoreOf) {
+    if (level === "easy") return botPick(list);
+    if (level === "medium") return botWeighted(list, scoreOf);
+    return botBest(list, scoreOf);
+}
+
+function botOthers(room, bot) {
+    return room.players.filter(
+        p => p.alive && p.connected !== false && p.id !== bot.id
+    );
+}
+
+function botFindByName(room, name) {
+    return room.players.find(p => p.name === name) || null;
+}
+
+/* ---------- the fake socket ---------- */
+
+const BOT_SOCKETS = new Map();
+
+function createBotSocket(id, roomCode) {
+    const handlers = {};
+
+    const sock = {
+        id,
+        roomCode,
+        isBot: true,
+        badge: "member",
+        data: {},
+        rooms: new Set([roomCode]),
+        handshake: { headers: {}, address: "" },
+        handlers,
+
+        on(event, handler) {
+            handlers[event] = handler;
+            return sock;
+        },
+
+        emit(event, payload) {
+            try {
+                botReceive(sock, event, payload);
+            } catch (error) {
+                console.error("[bots] receive failed:", error);
+            }
+            return true;
+        },
+
+        join() {},
+        leave() {},
+        disconnect() {}
+    };
+
+    BOT_CONNECTION_HANDLERS.forEach(handler => {
+        try {
+            handler(sock);
+        } catch (error) {
+            console.error("[bots] could not attach handlers:", error);
+        }
+    });
+
+    BOT_SOCKETS.set(id, sock);
+
+    return sock;
+}
+
+function botSend(bot, event, data) {
+    const sock = BOT_SOCKETS.get(bot.id);
+    const handler = sock && sock.handlers[event];
+
+    if (!handler) return false;
+
+    try {
+        handler(data);
+        return true;
+    } catch (error) {
+        console.error("[bots] " + event + " failed:", error);
+        return false;
+    }
+}
+
+/* What the server tells a player privately, a bot "hears" too. */
+function botReceive(sock, event, payload) {
+    const room = rooms[sock.roomCode];
+    const bot = room && room.players.find(p => p.id === sock.id);
+
+    if (!bot) return;
+
+    const mem = botMemory(room, bot);
+
+    if (event === "detectiveResult" && payload) {
+        const target = botFindByName(room, payload.playerName);
+        if (target) mem.known[target.id] = payload.result === "MAFIA" ? "mafia" : "clear";
+    }
+
+    if (event === "sheriffResult" && payload) {
+        const target = botFindByName(room, payload.playerName);
+        if (target) mem.known[target.id] = payload.result === "SUSPICIOUS" ? "sus" : "clear";
+    }
+}
+
+/* Everything a bot remembers. It starts fresh for every new game. */
+function botMemory(room, bot) {
+    if (!bot.mem || bot.memGame !== room.settings) {
+        bot.mem = {
+            known: {},      // playerId -> "mafia" | "sus" | "clear"
+            checked: {},    // playerId -> true (already investigated)
+            shared: {},     // playerId -> true (already told the chat)
+            lastSave: null,
+            lastGuard: null,
+            plan: null,
+            chat: null
+        };
+        bot.memGame = room.settings;
+    }
+
+    return bot.mem;
+}
+
+/* Called when the host restarts the game: bots start the next match with a clean head. */
+function botResetRoom(room) {
+    room._botLastVotes = {};
+    room._botClaims = [];
+    room._botClaimsGame = null;
+    room._botPhaseSig = null;
+    room.players.forEach(p => { if (p.isBot) { p.mem = null; p.memGame = null; } });
+}
+
+/* ---------- what the bot saw during the last vote ---------- */
+
+/* Votes of the last finished day: { voterId: targetId }. */
+function botLastVotes(room) {
+    return room._botLastVotes || {};
+}
+
+function botVotesReceived(room) {
+    const counts = {};
+
+    Object.values(botLastVotes(room)).forEach(targetId => {
+        counts[targetId] = (counts[targetId] || 0) + 1;
+    });
+
+    return counts;
+}
+
+/* ---------- public claims ("I checked X, they are Mafia") ----------
+   Everybody can read the public chat, so every bot hears these claims. */
+
+function botClaims(room) {
+    if (room._botClaimsGame !== room.settings) {
+        room._botClaims = [];
+        room._botClaimsGame = room.settings;
+    }
+
+    return room._botClaims;
+}
+
+function botAddClaim(room, fromId, targetId) {
+    botClaims(room).push({ from: fromId, target: targetId });
+}
+
+/* Living players who publicly accused a Mafia-team member. */
+function botClaimersAgainstMafia(room) {
+    const out = new Set();
+
+    botClaims(room).forEach(claim => {
+        const from = room.players.find(p => p.id === claim.from);
+        const target = room.players.find(p => p.id === claim.target);
+
+        if (from && from.alive && target && isMafiaTeam(target.role)) out.add(from.id);
+    });
+
+    return out;
+}
+
+/* Remember the votes right before they are counted and cleared. */
+const botOriginalEndVoting = endVoting;
+
+endVoting = function (roomCode) {
+    const room = rooms[roomCode];
+
+    if (room && room.phase === "day" && room.votes) {
+        room._botLastVotes = Object.assign({}, room.votes);
+    }
+
+    return botOriginalEndVoting.apply(this, arguments);
+};
+
+/* ---------- choosing targets ---------- */
+
+function botPickMafiaTarget(room, bot) {
+    const level = bot.botLevel;
+    const allowed = new Set(getActionTargets(room, bot));
+
+    let pool = room.players.filter(p => allowed.has(p.id));
+
+    if (!pool.length) {
+        pool = botOthers(room, bot).filter(p => !isMafiaTeam(p.role));
+    }
+
+    if (!pool.length) return null;
+
+    // Medium / Hard: join the target a teammate already chose.
+    if (level !== "easy") {
+        const tally = {};
+
+        Object.values(room.nightActions.mafia || {}).forEach(id => {
+            if (typeof id === "string" && id !== NIGHT_SKIPPED && id !== NIGHT_BLOCKED) {
+                tally[id] = (tally[id] || 0) + 1;
+            }
+        });
+
+        const chosen = pool
+            .filter(p => tally[p.id])
+            .sort((a, b) => tally[b.id] - tally[a.id])[0];
+
+        if (chosen && botChance(level === "hard" ? 1 : 0.7)) return chosen.id;
+    }
+
+    // People who voted against a Mafia member are the biggest threat.
+    const last = botLastVotes(room);
+
+    const accusers = new Set(
+        Object.keys(last).filter(voterId => {
+            const target = room.players.find(p => p.id === last[voterId]);
+            return target && isMafiaTeam(target.role);
+        })
+    );
+
+    // ...and so is anyone who publicly called a Mafia member out.
+    const claimers = botClaimersAgainstMafia(room);
+
+    const bonus = level === "hard" ? 9 : 4;
+    const claimBonus = level === "hard" ? 25 : 8;
+
+    const pick = botChoose(
+        level,
+        pool,
+        p => 1 + (accusers.has(p.id) ? bonus : 0) + (claimers.has(p.id) ? claimBonus : 0)
+    );
+
+    return pick ? pick.id : null;
+}
+
+function botPickGrandmafiaTarget(room, bot) {
+    const allowed = new Set(getGrandmafiaTargets(room, bot));
+    const pool = room.players.filter(p => allowed.has(p.id));
+
+    return pool.length ? botPick(pool).id : null;
+}
+
+function botPickDoctorTarget(room, bot, mem) {
+    const level = bot.botLevel;
+    const alive = room.players.filter(p => p.alive && p.connected !== false);
+
+    if (!alive.length) return null;
+
+    let pick;
+
+    if (level === "easy") {
+        pick = botPick(alive);
+    } else {
+        const selfBonus = level === "hard" ? (alive.length <= 5 ? 3 : 1.5) : 1.2;
+
+        // Someone who exposed a Mafia member is the Mafia's next target.
+        const exposers = botClaims(room)
+            .filter(claim => claim.from !== bot.id)
+            .map(claim => claim.from);
+
+        pick = botWeighted(alive, p => {
+            let weight = p.id === bot.id ? selfBonus : 1;
+            if (exposers.includes(p.id)) weight += level === "hard" ? 5 : 1.5;
+            if (p.id === mem.lastSave) weight *= level === "hard" ? 0.1 : 0.3;
+            return weight;
+        });
+    }
+
+    if (pick) mem.lastSave = pick.id;
+
+    return pick ? pick.id : null;
+}
+
+function botPickInvestigateTarget(room, bot, mem) {
+    const level = bot.botLevel;
+    const others = botOthers(room, bot);
+    const fresh = others.filter(p => !mem.checked[p.id]);
+    const pool = level === "easy" || !fresh.length ? others : fresh;
+    const received = botVotesReceived(room);
+
+    const pick = botChoose(
+        level,
+        pool,
+        p => 1 + (level === "hard" ? 2 * (received[p.id] || 0) : 0)
+    );
+
+    if (pick) mem.checked[pick.id] = true;
+
+    return pick ? pick.id : null;
+}
+
+function botPickCupidPair(room, bot) {
+    const pool = botOthers(room, bot);
+
+    if (pool.length < 2) return null;
+
+    const first = botPick(pool);
+    const second = botPick(pool.filter(p => p.id !== first.id));
+
+    return { first: first.id, second: second.id };
+}
+
+/* Escort, Framer, Bodyguard, Sheriff, Vigilante. Returns { skip } or { targetId }. */
+function botPickExtraTarget(room, bot, mem, turn) {
+    const level = bot.botLevel;
+    const known = id => mem.known[id];
+    let pool = botOthers(room, bot);
+
+    if (turn === "framer") {
+        pool = pool.filter(p => !isMafiaTeam(p.role));
+    }
+
+    if (!pool.length) return { skip: true };
+
+    if (turn === "vigilante") {
+        const mafia = pool.filter(p => known(p.id) === "mafia");
+
+        // Only shoot who it KNOWS is Mafia (a wrong shot costs the Vigilante).
+        if (mafia.length && (level !== "easy" || botChance(0.5))) {
+            return { targetId: botPick(mafia).id };
+        }
+
+        // Easy bots are trigger-happy.
+        if (level === "easy" && botChance(0.25)) {
+            return { targetId: botPick(pool).id };
+        }
+
+        return { skip: true };
+    }
+
+    if (turn === "sheriff") {
+        const fresh = pool.filter(p => !mem.checked[p.id]);
+        const choices = level === "easy" || !fresh.length ? pool : fresh;
+        const pick = botPick(choices);
+
+        mem.checked[pick.id] = true;
+
+        return { targetId: pick.id };
+    }
+
+    if (turn === "escort") {
+        const bad = pool.filter(p => known(p.id) === "mafia" || known(p.id) === "sus");
+
+        if (bad.length && level !== "easy" && botChance(level === "hard" ? 1 : 0.7)) {
+            return { targetId: botPick(bad).id };
+        }
+
+        const choices = level === "hard" ? pool.filter(p => known(p.id) !== "clear") : pool;
+        return { targetId: botPick(choices.length ? choices : pool).id };
+    }
+
+    if (turn === "bodyguard") {
+        const pick = botWeighted(pool, p => {
+            let weight = 1;
+            if (p.id === mem.lastGuard) weight *= level === "easy" ? 1 : 0.2;
+            if (level === "hard" && known(p.id) === "clear") weight += 3;
+            return weight;
+        });
+
+        mem.lastGuard = pick.id;
+
+        return { targetId: pick.id };
+    }
+
+    // Framer: frame the people most dangerous to the Mafia.
+    const last = botLastVotes(room);
+
+    const accusers = new Set(
+        Object.keys(last).filter(voterId => {
+            const target = room.players.find(p => p.id === last[voterId]);
+            return target && isMafiaTeam(target.role);
+        })
+    );
+
+    const pick = botChoose(level, pool, p => 1 + (accusers.has(p.id) ? 6 : 0));
+
+    return { targetId: pick.id };
+}
+
+/* ---------- day vote ---------- */
+
+function botPickVote(room, bot, mem) {
+    const level = bot.botLevel;
+    const mafiaSide = isMafiaTeam(bot.role);
+
+    // A clumsy Easy Mafia bot sometimes votes for its own teammate.
+    const blunder = mafiaSide && level === "easy" && botChance(0.2);
+
+    let pool = botOthers(room, bot).filter(p => blunder || !(mafiaSide && isMafiaTeam(p.role)));
+
+    if (!pool.length) pool = botOthers(room, bot);
+    if (!pool.length) return null;
+
+    const useKnowledge =
+        level === "hard" ||
+        (level === "medium" && botChance(0.9)) ||
+        (level === "easy" && botChance(0.4));
+
+    // Votes cast so far today.
+    const tally = {};
+
+    Object.values(room.votes || {}).forEach(targetId => {
+        tally[targetId] = (tally[targetId] || 0) + 1;
+    });
+
+    // Players who voted against a Mafia teammate today.
+    const accusersNow = new Set();
+
+    if (mafiaSide) {
+        Object.entries(room.votes || {}).forEach(([voterId, targetId]) => {
+            const target = room.players.find(p => p.id === targetId);
+            if (target && target.id !== bot.id && isMafiaTeam(target.role)) accusersNow.add(voterId);
+        });
+    }
+
+    // What the others said in public chat: claim -> suspicion (Hard trusts it most).
+    const claimWeight = level === "hard" ? 40 : level === "medium" ? 15 : 0;
+    const claimed = {};
+
+    if (!mafiaSide && claimWeight) {
+        botClaims(room).forEach(claim => {
+            const from = room.players.find(p => p.id === claim.from);
+
+            if (from && from.alive && from.id !== bot.id) {
+                claimed[claim.target] = (claimed[claim.target] || 0) + claimWeight;
+            }
+        });
+    }
+
+    // Mafia: whoever called a teammate out becomes the vote target.
+    if (mafiaSide && level !== "easy") {
+        botClaimersAgainstMafia(room).forEach(id => accusersNow.add(id));
+    }
+
+    // Players who voted against me last time.
+    const grudges = new Set(
+        Object.entries(botLastVotes(room))
+            .filter(([, targetId]) => targetId === bot.id)
+            .map(([voterId]) => voterId)
+    );
+
+    const executionerTarget =
+        bot.role === "Executioner" ? buildExtraInfo(room, bot).execTargetId : null;
+
+    const bandwagon = level === "hard" ? 4 : level === "medium" ? 2 : 0;
+    const grudge = level === "hard" ? 5 : level === "medium" ? 2 : 0;
+
+    const score = p => {
+        let s = 1;
+
+        if (!mafiaSide && useKnowledge) {
+            if (mem.known[p.id] === "mafia") s += 1000;
+            else if (mem.known[p.id] === "sus") s += 30;
+        }
+
+        if (executionerTarget && p.id === executionerTarget) {
+            s += level === "easy" ? 15 : 1000;
+        }
+
+        s += bandwagon * (tally[p.id] || 0);
+
+        s += claimed[p.id] || 0;
+
+        if (grudges.has(p.id)) s += grudge;
+
+        if (accusersNow.has(p.id)) s += level === "hard" ? 12 : level === "medium" ? 4 : 0;
+
+        if (!mafiaSide && useKnowledge && mem.known[p.id] === "clear") s *= 0.02;
+
+        return s;
+    };
+
+    const pick = botChoose(level, pool, score);
+
+    return pick ? pick.id : null;
+}
+
+/* ---------- chat ---------- */
+
+function botChatText(room, bot, mem) {
+    const level = bot.botLevel;
+    const others = botOthers(room, bot);
+
+    if (!others.length) return "";
+
+    // Share findings once (Medium sometimes, Hard always).
+    if (level !== "easy") {
+        const mafiaId = Object.keys(mem.known).find(
+            id => mem.known[id] === "mafia" && !mem.shared[id] &&
+                others.some(p => p.id === id)
+        );
+
+        const susId = Object.keys(mem.known).find(
+            id => mem.known[id] === "sus" && !mem.shared[id] &&
+                others.some(p => p.id === id)
+        );
+
+        if (mafiaId && (level === "hard" || botChance(0.6))) {
+            mem.shared[mafiaId] = true;
+            botAddClaim(room, bot.id, mafiaId);
+            return botLine("detectiveFound", room.players.find(p => p.id === mafiaId).name);
+        }
+
+        if (susId && (level === "hard" || botChance(0.6))) {
+            mem.shared[susId] = true;
+            botAddClaim(room, bot.id, susId);
+            return botLine("sheriffFound", room.players.find(p => p.id === susId).name);
+        }
+
+        if (bot.role === "Jester" && botChance(0.8)) {
+            return botLine("jester");
+        }
+
+        const votedAgainstMe = Object.values(room.votes || {}).includes(bot.id);
+
+        if (votedAgainstMe && botChance(0.7)) {
+            return botLine("defend");
+        }
+    }
+
+    if (level === "easy" || botChance(0.35)) {
+        return botLine("generic");
+    }
+
+    const suspect = botPick(others.filter(p => !(isMafiaTeam(bot.role) && isMafiaTeam(p.role))));
+
+    return suspect ? botLine("accuse", suspect.name) : botLine("generic");
+}
+
+function botSay(roomCode, bot, text) {
+    if (!text) return;
+
+    botSend(bot, "sendMessage", { roomCode, message: text });
+}
+
+/* ---------- the timer that makes bots act ---------- */
+
+function botNightJobs(room, bot, turn) {
+    const jobs = [];
+    const actions = room.nightActions || {};
+
+    if (turn === "mafia" && isMafiaTeam(bot.role)) {
+        if (!(actions.mafia && actions.mafia[bot.id])) jobs.push("mafia");
+
+        if (
+            bot.role === "Grandmafia" &&
+            room.nightNumber === 1 &&
+            !room.grandmafiaUsed &&
+            !(actions.grandmafia && actions.grandmafia[bot.id])
+        ) {
+            jobs.push("grandmafia");
+        }
+    }
+
+    if (turn === "doctor" && bot.role === "Doctor" && !(actions.doctor && actions.doctor[bot.id])) {
+        jobs.push("doctor");
+    }
+
+    if (turn === "detective" && bot.role === "Detective" && !(actions.detective && actions.detective[bot.id])) {
+        jobs.push("detective");
+    }
+
+    if (turn === "cupid" && bot.role === "Cupid" && room.nightNumber === 1 && !room.cupidUsed[bot.id]) {
+        jobs.push("cupid");
+    }
+
+    if (EXTRA_ROLE_TURN[bot.role] === turn && !(actions[turn] && actions[turn][bot.id])) {
+        jobs.push("extra");
+    }
+
+    return jobs;
+}
+
+function botRunNightJob(roomCode, room, bot, job, turn) {
+    const mem = botMemory(room, bot);
+
+    if (job === "mafia") {
+        const targetId = botPickMafiaTarget(room, bot);
+        if (targetId) botSend(bot, "mafiaChoose", { roomCode, targetId });
+    }
+
+    if (job === "grandmafia") {
+        const targetId = botPickGrandmafiaTarget(room, bot);
+        if (targetId) botSend(bot, "grandmafiaChoose", { roomCode, targetId });
+    }
+
+    if (job === "doctor") {
+        const targetId = botPickDoctorTarget(room, bot, mem);
+        if (targetId) botSend(bot, "doctorChoose", { roomCode, targetId });
+    }
+
+    if (job === "detective") {
+        const targetId = botPickInvestigateTarget(room, bot, mem);
+        if (targetId) botSend(bot, "detectiveChoose", { roomCode, targetId });
+    }
+
+    if (job === "cupid") {
+        const pair = botPickCupidPair(room, bot);
+        if (pair) botSend(bot, "cupidChoose", { roomCode, cupid1: pair.first, cupid2: pair.second });
+    }
+
+    if (job === "extra") {
+        const choice = botPickExtraTarget(room, bot, mem, turn);
+
+        botSend(
+            bot,
+            "roleChoose",
+            choice.skip ? { roomCode, skip: true } : { roomCode, targetId: choice.targetId }
+        );
+    }
+}
+
+function botNightTick(roomCode, room, now) {
+    const turn = room.nightTurn;
+
+    // Between two turns nobody acts. A hidden turn belongs to a dead player.
+    if (!turn || room.hiddenNightTurn) return;
+
+    room.players.forEach(bot => {
+        if (!bot.isBot || !bot.alive || bot.connected === false) return;
+
+        const jobs = botNightJobs(room, bot, turn);
+
+        if (!jobs.length) return;
+
+        const mem = botMemory(room, bot);
+        const job = jobs[0];
+        const key = `n|${room.nightNumber}|${turn}|${job}`;
+
+        if (!mem.plan || mem.plan.key !== key) {
+            const range = BOT_TIMING[bot.botLevel].night;
+            const remaining = room.nightTurnEndsAt ? room.nightTurnEndsAt - now : 20000;
+            const delay = Math.min(botRand(range[0], range[1]) * 1000, Math.max(800, remaining - 2500));
+
+            mem.plan = { key, at: now + delay, tries: 0 };
+            return;
+        }
+
+        if (now < mem.plan.at || mem.plan.tries >= 3) return;
+
+        mem.plan.tries += 1;
+        mem.plan.at = now + 1500;
+
+        botRunNightJob(roomCode, room, bot, job, turn);
+    });
+}
+
+function botDayTick(roomCode, room, now) {
+    const dayKey = String(room.phaseEndsAt || "");
+    const discussion = room.votingOpensAt && now < room.votingOpensAt;
+
+    room.players.forEach(bot => {
+        if (!bot.isBot || !bot.alive || bot.connected === false) return;
+
+        const mem = botMemory(room, bot);
+
+        /* ----- chat (public chat is open all day) ----- */
+        if (!mem.chat || mem.chat.key !== dayKey) {
+            const level = bot.botLevel;
+            const messages =
+                level === "easy" ? (botChance(0.4) ? 1 : 0) :
+                level === "medium" ? (botChance(0.3) ? 2 : 1) :
+                (botChance(0.5) ? 2 : 1);
+
+            const span = Math.max(6000, Math.min(40000, (room.phaseEndsAt || now) - now - 12000));
+            const times = [];
+
+            for (let i = 0; i < messages; i++) times.push(now + 4000 + Math.random() * span);
+
+            mem.chat = { key: dayKey, times: times.sort((a, b) => a - b) };
+        }
+
+        if (mem.chat.times.length && now >= mem.chat.times[0]) {
+            mem.chat.times.shift();
+            botSay(roomCode, bot, botChatText(room, bot, mem));
+        }
+
+        /* ----- vote (only once voting has opened) ----- */
+        if (discussion || room.votes[bot.id]) return;
+
+        const key = `v|${dayKey}`;
+
+        if (!mem.plan || mem.plan.key !== key) {
+            const range = BOT_TIMING[bot.botLevel].vote;
+            const latest = (room.phaseEndsAt || now + 30000) - 5000;
+            const at = Math.min(now + botRand(range[0], range[1]) * 1000, Math.max(now + 500, latest));
+
+            mem.plan = { key, at, tries: 0 };
+            return;
+        }
+
+        if (now < mem.plan.at || mem.plan.tries >= 3) return;
+
+        mem.plan.tries += 1;
+        mem.plan.at = now + 1500;
+
+        const targetId = botPickVote(room, bot, mem);
+
+        if (targetId) botSend(bot, "votePlayer", { roomCode, targetId });
+    });
+}
+
+function destroyBotRoom(roomCode, room) {
+    clearPhaseTimer(room);
+    clearNightTurnTimer(room);
+
+    delete rooms[roomCode];
+    emitPublicMatches();
+}
+
+function botTick() {
+    const now = Date.now();
+
+    Object.keys(rooms).forEach(roomCode => {
+        const room = rooms[roomCode];
+
+        try {
+            if (!room || !room.players || !room.players.some(p => p.isBot)) return;
+
+            const humans = room.players.filter(p => !p.isBot && p.connected !== false);
+
+            // Nobody is here: bots wait, and the room is closed after a while.
+            if (!humans.length) {
+                room._botNoHumanSince = room._botNoHumanSince || now;
+
+                if (now - room._botNoHumanSince > BOT_ROOM_IDLE_MS) {
+                    destroyBotRoom(roomCode, room);
+                }
+
+                return;
+            }
+
+            room._botNoHumanSince = null;
+
+            // A new phase / turn / day always starts with a clean plan, so an old
+            // plan can never stop a bot from acting in round 2, 3, 4 ...
+            const phaseSig = [room.phase, room.nightNumber, room.nightTurn, room.phaseEndsAt, room.hiddenNightTurn].join("|");
+
+            if (room._botPhaseSig !== phaseSig) {
+                room._botPhaseSig = phaseSig;
+                room.players.forEach(p => { if (p.isBot && p.mem) p.mem.plan = null; });
+            }
+
+            if (room.phase === "night") botNightTick(roomCode, room, now);
+            else if (room.phase === "day") botDayTick(roomCode, room, now);
+        } catch (error) {
+            console.error("[bots] tick failed:", error);
+        }
+    });
+}
+
+setInterval(botTick, BOT_TICK_MS);
+
+/* ---------- host controls ---------- */
+
+function botMakeName(room) {
+    const used = new Set(room.players.map(p => String(p.name || "").toLowerCase()));
+    const free = BOT_NAMES.filter(n => !used.has(("🤖 " + n).toLowerCase()));
+    const base = botPick(free.length ? free : BOT_NAMES);
+
+    let name = "🤖 " + base;
+    let number = 2;
+
+    while (used.has(name.toLowerCase())) {
+        name = `🤖 ${base} ${number}`;
+        number += 1;
+    }
+
+    return name;
+}
+
+function botCreate(roomCode, room, level) {
+    const id = "bot_" + crypto.randomBytes(6).toString("hex");
+
+    createBotSocket(id, roomCode);
+
+    const bot = {
+        id,
+        account: null,
+        name: botMakeName(room),
+        role: null,
+        alive: true,
+        connected: true,
+        isBot: true,
+        botLevel: level
+    };
+
+    room.players.push(bot);
+
+    return bot;
+}
+
+function botCleanLevel(value, fallback) {
+    const level = String(value || "").toLowerCase();
+    return BOT_LEVELS.includes(level) ? level : fallback;
+}
+
+io.on("connection", socket => {
+    if (socket.isBot) return;
+
+    function hostRoom(data) {
+        const roomCode = String(data?.roomCode || "").trim().toUpperCase();
+        const room = rooms[roomCode];
+
+        if (!room || room.host !== socket.id) return null;
+
+        if (room.phase !== "lobby") {
+            socket.emit("gameError", "Bots can only be changed in the lobby.");
+            return null;
+        }
+
+        return { roomCode, room };
+    }
+
+    socket.on("botAdd", data => {
+        const found = hostRoom(data);
+        if (!found) return;
+
+        const { roomCode, room } = found;
+        const level = botCleanLevel(data?.level, room.botLevel || "medium");
+        const connected = room.players.filter(p => p.connected !== false).length;
+        const free = getRoomMaxPlayers(room) - connected;
+
+        if (free <= 0) {
+            return socket.emit("gameError", "This room is full. Raise the player limit or remove someone first.");
+        }
+
+        const count = Math.max(1, Math.min(
+            Math.floor(Number(data?.count)) || 1,
+            BOT_MAX_ADD_AT_ONCE,
+            free
+        ));
+
+        room.botLevel = level;
+
+        const added = [];
+
+        for (let i = 0; i < count; i++) added.push(botCreate(roomCode, room, level));
+
+        announce(
+            roomCode,
+            `🤖 ${count} ${BOT_LEVEL_LABEL[level]} bot${count === 1 ? "" : "s"} joined the room.`,
+            "info"
+        );
+
+        emitLobby(roomCode);
+        emitPublicMatches();
+
+        // Some bots say hi in the lobby chat.
+        added.forEach((bot, index) => {
+            if (!botChance(0.6)) return;
+
+            setTimeout(() => {
+                const current = rooms[roomCode];
+
+                if (!current || current.phase !== "lobby") return;
+                if (!current.players.some(p => p.id === bot.id)) return;
+
+                botSend(bot, "sendLobbyMessage", { message: botLine("greet") });
+            }, 1200 + index * 1500 + Math.random() * 1500);
+        });
+    });
+
+    socket.on("botRemove", data => {
+        const found = hostRoom(data);
+        if (!found) return;
+
+        const { roomCode, room } = found;
+        const before = room.players.length;
+
+        room.players = room.players.filter(p => {
+            const remove = p.isBot && (data?.all === true || p.id === data?.botId);
+
+            if (remove) BOT_SOCKETS.delete(p.id);
+
+            return !remove;
+        });
+
+        if (room.players.length === before) return;
+
+        announce(roomCode, data?.all === true ? "🤖 All bots were removed." : "🤖 A bot was removed.", "info");
+
+        emitLobby(roomCode);
+        emitPublicMatches();
+    });
+
+    socket.on("botSetLevel", data => {
+        const found = hostRoom(data);
+        if (!found) return;
+
+        const { roomCode, room } = found;
+        const level = botCleanLevel(data?.level, null);
+
+        if (!level) return;
+
+        room.botLevel = level;
+
+        room.players.forEach(p => {
+            if (p.isBot && (!data?.botId || p.id === data.botId)) p.botLevel = level;
+        });
+
+        emitLobby(roomCode);
+    });
+});
