@@ -12375,6 +12375,7 @@ socket.on("accountCardData", data => {
 
     function fixTextColor(el, cache) {
         if (el.tagName === "OPTION" || el.tagName === "SCRIPT" || el.tagName === "STYLE") return;
+        if (el.closest && el.closest(".pcard, .mwh-card, .mwt-box, .mwt-intro-card, .mwp-pop")) return;   // new dark panels
         const cs = getComputedStyle(el);
         if (cs.visibility === "hidden" || cs.display === "none") return;
         if (cs.webkitBackgroundClip === "text" || cs.backgroundClip === "text") return;     // gradient names
@@ -13940,7 +13941,7 @@ socket.on("accountBanned", data => {
         overlay.innerHTML = "";
 
         const card = document.createElement("div");
-        card.className = "mwp-card";
+        card.className = "mwp-card pcard pc-" + String((data && data.card) || "classic").replace(/[^a-z]/g, "");
 
         const close = document.createElement("button");
         close.type = "button";
@@ -13949,6 +13950,13 @@ socket.on("accountBanned", data => {
         close.setAttribute("aria-label", "Close");
         close.addEventListener("click", closeFullProfile);
         card.appendChild(close);
+
+        const backBtn = document.createElement("button");
+        backBtn.type = "button";
+        backBtn.className = "mwp-back";
+        backBtn.textContent = "← BACK";
+        backBtn.addEventListener("click", closeFullProfile);
+        card.appendChild(backBtn);
 
         if (!data || !data.ok) {
             const message = document.createElement("div");
@@ -13980,7 +13988,8 @@ socket.on("accountBanned", data => {
         const tags = document.createElement("div");
         tags.className = "mwp-tags";
         tags.innerHTML = `<span>⭐ LEVEL ${esc(data.level)}</span><span>🏆 ${esc(data.rankPoints)} rank pts</span>` +
-            (t.mvps ? `<span class="mwp-mvp">👑 MVP ×${esc(t.mvps)}</span>` : "");
+            (t.mvps ? `<span class="mwp-mvp">👑 MVP ×${esc(t.mvps)}</span>` : "") +
+            (data.title ? `<span class="pc-title">${esc(data.title.icon)} ${esc(data.title.name)}</span>` : "");
 
         who.append(name, tags);
         head.append(avatar, who);
@@ -14007,8 +14016,9 @@ socket.on("accountBanned", data => {
             statCell("🔎", "Total Detections", t.detects || 0),
             statCell("🎭", "Favourite Role", t.favouriteRole || "—"),
             statCell("🔥", "Current Win Streak", t.currentStreak || 0),
-            statCell("🏅", "Highest Win Streak", t.bestStreak || 0),
-            statCell("👑", "MVP Awards", t.mvps || 0)
+            statCell("🏆", "Highest Win Streak", t.bestStreak || 0),
+            statCell("👑", "MVP Awards", t.mvps || 0),
+            statCell("🎖️", "Achievements", (data.achievements || []).filter(a => a.unlocked).length + "/" + (data.achievements || []).length)
         ].join("");
         card.appendChild(grid);
 
@@ -14078,12 +14088,11 @@ socket.on("accountBanned", data => {
             hist.innerHTML = data.history.map(m => {
                 let when = "";
                 try { when = new Date(m.t).toLocaleDateString([], { month: "short", day: "numeric" }); } catch (_) { /* ignore */ }
-                return `<div class="mwp-match ${m.won ? "won" : "lost"}">
+                return `<div class="mwp-match ${m.won ? "won" : "lost"}" data-match="${esc(m.id || "")}">
                     <b>${m.won ? "WIN" : "LOSS"}</b>
                     <span>${esc(m.role)} · ${esc(TEAM_LABEL[m.team] || "")}${m.mvp ? " · 👑 MVP" : ""}</span>
                     <em>${esc(m.kills)}🔪 ${esc(m.saves)}🛡️ ${esc(m.detects)}🔎</em>
                     <small>${esc(when)}</small>
-                    ${data.canViewTimeline && m.id && m.hasTimeline ? `<button type="button" class="mwp-timeline-btn" data-match-id="${esc(m.id)}">VIEW TIMELINE</button>` : ""}
                 </div>`;
             }).join("");
         }
@@ -14098,12 +14107,9 @@ socket.on("accountBanned", data => {
             } catch (_) { /* ignore */ }
         }
 
+        if (window.mwProfileExtras) window.mwProfileExtras(card, data);
+
         overlay.appendChild(card);
-        hist.addEventListener("click", event => {
-            const button = event.target.closest(".mwp-timeline-btn");
-            if (!button) return;
-            socket.emit("getMatchTimeline", { matchId: button.dataset.matchId });
-        });
         hydrateAvatars(overlay);
 
         requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -14227,209 +14233,1160 @@ socket.on("accountBanned", data => {
     else boot();
 })();
 
+/* =========================================================
+   MAFIA WARS — PROGRESS SUITE
+   1) Interactive Tutorial (floating box + real-button highlights)
+   2) Match History + Match Timeline
+   3) Animated Profile Cards (picker) + win-streak / unlock popups
+   Everything is saved on the server (Neon) through the account.
+   Uses the globals already defined above: socket, authState, myBadge.
+========================================================= */
+(function mwProgressSuite() {
+
+    const $id = id => document.getElementById(id);
+    const esc = value => String(value == null ? "" : value).replace(/[&<>"']/g, ch => (
+        { "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[ch]
+    ));
+
+    function mk(tag, className, html) {
+        const node = document.createElement(tag);
+        if (className) node.className = className;
+        if (html != null) node.innerHTML = html;
+        return node;
+    }
+
+    function isVisible(node) {
+        if (!node || !node.getClientRects().length) return false;
+        const style = getComputedStyle(node);
+        return style.visibility !== "hidden" && style.display !== "none" && Number(style.opacity) !== 0;
+    }
+
+    function say(message, ms) {
+        if (typeof window.mwToast === "function") window.mwToast(message, ms);
+    }
+
+    function isStaff() {
+        return typeof myBadge !== "undefined" && (myBadge === "admin" || myBadge === "owner");
+    }
+
+    function fmtDate(t, long) {
+        try {
+            return new Date(t).toLocaleDateString([], long
+                ? { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }
+                : { month: "short", day: "numeric" });
+        } catch (_) { return ""; }
+    }
+
+    /* =====================================================
+       1. TUTORIAL
+       Step fields: icon, title, text (HTML), t = list of targets
+       ("#id", any CSS selector, or "text:Some Button"), where =
+       where to find it when it is not on this screen, open =
+       "settings" opens the real Settings page for that step.
+    ===================================================== */
+
+    const TUTORIAL = [
+        {
+            id: "basics", icon: "🎮", name: "Basics", steps: [
+                { icon: "👋", title: "Welcome to Mafia Wars", text: "A hidden-role game: <b>Mafia vs Town</b>. Every night someone secretly acts, every day everyone talks and votes. This tour explains <b>every part of the game</b>. Press <b>NEXT</b> to continue." },
+                { icon: "🔐", title: "Sign in or play as a guest", text: "An <b>account</b> keeps your rank, level, shop points, items, winning streaks, match history and profile cards. <b>Guests</b> can play but are never ranked and nothing is saved. Want an account? Join the Discord server shown on the start page.", t: ["#authLoginBtn", "#authSkipBtn"], where: "First screen of the game" },
+                { icon: "⚙️", title: "Settings", text: "Your control center. <b>Ranks, Role Selection, Help, Shop, Inventory, Music, Appearance, Account, Tutorial, Match History and Profile Cards</b> all open from here.", t: ["#settingsButton"], where: "Home screen, top corner" },
+                { icon: "➕", title: "Create Room", text: "Pick your name and room type (<b>public</b> or <b>private</b>), then share the room code with your friends.", t: ["#createRoom"], where: "Home screen" },
+                { icon: "🔑", title: "Join Room", text: "Type a room code to join. The host can ask to <b>approve</b> each player, so you may wait for a popup to be accepted.", t: ["#joinRoom"], where: "Home screen" },
+                { icon: "⚡", title: "Quick Start", text: "Browse <b>public rooms</b> that are waiting for players and jump straight into one.", t: ["#quickStart"], where: "Home screen" },
+                { icon: "🔁", title: "Rejoin Game", text: "Lost connection or closed the page during a match? <b>REJOIN GAME</b> puts you back in the same match with the same role.", t: ["#rejoinHomeButton"], where: "Appears on the home screen while one of your games is still running" }
+            ]
+        },
+        {
+            id: "lobby", icon: "👑", name: "Lobby", steps: [
+                { icon: "🔢", title: "Room code", text: "This is your room's code. <b>COPY CODE</b> and send it to friends. The host can switch <b>Allow people to join</b> on or off.", t: ["#copyRoomCode", "#displayRoomCode"], where: "Lobby, top" },
+                { icon: "👥", title: "Players", text: "Everyone in the room with their character. The <b>host wears a 👑 crown</b>. Tap a player to open <b>View Account</b>: rank, points, level and full profile.", t: ["#playerList"], where: "Lobby" },
+                { icon: "💬", title: "Lobby chat + whispers", text: "Text chat for players without a mic. To whisper, type <b>/1 hello</b> — the number is the player's number in the list. Nobody else sees the message, the sender or the target.", t: ["#lobbyChat"], where: "Lobby, below the players" },
+                { icon: "🎙️", title: "Voice chat", text: "The host chooses who can use voice. At night only the <b>active team</b> talks, by day all <b>living players</b> talk together, and <b>dead players</b> talk with each other.", t: ["#voiceChatPanel"], where: "Lobby and in-game, Voice Chat box" },
+                { icon: "🎛️", title: "Soundboard", text: "12 sound buttons that <b>everyone in your room hears</b>. The host picks which registered players may play sounds (guests cannot). Set your own volume or mute it. A short cooldown stops spam.", t: ["#soundboardToggle", "text:soundboard"], where: "Inside the Voice Chat box" },
+                { icon: "🤝", title: "Friends", text: "See which friends are <b>online</b>, send requests and <b>join their room</b>.", t: ["[data-mw-link=\"Friends\"]"], where: "Voice Chat box and the music box" },
+                { icon: "📖", title: "Roles", text: "Every role's team, ability and win condition. Tap <b>Details</b> next to a role name for a quick explanation.", t: ["[data-mw-link=\"Roles\"]"], where: "Voice Chat box and the music box" },
+                { icon: "🎭", title: "Role Settings (host)", text: "The host chooses <b>how many of each role</b> per team: <b>Mafia Team, Town Team, Neutral Team</b> and <b>Other</b>. The host also sets night and day timers.", t: ["#mwRoleHub", "text:role settings", "#hostSettings"], where: "Lobby, host only" },
+                { icon: "🎮", title: "Start Game", text: "Only the <b>host</b> can start. Roles are dealt secretly, then <b>Night 1</b> begins.", t: ["#startGame"], where: "Lobby, host only" },
+                { icon: "🎵", title: "Music", text: "<b>ON/OFF</b> and volume for the background songs. Choose your song in <b>Inventory → Music</b>; match music is set in <b>Settings → Music</b>.", t: ["#musicControl"], where: "Bottom corner of the screen" },
+                { icon: "🚪", title: "Leave Room + Guide", text: "<b>LEAVE ROOM</b> exits the lobby (not possible mid-match). <b>GUIDE</b> opens the full rulebook for every role.", t: ["#leaveRoomButton", "#lobbyGuideButton"], where: "Lobby" }
+            ]
+        },
+        {
+            id: "roles", icon: "🎭", name: "Roles", steps: [
+                { icon: "🔴", title: "Mafia team", text: "<b>Mafia</b> kill together at night and talk in Mafia Chat. <b>Godfather</b> looks NOT MAFIA to the Detective; if he dies the whole Mafia team dies. <b>Grandmafia</b> picks a future <b>Baby Mafia</b> on Night 1. <b>Framer</b> frames a player so they look like Mafia." },
+                { icon: "🩺", title: "Town protectors", text: "<b>Doctor</b> protects one player. <b>Bodyguard</b> dies in place of the player they guard. <b>Escort</b> blocks one player's ability for the night. <b>Grandma</b> punishes attackers: the first Mafia member who voted to attack her dies instead." },
+                { icon: "🔎", title: "Town investigators", text: "<b>Detective</b> learns MAFIA / NOT MAFIA. <b>Sheriff</b> learns SUSPICIOUS / NOT SUSPICIOUS (framed players, Jester and Executioner look suspicious). <b>Medium</b> can talk to the dead in Dead Chat." },
+                { icon: "⚖️", title: "Town specials", text: "<b>Vigilante</b> may shoot at night, but 2 innocent kills and the Vigilante dies of guilt. <b>Mayor</b>'s vote counts <b>double</b>. <b>Cupid</b> links two players on Night 1 — if one dies, the other dies too. <b>Civilian</b> has no ability, only a vote." },
+                { icon: "🃏", title: "Neutral roles", text: "<b>Jester</b> wins by being eliminated. <b>Executioner</b> has a secret target and wins if the town votes them out. <b>Amnesiac</b> takes the role and abilities of the first player who dies." },
+                { icon: "🏆", title: "How each side wins", text: "<b>Town</b>: eliminate all Mafia-team players. <b>Mafia</b>: living Mafia equal or outnumber everyone else. <b>Neutral roles</b> win with their own goal — the win screen then says <b>Neutral Team has won</b>." }
+            ]
+        },
+        {
+            id: "match", icon: "🌙", name: "Playing a match", steps: [
+                { icon: "🎭", title: "Your role", text: "Your role, team and ability are shown here. <b>Never reveal your role without a reason.</b>", t: ["#yourRole", "#yourRoleLogo"], where: "In a match" },
+                { icon: "🌙", title: "Night phase", text: "Night turns go <b>one role at a time</b> (for example Mafia, then Doctor, then Detective). Everyone else sees the turn screen. A short pause follows each \"turn over\" popup.", t: ["#phaseTitle", "#phaseTimer"], where: "In a match, top of the screen" },
+                { icon: "🎯", title: "Use your action", text: "Pick a living player, then press <b>CONFIRM</b>. Keep it secret! Special roles get extra panels, like Grandmafia's <b>MAKE BABY MAFIA</b> or Cupid's <b>LINK PLAYERS</b>.", t: ["#confirmAction", "#targetPlayer"], where: "In a match, Action box (hidden when you are dead)" },
+                { icon: "🔴", title: "Mafia chat", text: "A <b>private channel</b> for living Mafia-team players to plan their night.", t: ["#mafiaChatBox"], where: "In a match, Mafia only" },
+                { icon: "☀️", title: "Day + public chat", text: "Discuss what happened, accuse and defend. <b>Only living players</b> can write in the public chat.", t: ["#chatInput", "#chatMessages"], where: "In a match" },
+                { icon: "🗳️", title: "Voting", text: "Vote for one player. The most votes is eliminated; a <b>tie means nobody</b> dies; the <b>Mayor</b> counts double. You can also send quick <b>emotes</b> while voting.", t: ["#gamePlayerList"], where: "In a match, Players list" },
+                { icon: "📢", title: "Announcements", text: "Night results appear here: kills, the Doctor's save, the Detective's findings and other events.", t: ["#announcementBox"], where: "In a match" },
+                { icon: "☠️", title: "When you die", text: "Write your <b>last words</b> — everyone sees them. Then you join the <b>Dead Chat</b> where only dead players talk. The Action box is replaced by the chat.", t: ["#deathRevealOverlay"], where: "Shown when a player is eliminated" },
+                { icon: "📖", title: "Guide button", text: "The full rulebook is always one tap away, in the lobby and during the match.", t: ["#guideButton", "#lobbyGuideButton"], where: "Lobby and in-game" }
+            ]
+        },
+        {
+            id: "over", icon: "🏁", name: "Game over", steps: [
+                { icon: "🏆", title: "Winner screen", text: "Shows which side won: <b>Town</b>, <b>Mafia</b> or the <b>Neutral Team</b>, with the match statistics.", t: ["#gameOverBox"], where: "End of a match" },
+                { icon: "👑", title: "MVP", text: "The server picks the <b>Player of the Match</b> from kills, saves, detections, correct votes, surviving and winning. The host cannot change it.", t: ["#gameOverStats", "#mvpOverlay"], where: "End of a match" },
+                { icon: "🎬", title: "Replay + timeline", text: "<b>Game Replay</b> shows who did what each night. Registered players also get the whole match <b>saved forever</b>: open <b>Settings → Match History → VIEW TIMELINE</b>.", t: ["#mwxReplayInline"], where: "Game-over screen" },
+                { icon: "🔄", title: "Restart or go home", text: "<b>RESTART GAME</b> starts a new match in the same room. <b>BACK TO HOME</b> leaves to the home screen.", t: ["#restartGame", "#backHomeGameOver"], where: "Game-over screen" }
+            ]
+        },
+        {
+            id: "progress", icon: "🏆", name: "Progress", steps: [
+                { icon: "🏅", title: "Ranks and points", text: "Earn <b>rank points</b> from kills, saves, correct detections, correct votes and wins. See your tier, the leaderboard and any player's <b>Details</b>. Spending shop points never lowers your rank.", t: ["text:ranks"], open: "settings", where: "Settings → Ranks" },
+                { icon: "⭐", title: "Levels and XP", text: "Every match earns <b>XP</b>. Level up for medals and rewards. Your level shows on your profile card." },
+                { icon: "🔥", title: "Winning streak", text: "Every win in a row grows your <b>streak</b>. A loss resets the <b>current</b> streak, but your <b>highest streak is saved forever</b>. Special achievements unlock at <b>5, 10, 25 and 50</b> wins in a row." },
+                { icon: "🎴", title: "Animated profile cards", text: "Your profile is an <b>animated card</b> with glowing borders and moving light, showing avatar, name, level, wins, streak, badges and your <b>title</b>. Cards glow <b>red/black</b> in the Dark theme and <b>blue/white</b> in the White theme. Unlock new designs by playing, then pick one here.", t: ["text:profile cards"], open: "settings", where: "Settings → Profile Cards" },
+                { icon: "📜", title: "Match History + timeline", text: "Every finished match is saved: winning team, MVP, every night and day, eliminations, votes and announcements. Replay any of them whenever you want.", t: ["text:match history"], open: "settings", where: "Settings → Match History" }
+            ]
+        },
+        {
+            id: "shop", icon: "🛍️", name: "Shop & style", steps: [
+                { icon: "💰", title: "Shop", text: "You earn <b>shop points</b> for every finished game (more for a win). Spend them on character items, name tags, wallpapers, sounds, logos, songs and skins. Registered accounts only.", t: ["text:shop"], open: "settings", where: "Settings → Shop" },
+                { icon: "🎒", title: "Inventory", text: "Everything you own lives here. <b>Equip</b> items, change your name tag, wallpaper, sounds and logo. Purchases stay on your account after logout and server restarts.", t: ["text:inventory"], open: "settings", where: "Settings → Inventory" },
+                { icon: "🧍", title: "Character styles", text: "<b>Style 1</b> is the custom character (faces, hair, shirts, suits, pants, hats, masks, accessories, skin tones). <b>Style 2</b> is a Minecraft-style character with <b>skins</b>. You can switch back any time.", t: ["text:inventory"], open: "settings", where: "Shop / Inventory → Character" },
+                { icon: "🎵", title: "Music", text: "Pick the background song, volume, and whether music plays <b>during matches</b>. Some songs are free, others are bought in the Shop.", t: ["text:music"], open: "settings", where: "Settings → Music" }
+            ]
+        },
+        {
+            id: "settings", icon: "⚙️", name: "Settings & help", steps: [
+                { icon: "🎨", title: "Appearance", text: "Switch between the <b>Dark (red/black)</b> and <b>White (blue/white)</b> themes, and turn UI effects, animations or reduced motion on or off.", t: ["text:appearance"], open: "settings", where: "Settings → Appearance" },
+                { icon: "🔔", title: "Notifications", text: "Choose which updates you get: game events, answers to your questions, rank and points changes, and match notifications.", t: ["text:notifications"], open: "settings", where: "Settings → Notifications" },
+                { icon: "🔊", title: "Sound settings", text: "Separate volume levels for master, speakers, microphone, sound effects and notifications, plus a mute-mic switch.", t: ["text:sound settings"], open: "settings", where: "Settings → Sound Settings" },
+                { icon: "👤", title: "Account", text: "See your username, set a <b>Display Name</b> other players see, and view your password or PIN (hidden as dots; showing one asks for the other). Forgot them? Contact the Discord server.", t: ["text:account"], open: "settings", where: "Settings → Account" },
+                { icon: "🆘", title: "Help", text: "Send a <b>Question</b>, <b>Suggestion</b> or <b>Bug report</b>. Admins and the Owner answer, and you can read the answer later.", t: ["#settingsHelpOption", "text:help"], open: "settings", where: "Settings → Help" },
+                { icon: "🎓", title: "Replay this tutorial", text: "You can close this tour any time with <b>✕</b> and replay it from <b>Settings → Tutorial</b>.", t: ["text:tutorial"], open: "settings", where: "Settings → Tutorial" }
+            ]
+        },
+        {
+            id: "staff", icon: "🛡️", name: "Staff tools", staff: true, steps: [
+                { icon: "🛡️", title: "Help Center", text: "<b>Admins and the Owner</b> can read every request, see the player's username, request type and message, write an answer and close the request. Players cannot answer each other.", t: ["#settingsHelpOption", "text:help"], open: "settings", where: "Settings → Help" },
+                { icon: "👑", title: "Owner tools", text: "<b>Owner only:</b> Shop Management (set prices), Add Account / List Accounts (search, view, edit, delete, gifts), Packages, soundboard and role setup.", t: ["text:shop management", "text:add account", "text:package"], open: "settings", where: "Settings (Owner)" }
+            ]
+        }
+    ];
+
+    const FINAL_STEP = { icon: "🎉", title: "You're ready!", text: "That's every part of Mafia Wars. Good luck — <b>trust no one</b>. You can replay this tour any time from <b>Settings → Tutorial</b>." };
+
+    let tutSteps = [];
+    let tutIndex = 0;
+    let tutRunning = false;
+    let tutRoot = null;
+    let tutSettingsOpened = false;
+    let tutTimer = null;
+
+    function buildSteps() {
+        const out = [];
+        TUTORIAL.forEach(chapter => {
+            if (chapter.staff && !isStaff()) return;
+            chapter.steps.forEach(step => out.push({ ...step, chapterId: chapter.id, chapterIcon: chapter.icon, chapterName: chapter.name }));
+        });
+        out.push({ ...FINAL_STEP, chapterId: "end", chapterIcon: "🎉", chapterName: "Done" });
+        return out;
+    }
+
+    function findTarget(step) {
+        const list = step && step.t ? step.t : [];
+        for (const sel of list) {
+            let node = null;
+            try {
+                if (sel.indexOf("text:") === 0) {
+                    const needle = sel.slice(5).toLowerCase();
+                    node = Array.from(document.querySelectorAll("button, .settings-option, a, [role=button]"))
+                        .find(b => isVisible(b) && b.textContent.toLowerCase().indexOf(needle) !== -1);
+                } else {
+                    node = document.querySelector(sel);
+                }
+            } catch (_) { node = null; }
+            if (node && isVisible(node)) return node;
+        }
+        return null;
+    }
+
+    function ensureTutRoot() {
+        if (tutRoot) return tutRoot;
+        tutRoot = mk("div", "mwt-root");
+        tutRoot.id = "mwTutorial";
+        tutRoot.innerHTML = `
+            <div class="mwt-dim"></div>
+            <div class="mwt-spot"></div>
+            <div class="mwt-box" role="dialog" aria-label="Tutorial">
+                <div class="mwt-top">
+                    <span class="mwt-chapter"></span>
+                    <span class="mwt-count"></span>
+                    <button type="button" class="mwt-menu" aria-label="Chapters">☰</button>
+                    <button type="button" class="mwt-close" aria-label="Close tutorial">✕</button>
+                </div>
+                <div class="mwt-bar"><i></i></div>
+                <div class="mwt-body">
+                    <div class="mwt-icon"></div>
+                    <div class="mwt-copy"><h3 class="mwt-title"></h3><p class="mwt-text"></p><p class="mwt-where"></p></div>
+                </div>
+                <div class="mwt-chapters"></div>
+                <div class="mwt-actions">
+                    <button type="button" class="mwt-prev">◀ PREVIOUS</button>
+                    <button type="button" class="mwt-next">NEXT ▶</button>
+                </div>
+            </div>`;
+        document.body.appendChild(tutRoot);
+
+        tutRoot.querySelector(".mwt-prev").addEventListener("click", () => goStep(tutIndex - 1));
+        tutRoot.querySelector(".mwt-next").addEventListener("click", () => {
+            if (tutIndex >= tutSteps.length - 1) stopTutorial(true);
+            else goStep(tutIndex + 1);
+        });
+        tutRoot.querySelector(".mwt-close").addEventListener("click", () => stopTutorial(true));
+        tutRoot.querySelector(".mwt-menu").addEventListener("click", () => tutRoot.classList.toggle("mwt-menu-open"));
+        return tutRoot;
+    }
+
+    function renderChapterMenu() {
+        const holder = tutRoot.querySelector(".mwt-chapters");
+        holder.innerHTML = "";
+        const seen = new Set();
+        tutSteps.forEach((step, index) => {
+            if (seen.has(step.chapterId)) return;
+            seen.add(step.chapterId);
+            const b = mk("button", "mwt-chip" + (step.chapterId === tutSteps[tutIndex].chapterId ? " on" : ""), `${esc(step.chapterIcon)} ${esc(step.chapterName)}`);
+            b.type = "button";
+            b.addEventListener("click", () => { tutRoot.classList.remove("mwt-menu-open"); goStep(index); });
+            holder.appendChild(b);
+        });
+    }
+
+    function closeTutSettings() {
+        if (tutSettingsOpened && typeof closeSettings === "function") closeSettings();
+        tutSettingsOpened = false;
+    }
+
+    function goStep(index) {
+        if (!tutRunning) return;
+        index = Math.max(0, Math.min(tutSteps.length - 1, index));
+        tutIndex = index;
+        const step = tutSteps[index];
+
+        /* Real Settings page for the steps that explain Settings buttons. */
+        const home = $id("homeScreen");
+        const onHome = home && getComputedStyle(home).display !== "none";
+        if (step.open === "settings" && onHome && typeof openSettings === "function") {
+            const overlay = $id("settingsOverlay");
+            if (!overlay || getComputedStyle(overlay).display === "none" || (typeof settingsView !== "undefined" && settingsView !== "main")) {
+                openSettings("main");
+            }
+            tutSettingsOpened = true;
+        } else {
+            closeTutSettings();
+        }
+
+        const box = ensureTutRoot().querySelector(".mwt-box");
+        box.querySelector(".mwt-chapter").textContent = `${step.chapterIcon} ${step.chapterName.toUpperCase()}`;
+        box.querySelector(".mwt-count").textContent = `${index + 1} / ${tutSteps.length}`;
+        box.querySelector(".mwt-bar i").style.width = Math.round(((index + 1) / tutSteps.length) * 100) + "%";
+        box.querySelector(".mwt-icon").textContent = step.icon;
+        box.querySelector(".mwt-title").textContent = step.title;
+        box.querySelector(".mwt-text").innerHTML = step.text;
+        box.querySelector(".mwt-prev").disabled = index === 0;
+        box.querySelector(".mwt-next").textContent = index >= tutSteps.length - 1 ? "FINISH ✔" : "NEXT ▶";
+        tutRoot.classList.remove("mwt-menu-open");
+        renderChapterMenu();
+
+        tutRoot.dataset.found = "";
+        setTimeout(() => {
+            const target = findTarget(step);
+            if (target) {
+                try {
+                    const r = target.getBoundingClientRect();
+                    if (r.top < 60 || r.bottom > window.innerHeight - 60) target.scrollIntoView({ block: "center", behavior: "smooth" });
+                } catch (_) { /* ignore */ }
+            }
+            layoutTutorial();
+        }, 120);
+        layoutTutorial();
+    }
+
+    function layoutTutorial() {
+        if (!tutRunning || !tutRoot) return;
+        const step = tutSteps[tutIndex];
+        const target = findTarget(step);
+        const spot = tutRoot.querySelector(".mwt-spot");
+        const box = tutRoot.querySelector(".mwt-box");
+        const where = tutRoot.querySelector(".mwt-where");
+        const dim = tutRoot.querySelector(".mwt-dim");
+
+        if (target) {
+            const r = target.getBoundingClientRect();
+            const pad = 6;
+            spot.style.display = "block";
+            spot.style.left = Math.max(0, r.left - pad) + "px";
+            spot.style.top = Math.max(0, r.top - pad) + "px";
+            spot.style.width = (r.width + pad * 2) + "px";
+            spot.style.height = (r.height + pad * 2) + "px";
+            dim.style.display = "none";
+            where.textContent = "";
+            where.style.display = "none";
+
+            const boxH = box.offsetHeight || 220;
+            const below = window.innerHeight - r.bottom;
+            const above = r.top;
+            box.classList.remove("mwt-center");
+            if (below >= boxH + 24 || below >= above) {
+                box.style.top = Math.min(window.innerHeight - boxH - 10, r.bottom + 16) + "px";
+            } else {
+                box.style.top = Math.max(10, r.top - boxH - 16) + "px";
+            }
+            box.style.bottom = "auto";
+        } else {
+            spot.style.display = "none";
+            dim.style.display = "block";
+            box.classList.add("mwt-center");
+            box.style.top = "";
+            box.style.bottom = "";
+            if (step.where) {
+                where.textContent = "📍 Where: " + step.where;
+                where.style.display = "block";
+            } else {
+                where.textContent = "";
+                where.style.display = "none";
+            }
+        }
+    }
+
+    function startTutorial(fromIndex) {
+        closeIntro();
+        tutSteps = buildSteps();
+        tutRunning = true;
+        const root = ensureTutRoot();
+        root.style.display = "block";
+        document.body.classList.add("mwt-active");
+        goStep(typeof fromIndex === "number" ? fromIndex : 0);
+        clearInterval(tutTimer);
+        tutTimer = setInterval(layoutTutorial, 300);
+    }
+
+    function stopTutorial(markFinished) {
+        tutRunning = false;
+        clearInterval(tutTimer);
+        closeTutSettings();
+        if (tutRoot) tutRoot.style.display = "none";
+        document.body.classList.remove("mwt-active");
+        if (markFinished) markTutorialDone();
+    }
+
+    window.addEventListener("resize", layoutTutorial);
+    window.addEventListener("scroll", layoutTutorial, true);
+    document.addEventListener("keydown", event => {
+        if (!tutRunning) return;
+        if (event.key === "Escape") stopTutorial(true);
+        else if (event.key === "ArrowRight") tutRoot.querySelector(".mwt-next").click();
+        else if (event.key === "ArrowLeft") tutRoot.querySelector(".mwt-prev").click();
+    });
+
+    /* ----- saved completion ----- */
+    const LS_DONE = "mafiaWarsTutorialDone";
+    let accountDone = null;     // null = not asked yet
+    let seenUserKey = null;
+    let introShown = false;
+
+    function localDone() {
+        try { return localStorage.getItem(LS_DONE) === "1"; } catch (_) { return false; }
+    }
+
+    function markTutorialDone() {
+        if (authState.username) {
+            accountDone = true;
+            socket.emit("setTutorialDone", { done: true });
+        } else {
+            try { localStorage.setItem(LS_DONE, "1"); } catch (_) { /* ignore */ }
+        }
+    }
+
+    /* ----- first-time intro: START / SKIP, then "Do you want to see the tutorial? YES / NO" ----- */
+    let introEl = null;
+
+    function closeIntro() {
+        if (introEl) { introEl.remove(); introEl = null; }
+    }
+
+    function showIntro() {
+        closeIntro();
+        introEl = mk("div", "mwt-intro");
+        introEl.innerHTML = `
+            <div class="mwt-intro-card" role="dialog" aria-label="Tutorial introduction">
+                <div class="mwt-intro-glow"></div>
+                <div class="mwt-intro-icon">🎓</div>
+                <h2>WELCOME TO MAFIA WARS</h2>
+                <p>First time here? Take a quick <b>interactive tour</b>. A small box will walk you through every button and feature, and highlight the real buttons on screen.</p>
+                <div class="mwt-intro-actions">
+                    <button type="button" class="mwt-btn-main" data-act="start">▶ START TUTORIAL</button>
+                    <button type="button" class="mwt-btn-dark" data-act="skip">SKIP</button>
+                </div>
+            </div>`;
+        document.body.appendChild(introEl);
+
+        introEl.addEventListener("click", event => {
+            const act = event.target && event.target.dataset && event.target.dataset.act;
+            if (!act) return;
+            const card = introEl.querySelector(".mwt-intro-card");
+
+            if (act === "start" || act === "yes") {
+                startTutorial(0);
+            } else if (act === "skip") {
+                card.innerHTML = `
+                    <div class="mwt-intro-glow"></div>
+                    <div class="mwt-intro-icon">❓</div>
+                    <h2>Do you want to see the tutorial?</h2>
+                    <p>You can always open it later from <b>Settings → Tutorial</b>.</p>
+                    <div class="mwt-intro-actions">
+                        <button type="button" class="mwt-btn-main" data-act="yes">YES</button>
+                        <button type="button" class="mwt-btn-dark" data-act="no">NO</button>
+                    </div>`;
+            } else if (act === "no") {
+                closeIntro();
+                markTutorialDone();
+            }
+        });
+    }
+
+    function checkIntro() {
+        if (introShown || tutRunning) return;
+
+        const userKey = authState.username || "guest";
+        if (userKey !== seenUserKey) {
+            seenUserKey = userKey;
+            accountDone = null;
+            introShown = false;
+        }
+
+        const home = $id("homeScreen");
+        if (!home || getComputedStyle(home).display === "none" || !authState.entered) return;
+
+        if (authState.username) {
+            if (accountDone === null) {
+                accountDone = undefined;   // asked, waiting for the answer
+                socket.emit("getTutorialState", reply => { accountDone = Boolean(reply && reply.done); });
+                return;
+            }
+            if (accountDone === undefined || accountDone === true) return;
+        } else if (localDone()) {
+            return;
+        }
+
+        introShown = true;
+        showIntro();
+    }
+
+    setInterval(checkIntro, 900);
+
+    /* =====================================================
+       2. MATCH HISTORY + TIMELINE
+    ===================================================== */
+
+    let histEl = null;
+    let timelineEl = null;
+    let waitingTimeline = null;
+
+    function ensureHistOverlay() {
+        if (histEl) return histEl;
+        histEl = mk("div", "mwh-overlay");
+        histEl.id = "mwHistoryOverlay";
+        histEl.style.display = "none";
+        histEl.addEventListener("click", event => { if (event.target === histEl) histEl.style.display = "none"; });
+        document.body.appendChild(histEl);
+        return histEl;
+    }
+
+    function openHistory() {
+        if (typeof closeSettings === "function") closeSettings();
+        const overlay = ensureHistOverlay();
+        overlay.innerHTML = `<div class="mwh-card"><button type="button" class="mwh-x" data-close>✕</button><div class="mwh-empty">Loading your matches…</div></div>`;
+        overlay.style.display = "flex";
+        overlay.querySelector("[data-close]").addEventListener("click", () => { overlay.style.display = "none"; });
+        socket.emit("getMyMatchHistory");
+    }
+
+    socket.on("myMatchHistory", data => {
+        if (!histEl || histEl.style.display === "none") return;
+
+        const card = mk("div", "mwh-card");
+        card.innerHTML = `<button type="button" class="mwh-x" data-close>✕</button><h2 class="mwh-title">📜 MATCH HISTORY</h2>`;
+
+        if (!data || !data.ok) {
+            card.appendChild(mk("div", "mwh-empty", esc((data && data.error) || "Sign in to keep a match history.")));
+        } else {
+            card.appendChild(mk("div", "mwh-streak",
+                `<span>🔥 Current streak <b>${esc(data.currentStreak)}</b></span><span>🏆 Highest streak <b>${esc(data.bestStreak)}</b></span><span>🎮 Saved matches <b>${esc((data.matches || []).length)}</b></span>`));
+
+            if (!data.matches || !data.matches.length) {
+                card.appendChild(mk("div", "mwh-empty", "No finished matches yet. Play a match and it will show up here."));
+            } else {
+                const list = mk("div", "mwh-list");
+                data.matches.forEach(m => {
+                    const row = mk("div", "mwh-row " + (m.won ? "won" : "lost"));
+                    const team = { mafia: "Mafia Team", civilian: "Civilian Team", neutral: "Neutral Team" }[m.team] || "";
+                    row.innerHTML = `
+                        <div class="mwh-res">${m.won ? "WIN" : "LOSS"}</div>
+                        <div class="mwh-main">
+                            <b>${esc(m.role)}${team ? " · " + esc(team) : ""}${m.mvp ? " · 👑 MVP" : ""}</b>
+                            <span>🏁 ${esc(m.winner || "—")} won${m.mvpName ? " · MVP " + esc(m.mvpName) : ""}${m.nights ? " · " + esc(m.nights) + " night" + (m.nights === 1 ? "" : "s") : ""}</span>
+                        </div>
+                        <div class="mwh-kd">${esc(m.kills)}🔪 ${esc(m.saves)}🛡️ ${esc(m.detects)}🔎</div>
+                        <div class="mwh-date">${esc(fmtDate(m.t))}</div>
+                        <button type="button" class="mwh-view" data-id="${esc(m.id)}">📜 VIEW TIMELINE</button>`;
+                    list.appendChild(row);
+                });
+                card.appendChild(list);
+            }
+        }
+
+        histEl.innerHTML = "";
+        histEl.appendChild(card);
+        card.querySelector("[data-close]").addEventListener("click", () => { histEl.style.display = "none"; });
+        card.querySelectorAll(".mwh-view").forEach(button =>
+            button.addEventListener("click", () => openTimeline(button.dataset.id)));
+    });
+
+    function ensureTimelineOverlay() {
+        if (timelineEl) return timelineEl;
+        timelineEl = mk("div", "mwh-overlay mwh-top");
+        timelineEl.id = "mwTimelineOverlay";
+        timelineEl.style.display = "none";
+        timelineEl.addEventListener("click", event => { if (event.target === timelineEl) timelineEl.style.display = "none"; });
+        document.body.appendChild(timelineEl);
+        return timelineEl;
+    }
+
+    function openTimeline(id) {
+        if (!id) return;
+        const overlay = ensureTimelineOverlay();
+        waitingTimeline = String(id);
+        overlay.innerHTML = `<div class="mwh-card"><button type="button" class="mwh-x" data-close>✕</button><div class="mwh-empty">Loading timeline…</div></div>`;
+        overlay.style.display = "flex";
+        overlay.querySelector("[data-close]").addEventListener("click", () => { overlay.style.display = "none"; });
+        socket.emit("getMatchTimeline", { id: String(id) });
+    }
+
+    window.mwOpenTimeline = openTimeline;
+
+    const FILTERS = [
+        { id: "all", label: "ALL" },
+        { id: "death", label: "☠️ ELIMINATIONS" },
+        { id: "vote", label: "🗳️ VOTES" },
+        { id: "announce", label: "📢 ANNOUNCEMENTS" },
+        { id: "action", label: "🌙 NIGHT ACTIONS" }
+    ];
+
+    function renderTimeline(match) {
+        const overlay = ensureTimelineOverlay();
+        const card = mk("div", "mwh-card mwh-wide");
+        card.innerHTML = `<button type="button" class="mwh-x" data-close>✕</button><h2 class="mwh-title">🎬 MATCH TIMELINE</h2>`;
+
+        const winnerClass = /Mafia/.test(match.winner) ? "mafia" : /Civilian/.test(match.winner) ? "civilian" : "neutral";
+        card.appendChild(mk("div", "mwh-banner mwh-" + winnerClass, `
+            <div class="mwh-banner-win">🏁 ${esc(match.winner)} won</div>
+            <div class="mwh-banner-sub">${match.mvp ? "👑 MVP: <b>" + esc(match.mvp.name) + "</b> (" + esc(match.mvp.role) + ")" : ""} · ${esc(match.nights || 1)} night${(match.nights || 1) === 1 ? "" : "s"} · ${esc(fmtDate(match.t, true))}</div>`));
+
+        const players = mk("div", "mwh-players");
+        (match.players || []).forEach(p => {
+            players.appendChild(mk("div", "mwh-player " + (p.won ? "won" : "lost") + (p.alive ? "" : " dead"),
+                `<b>${p.mvp ? "👑 " : ""}${esc(p.name)}</b><span>${esc(p.startRole)}${p.role !== p.startRole ? " → " + esc(p.role) : ""}</span><em>${p.won ? "WON" : "LOST"}${p.alive ? "" : " · ☠️"}</em>`));
+        });
+        card.appendChild(players);
+
+        const bar = mk("div", "mwh-filters");
+        const list = mk("div", "mwh-timeline");
+        let active = "all";
+
+        function paint() {
+            list.innerHTML = "";
+            const entries = Array.isArray(match.timeline) ? match.timeline : [];
+            let group = null;
+            let groupHead = null;
+            let shown = 0;
+
+            entries.forEach(entry => {
+                if (entry.k === "phase") {
+                    group = mk("div", "mwh-group " + (entry.ph === "day" ? "day" : "night"));
+                    groupHead = mk("div", "mwh-phase", esc(entry.x));
+                    group.appendChild(groupHead);
+                    group._count = 0;
+                    list.appendChild(group);
+                    return;
+                }
+                if (active !== "all" && entry.k !== active) return;
+                if (!group) {
+                    group = mk("div", "mwh-group night");
+                    group.appendChild(mk("div", "mwh-phase", "🎬 Start of the match"));
+                    group._count = 0;
+                    list.appendChild(group);
+                }
+                group.appendChild(mk("div", "mwh-ev k-" + esc(entry.k), esc(entry.x)));
+                group._count++;
+                shown++;
+            });
+
+            if (active !== "all") list.querySelectorAll(".mwh-group").forEach(g => { if (!g._count) g.remove(); });
+            if (!shown && active !== "all") list.appendChild(mk("div", "mwh-empty", "Nothing of this kind happened in this match."));
+            if (!entries.length) list.appendChild(mk("div", "mwh-empty", "This match has no recorded events."));
+        }
+
+        FILTERS.forEach(f => {
+            const b = mk("button", "mwh-filter" + (f.id === active ? " on" : ""), f.label);
+            b.type = "button";
+            b.addEventListener("click", () => {
+                active = f.id;
+                bar.querySelectorAll(".mwh-filter").forEach(x => x.classList.toggle("on", x === b));
+                paint();
+            });
+            bar.appendChild(b);
+        });
+
+        card.append(bar, list);
+        overlay.innerHTML = "";
+        overlay.appendChild(card);
+        overlay.style.display = "flex";
+        card.querySelector("[data-close]").addEventListener("click", () => { overlay.style.display = "none"; });
+        paint();
+    }
+
+    socket.on("matchTimeline", data => {
+        if (!timelineEl || timelineEl.style.display === "none") return;
+        if (!data || !data.ok) {
+            timelineEl.innerHTML = `<div class="mwh-card"><button type="button" class="mwh-x" data-close>✕</button><div class="mwh-empty">${esc((data && data.error) || "Could not load this match.")}</div></div>`;
+            timelineEl.querySelector("[data-close]").addEventListener("click", () => { timelineEl.style.display = "none"; });
+            return;
+        }
+        if (waitingTimeline && data.match && String(data.match.id) !== waitingTimeline) return;
+        renderTimeline(data.match);
+    });
+
+    /* =====================================================
+       3. PROFILE CARDS (picker) + UNLOCK POPUPS
+    ===================================================== */
+
+    let cardEl = null;
+
+    function ensureCardOverlay() {
+        if (cardEl) return cardEl;
+        cardEl = mk("div", "mwh-overlay");
+        cardEl.id = "mwCardOverlay";
+        cardEl.style.display = "none";
+        cardEl.addEventListener("click", event => { if (event.target === cardEl) cardEl.style.display = "none"; });
+        document.body.appendChild(cardEl);
+        return cardEl;
+    }
+
+    function openCardPicker() {
+        if (typeof closeSettings === "function") closeSettings();
+        const overlay = ensureCardOverlay();
+        overlay.innerHTML = `<div class="mwh-card"><button type="button" class="mwh-x" data-close>✕</button><div class="mwh-empty">Loading your cards…</div></div>`;
+        overlay.style.display = "flex";
+        overlay.querySelector("[data-close]").addEventListener("click", () => { overlay.style.display = "none"; });
+        socket.emit("getProfileCards");
+    }
+
+    window.mwOpenCardPicker = openCardPicker;
+
+    socket.on("profileCards", data => {
+        if (!cardEl || cardEl.style.display === "none") return;
+
+        const card = mk("div", "mwh-card mwh-wide");
+        card.innerHTML = `<button type="button" class="mwh-x" data-close>✕</button><h2 class="mwh-title">🎴 PROFILE CARDS</h2>`;
+
+        if (!data || !data.ok) {
+            card.appendChild(mk("div", "mwh-empty", esc((data && data.error) || "Sign in to use profile cards.")));
+        } else {
+            const sum = data.summary || {};
+            const name = authState.displayName || authState.username || "PLAYER";
+            const unlocked = data.cards.filter(c => c.unlocked).length;
+            card.appendChild(mk("div", "mwh-sub", `Unlocked <b>${unlocked}/${data.cards.length}</b>. Cards animate in <b>red/black</b> (Dark theme) and <b>blue/white</b> (White theme). Tap an unlocked card to use it.`));
+
+            const grid = mk("div", "pc-grid");
+            data.cards.forEach(c => {
+                const tile = mk("div", "pc-tile");
+                const preview = mk("div", "pcard pc-prev pc-" + esc(c.id) + (c.unlocked ? "" : " pc-locked"), `
+                    <div class="pc-prev-name">${esc(name)}</div>
+                    <div class="pc-prev-title">${data.title ? esc(data.title.icon) + " " + esc(data.title.name) : ""}</div>
+                    <div class="pc-prev-stats"><span>⭐ Lv ${esc(sum.level || 1)}</span><span>🏆 ${esc(sum.wins || 0)}</span><span>🔥 ${esc(sum.streak || 0)}</span></div>
+                    ${c.unlocked ? "" : `<div class="pc-lock">🔒</div>`}`);
+                const label = mk("div", "pc-label", `<b>${esc(c.name)}</b><small>${c.unlocked ? (c.selected ? "✔ IN USE" : "UNLOCKED") : "🔒 " + esc(c.hint)}</small>`);
+                const button = mk("button", "pc-use" + (c.selected ? " on" : ""), c.selected ? "IN USE" : c.unlocked ? "USE THIS CARD" : "LOCKED");
+                button.type = "button";
+                button.disabled = !c.unlocked || c.selected;
+                button.addEventListener("click", () => socket.emit("selectProfileCard", { id: c.id }));
+                tile.append(preview, label, button);
+                grid.appendChild(tile);
+            });
+            card.appendChild(grid);
+
+            if (data.changed) {
+                say("🎴 Profile card changed.");
+                /* Refresh an open profile so the new design shows right away. */
+                const profile = $id("mwProfileOverlay");
+                if (profile && profile.style.display !== "none" && typeof window.openFullProfile === "function" && authState.username) {
+                    window.openFullProfile(authState.username);
+                }
+            }
+        }
+
+        cardEl.innerHTML = "";
+        cardEl.appendChild(card);
+        card.querySelector("[data-close]").addEventListener("click", () => { cardEl.style.display = "none"; });
+    });
+
+    /* ----- extra pieces inside the existing profile popup ----- */
+    window.mwProfileExtras = function (card, data) {
+        try {
+            if (!card || !data || !data.ok) return;
+            const t = data.totals || {};
+            const own = Boolean(authState.username && data.username && data.username === authState.username);
+
+            /* Winning streak + 5 / 10 / 25 / 50 milestones. */
+            const best = Number(t.bestStreak) || 0;
+            const miles = [5, 10, 25, 50].map(n => `<i class="${best >= n ? "on" : ""}"><b>${n}</b><small>${best >= n ? "✔" : "🔒"}</small></i>`).join("");
+            const strip = mk("div", "pc-streak", `
+                <div class="pc-streak-top"><span>🔥 WIN STREAK <b>${esc(t.currentStreak || 0)}</b></span><span>BEST <b>${esc(best)}</b></span></div>
+                <div class="pc-miles">${miles}</div>`);
+            const level = card.querySelector(".mwp-level");
+            if (level && level.nextSibling) card.insertBefore(strip, level.nextSibling);
+            else card.appendChild(strip);
+
+            if (own) {
+                const row = mk("div", "pc-own-row");
+                const cards = mk("button", "pc-own-btn", "🎴 CHANGE CARD");
+                cards.type = "button";
+                cards.addEventListener("click", openCardPicker);
+                const hist = mk("button", "pc-own-btn", "📜 MATCH HISTORY");
+                hist.type = "button";
+                hist.addEventListener("click", openHistory);
+                row.append(cards, hist);
+                card.insertBefore(row, strip.nextSibling);
+
+                card.querySelectorAll(".mwp-match[data-match]").forEach(rowEl => {
+                    if (!rowEl.dataset.match) return;
+                    rowEl.classList.add("pc-clickable");
+                    rowEl.title = "Open this match's timeline";
+                    rowEl.addEventListener("click", () => openTimeline(rowEl.dataset.match));
+                });
+            }
+        } catch (error) {
+            console.error("profile extras failed:", error);
+        }
+    };
+
+    /* ----- popups after a match: streak, achievements, new cards ----- */
+    let popHost = null;
+    function popup(html, kind) {
+        if (!popHost) {
+            popHost = mk("div", "mwp-pop-host");
+            document.body.appendChild(popHost);
+        }
+        const node = mk("div", "mwp-pop " + (kind || ""), html);
+        popHost.appendChild(node);
+        requestAnimationFrame(() => node.classList.add("show"));
+        setTimeout(() => {
+            node.classList.remove("show");
+            setTimeout(() => node.remove(), 500);
+        }, 6500);
+    }
+
+    socket.on("progressUnlocks", data => {
+        if (!data) return;
+        let delay = 0;
+        const queue = fn => { setTimeout(fn, delay); delay += 1200; };
+
+        if (data.won && data.streak >= 2) {
+            queue(() => popup(`<i>🔥</i><div><b>${esc(data.streak)} WIN STREAK</b><small>Highest streak: ${esc(data.bestStreak)}</small></div>`, "streak"));
+        }
+        (data.achievements || []).forEach(a =>
+            queue(() => popup(`<i>${esc(a.icon)}</i><div><b>ACHIEVEMENT UNLOCKED</b><small>${esc(a.name)} — ${esc(a.desc)}</small></div>`, "ach")));
+        (data.cards || []).forEach(c =>
+            queue(() => popup(`<i>🎴</i><div><b>NEW PROFILE CARD</b><small>${esc(c.name)} — pick it in Settings → Profile Cards</small></div>`, "card")));
+    });
+
+    /* =====================================================
+       4. Settings buttons + replay buttons in lobby / match
+    ===================================================== */
+
+    function addSettingsButtons() {
+        const page = $id("settingsPage");
+        const grid = page && page.querySelector(".settings-grid");
+        if (!grid || grid.querySelector("[data-mw-suite]")) return;
+
+        const add = (icon, title, text, handler) => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "settings-option settings-category";
+            button.dataset.mwSuite = "1";
+            button.innerHTML = `<span class="settings-icon">${icon}</span><span class="settings-copy"><strong>${title}</strong><span>${text}</span></span>`;
+            button.addEventListener("click", handler);
+            grid.appendChild(button);
+        };
+
+        add("🎓", "Tutorial", "Interactive tour of every feature", () => {
+            if (typeof closeSettings === "function") closeSettings();
+            setTimeout(() => startTutorial(0), 120);
+        });
+        add("📜", "Match History", "Finished matches, timelines, MVP and winners", openHistory);
+        add("🎴", "Profile Cards", "Animated cards, streak rewards and titles", openCardPicker);
+    }
+
+    if (typeof renderSettingsPage === "function") {
+        const baseRenderSettingsPage = renderSettingsPage;
+        renderSettingsPage = function (view) {
+            const result = baseRenderSettingsPage.apply(this, arguments);
+            if (view === "main") addSettingsButtons();
+            return result;
+        };
+    }
+
+    function addReplayButtons() {
+        [["lobbyGuideButton", "mwTutLobbyBtn"], ["guideButton", "mwTutGameBtn"]].forEach(([anchorId, newId]) => {
+            const anchor = $id(anchorId);
+            if (!anchor || $id(newId)) return;
+            const button = mk("button", "guide-button mwt-replay-btn", "🎓 TUTORIAL");
+            button.id = newId;
+            button.type = "button";
+            button.addEventListener("click", () => startTutorial(0));
+            anchor.insertAdjacentElement("afterend", button);
+        });
+    }
+
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", addReplayButtons);
+    else addReplayButtons();
+
+})();
+
 
 /* =========================================================
-   MAFIA WARS TUTORIAL + SAVED MATCH TIMELINE
-   Uses the existing account socket session and existing Neon-backed
-   accounts store. Guests keep tutorial completion in local storage.
+   BOTS (lobby)
+   - Host: "🤖 BOTS" card under the player list with ADD BOTS, REMOVE ALL
+     and a quick level switch for every bot.
+   - ADD BOTS opens a popup that asks how many bots and the level
+     (Easy / Medium / Hard).
+   - Every bot shows a "🤖 BOT · LEVEL" badge in the lobby and in the game.
+     In the lobby the host can click the badge to change that bot's level
+     and use ✕ to remove it.
+   The bots themselves run on the server (see server.js).
 ========================================================= */
 (function () {
     "use strict";
-    const tutorialPages = [
-        ["WELCOME TO MAFIA WARS", "Your goal depends on your secret role. Work with your team, pay attention to announcements and use your abilities at the right time."],
-        ["THE LOBBY", "Create a room to host a match or join a room with its room code. Wait for the host to configure the match before the game begins."],
-        ["HOST CONTROLS", "The host manages room settings, player limits, role counts and available game packages, then starts the match when everyone is ready."],
-        ["PLAYER LIST", "The player list shows who is in the room. Select a player's account card to view their public profile and statistics."],
-        ["CHAT", "Use the public room chat to discuss the game. Some roles or game states may have access to separate private chat areas."],
-        ["YOUR ROLE", "Your role card explains your team and ability. Read it carefully: Mafia, Town and Neutral roles can have different objectives."],
-        ["NIGHT PHASE", "During the night, roles with abilities make their choices. Follow the action prompt and submit your decision before the timer ends."],
-        ["DAY PHASE & VOTING", "During the day, discuss what happened and vote according to the game's rules. Check the timer and confirm your vote carefully."],
-        ["SOUNDBOARDS", "If the host grants you permission, you can play available soundboard effects in the lobby or during the game."],
-        ["REWARDS & INVENTORY", "Registered players can use available rewards and customization options. Your account keeps eligible purchases and equipped items."],
-        ["PROFILE & MATCH HISTORY", "Your profile shows your statistics, achievements and winning streak. Open Match History to revisit completed matches and view saved timelines."],
-        ["YOU'RE READY", "That's the essential guide. You can reopen this tutorial any time using the floating Tutorial button."]
+
+    const LEVELS = [
+        { id: "easy",   icon: "😴", name: "Easy",   text: "Slow and a bit clumsy. Mostly random choices. Great for learning the game." },
+        { id: "medium", icon: "🙂", name: "Medium", text: "Uses what it finds out, follows the crowd and Mafia bots work as a team." },
+        { id: "hard",   icon: "😈", name: "Hard",   text: "Fast and sharp. Remembers everything, holds grudges and talks like a real player." }
     ];
-    let page = 0;
-    let tutorialOverlay = null;
-    let tutorialBox = null;
-    let tutorialHighlight = null;
-    let tutorialAccount = false;
 
-    function saveTutorialDone(done) {
-        try { localStorage.setItem("mwTutorialCompleted", done ? "1" : "0"); } catch (_) {}
-        if (tutorialAccount) socket.emit("saveTutorialState", { completed: Boolean(done) });
-    }
+    const LEVEL_NAME = { easy: "EASY", medium: "MEDIUM", hard: "HARD" };
+    const MAX_AT_ONCE = 10;
 
-    function clearTutorialHighlight() {
-        if (tutorialHighlight) {
-            tutorialHighlight.classList.remove("mw-tutorial-highlight");
-            tutorialHighlight = null;
-        }
-    }
+    const botState = { maxPlayers: 20, level: "medium" };
 
-    function highlightRelevant(text) {
-        clearTutorialHighlight();
-        const terms = {
-            "THE LOBBY": /create room|join room/i,
-            "HOST CONTROLS": /start game|settings|package/i,
-            "PLAYER LIST": /player list|view account/i,
-            "CHAT": /chat/i,
-            "SOUNDBOARDS": /soundboard/i,
-            "REWARDS & INVENTORY": /rewards|inventory/i,
-            "PROFILE & MATCH HISTORY": /profile|statistics|match history/i
-        };
-        const re = terms[text];
-        if (!re) return;
-        const candidates = Array.from(document.querySelectorAll("button,[role='button'],a"));
-        tutorialHighlight = candidates.find(el => {
-            const r = el.getBoundingClientRect();
-            return r.width > 0 && r.height > 0 && re.test((el.innerText || el.textContent || "").trim());
-        }) || null;
-        if (tutorialHighlight) {
-            tutorialHighlight.classList.add("mw-tutorial-highlight");
-            tutorialHighlight.scrollIntoView({ block: "nearest", behavior: "smooth" });
-        }
-    }
+    const escapeText = value => String(value == null ? "" : value).replace(/[&<>"']/g, c => (
+        { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+    ));
 
-    function ensureTutorialOverlay() {
-        if (tutorialOverlay) return tutorialOverlay;
-        tutorialOverlay = document.createElement("div");
-        tutorialOverlay.id = "mwTutorialOverlay";
-        tutorialOverlay.innerHTML = `<div class="mw-tutorial-panel"><div class="mw-tutorial-kicker">MAFIA WARS • PLAYER GUIDE</div><button type="button" class="mw-tutorial-x" aria-label="Close">×</button><div class="mw-tutorial-count"></div><h2></h2><p></p><div class="mw-tutorial-progress"><i></i></div><div class="mw-tutorial-actions"><button type="button" class="mw-tutorial-skip">SKIP</button><span></span><button type="button" class="mw-tutorial-prev">PREVIOUS</button><button type="button" class="mw-tutorial-next">NEXT →</button></div></div>`;
-        document.body.appendChild(tutorialOverlay);
-        tutorialBox = tutorialOverlay.querySelector(".mw-tutorial-panel");
-        tutorialOverlay.querySelector(".mw-tutorial-x").addEventListener("click", closeTutorial);
-        tutorialOverlay.querySelector(".mw-tutorial-skip").addEventListener("click", showSkipConfirmation);
-        tutorialOverlay.querySelector(".mw-tutorial-prev").addEventListener("click", () => { page = Math.max(0, page - 1); renderTutorialPage(); });
-        tutorialOverlay.querySelector(".mw-tutorial-next").addEventListener("click", () => {
-            if (page >= tutorialPages.length - 1) { saveTutorialDone(true); closeTutorial(); return; }
-            page += 1; renderTutorialPage();
-        });
-        return tutorialOverlay;
-    }
+    const lobbyPlayers = () => players.filter(p => p.connected !== false);
+    const lobbyBots = () => lobbyPlayers().filter(p => p.isBot);
 
-    function resetTutorialPanel() {
-        if (!tutorialBox) return;
-        tutorialBox.innerHTML = `<div class="mw-tutorial-kicker">MAFIA WARS • PLAYER GUIDE</div><button type="button" class="mw-tutorial-x" aria-label="Close">×</button><div class="mw-tutorial-count"></div><h2></h2><p></p><div class="mw-tutorial-progress"><i></i></div><div class="mw-tutorial-actions"><button type="button" class="mw-tutorial-skip">SKIP</button><span></span><button type="button" class="mw-tutorial-prev">PREVIOUS</button><button type="button" class="mw-tutorial-next">NEXT →</button></div>`;
-        tutorialBox.querySelector(".mw-tutorial-x").addEventListener("click", closeTutorial);
-        tutorialBox.querySelector(".mw-tutorial-skip").addEventListener("click", showSkipConfirmation);
-        tutorialBox.querySelector(".mw-tutorial-prev").addEventListener("click", () => { page = Math.max(0, page - 1); renderTutorialPage(); });
-        tutorialBox.querySelector(".mw-tutorial-next").addEventListener("click", () => {
-            if (page >= tutorialPages.length - 1) { saveTutorialDone(true); closeTutorial(); }
-            else { page += 1; renderTutorialPage(); }
-        });
-    }
+    socket.on("playerJoined", data => {
+        if (!data || Array.isArray(data)) return;
 
-    function renderTutorialPage() {
-        const overlay = ensureTutorialOverlay();
-        const [heading, body] = tutorialPages[page];
-        overlay.querySelector(".mw-tutorial-count").textContent = `STEP ${page + 1} / ${tutorialPages.length}`;
-        overlay.querySelector("h2").textContent = heading;
-        overlay.querySelector("p").textContent = body;
-        overlay.querySelector(".mw-tutorial-progress i").style.width = `${((page + 1) / tutorialPages.length) * 100}%`;
-        overlay.querySelector(".mw-tutorial-prev").disabled = page === 0;
-        overlay.querySelector(".mw-tutorial-next").textContent = page === tutorialPages.length - 1 ? "FINISH ✓" : "NEXT →";
-        highlightRelevant(heading);
-    }
-
-    function openTutorial() {
-        page = 0;
-        ensureTutorialOverlay().style.display = "flex";
-        renderTutorialPage();
-    }
-
-    function closeTutorial() {
-        if (tutorialOverlay) tutorialOverlay.style.display = "none";
-        clearTutorialHighlight();
-    }
-
-    function showSkipConfirmation() {
-        const panel = tutorialBox;
-        if (!panel) return;
-        panel.innerHTML = `<div class="mw-tutorial-kicker">MAFIA WARS</div><h2>SKIP TUTORIAL?</h2><p>Would you like to see the tutorial now?</p><div class="mw-tutorial-actions mw-tutorial-confirm"><button type="button" class="mw-tutorial-no">NO</button><button type="button" class="mw-tutorial-yes">YES, SHOW ME</button></div>`;
-        panel.querySelector(".mw-tutorial-yes").addEventListener("click", () => { page = 0; resetTutorialPanel(); renderTutorialPage(); });
-        panel.querySelector(".mw-tutorial-no").addEventListener("click", () => { saveTutorialDone(true); closeTutorial(); });
-    }
-
-    function showFirstTimePrompt() {
-        if (document.getElementById("mwTutorialOverlay")) return;
-        const overlay = ensureTutorialOverlay();
-        const panel = tutorialBox;
-        panel.innerHTML = `<div class="mw-tutorial-kicker">WELCOME TO MAFIA WARS</div><h2>NEW TO THE GAME?</h2><p>Would you like a quick guide explaining the game's buttons, phases, roles and features?</p><div class="mw-tutorial-actions mw-tutorial-confirm"><button type="button" class="mw-tutorial-no">SKIP</button><button type="button" class="mw-tutorial-yes">START TUTORIAL</button></div>`;
-        panel.querySelector(".mw-tutorial-yes").addEventListener("click", () => { page = 0; resetTutorialPanel(); renderTutorialPage(); });
-        panel.querySelector(".mw-tutorial-no").addEventListener("click", showSkipConfirmation);
-        overlay.style.display = "flex";
-    }
-
-    function addTutorialButton() {
-        if (document.getElementById("mwTutorialButton")) return;
-        const button = document.createElement("button");
-        button.id = "mwTutorialButton";
-        button.type = "button";
-        button.textContent = "? TUTORIAL";
-        button.title = "Open the Mafia Wars tutorial";
-        button.addEventListener("click", openTutorial);
-        document.body.appendChild(button);
-    }
-
-    socket.on("tutorialState", data => {
-        tutorialAccount = Boolean(data && data.registered);
-        const completed = Boolean(data && data.completed);
-        if (!tutorialAccount) {
-            try { if (localStorage.getItem("mwTutorialCompleted") === "1") return; } catch (_) {}
-        } else if (completed) return;
-        setTimeout(showFirstTimePrompt, 900);
+        if (Number.isFinite(Number(data.maxPlayers))) botState.maxPlayers = Number(data.maxPlayers);
+        if (LEVEL_NAME[data.botLevel]) botState.level = data.botLevel;
     });
 
-    socket.on("authResult", data => {
-        if (!data || !data.ok) return;
-        tutorialAccount = !data.guest;
-        if (tutorialAccount) socket.emit("getTutorialState");
-        else {
-            let done = false;
-            try { done = localStorage.getItem("mwTutorialCompleted") === "1"; } catch (_) {}
-            if (!done) setTimeout(showFirstTimePrompt, 1100);
-        }
-    });
+    /* ---------- the popup that asks for count + level ---------- */
+    function openAddBotsPopup() {
+        document.querySelectorAll(".mw-modal-back.mw-temp").forEach(el => el.remove());
 
-    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", addTutorialButton);
-    else addTutorialButton();
+        const free = Math.max(0, botState.maxPlayers - lobbyPlayers().length);
+        const most = Math.min(MAX_AT_ONCE, free);
 
-    socket.on("matchTimelineData", data => {
-        let overlay = document.getElementById("mwTimelineOverlay");
-        if (!overlay) {
-            overlay = document.createElement("div");
-            overlay.id = "mwTimelineOverlay";
-            overlay.addEventListener("click", event => { if (event.target === overlay) overlay.style.display = "none"; });
-            document.body.appendChild(overlay);
-        }
-        overlay.innerHTML = "";
-        const panel = document.createElement("div");
-        panel.className = "mw-timeline-panel";
-        const close = document.createElement("button");
-        close.className = "mw-timeline-close"; close.type = "button"; close.textContent = "×";
-        close.addEventListener("click", () => { overlay.style.display = "none"; });
-        const title = document.createElement("h2"); title.textContent = "MATCH TIMELINE";
-        panel.append(close, title);
-        if (!data || !data.ok) {
-            const error = document.createElement("p"); error.textContent = data?.error || "Timeline unavailable."; panel.appendChild(error);
-        } else {
-            const match = data.match || {};
-            const meta = document.createElement("p");
-            meta.className = "mw-timeline-meta";
-            meta.textContent = `${match.won ? "VICTORY" : "MATCH COMPLETED"} · ${match.role || "Player"} · ${match.players || 0} players`;
-            panel.appendChild(meta);
-            const list = document.createElement("div"); list.className = "mw-timeline-list";
-            (match.timeline || []).forEach(item => {
-                const row = document.createElement("div"); row.className = "mw-timeline-event";
-                const phase = document.createElement("span"); phase.className = "mw-timeline-phase";
-                phase.textContent = `${item.phase === "day" ? "DAY" : "NIGHT"} ${item.night || 1}`;
-                const text = document.createElement("p"); text.textContent = item.text || "Game event";
-                row.append(phase, text); list.appendChild(row);
+        let count = Math.min(3, Math.max(0, most));
+        let level = botState.level;
+
+        const back = document.createElement("div");
+        back.className = "mw-modal-back mw-temp";
+
+        back.innerHTML = `
+            <div class="mw-modal bots-modal" role="dialog" aria-modal="true">
+                <div class="bots-modal-head">
+                    <span class="bots-modal-icon">🤖</span>
+                    <div>
+                        <h3>Add Bots</h3>
+                        <p>Computer players that fill empty seats. They never earn points or ranks.</p>
+                    </div>
+                </div>
+
+                <div class="bots-modal-label">HOW MANY?</div>
+                <div class="bots-stepper">
+                    <button type="button" class="bots-step" data-step="-1" aria-label="Fewer">−</button>
+                    <div class="bots-count-box"><b data-count>1</b><small data-free></small></div>
+                    <button type="button" class="bots-step" data-step="1" aria-label="More">+</button>
+                </div>
+
+                <div class="bots-modal-label">DIFFICULTY</div>
+                <div class="bots-levels">
+                    ${LEVELS.map(item => `
+                        <button type="button" class="bots-level bots-level-${item.id}" data-level="${item.id}">
+                            <span class="bots-level-icon">${item.icon}</span>
+                            <span class="bots-level-name">${item.name}</span>
+                            <span class="bots-level-text">${escapeText(item.text)}</span>
+                        </button>`).join("")}
+                </div>
+
+                <div class="bots-modal-error" data-error></div>
+
+                <div class="mw-modal-actions">
+                    <button type="button" class="mw-btn ghost" data-cancel>CANCEL</button>
+                    <button type="button" class="mw-btn" data-add>➕ ADD BOTS</button>
+                </div>
+            </div>`;
+
+        const countEl = back.querySelector("[data-count]");
+        const freeEl = back.querySelector("[data-free]");
+        const errorEl = back.querySelector("[data-error]");
+        const addBtn = back.querySelector("[data-add]");
+
+        function paint() {
+            countEl.textContent = most > 0 ? count : 0;
+            freeEl.textContent = most > 0 ? `${free} free seat${free === 1 ? "" : "s"}` : "room is full";
+
+            back.querySelectorAll("[data-level]").forEach(button => {
+                const on = button.dataset.level === level;
+                button.classList.toggle("is-on", on);
+                button.setAttribute("aria-pressed", on ? "true" : "false");
             });
-            if (!list.children.length) { const empty = document.createElement("p"); empty.textContent = "No timeline events were recorded for this match."; list.appendChild(empty); }
-            panel.appendChild(list);
+
+            back.querySelector('[data-step="-1"]').disabled = count <= 0 || most <= 0;
+            back.querySelector('[data-step="1"]').disabled = count >= most;
+            addBtn.disabled = most <= 0;
+            addBtn.textContent = count <= 0 ? "OK (NO BOTS)" : "➕ ADD BOTS";
+            errorEl.textContent = most <= 0 ? "No free seats. Raise the player limit in the room options or remove someone." : "";
         }
-        overlay.appendChild(panel); overlay.style.display = "flex";
+
+        back.querySelectorAll("[data-step]").forEach(button => {
+            button.addEventListener("click", () => {
+                count = Math.min(most, Math.max(0, count + Number(button.dataset.step)));
+                paint();
+            });
+        });
+
+        back.querySelectorAll("[data-level]").forEach(button => {
+            button.addEventListener("click", () => {
+                level = button.dataset.level;
+                paint();
+            });
+        });
+
+        back.querySelector("[data-cancel]").addEventListener("click", () => back.remove());
+
+        addBtn.addEventListener("click", () => {
+            if (most <= 0 || count <= 0) { back.remove(); return; }
+
+            socket.emit("botAdd", { roomCode, count, level });
+            back.remove();
+        });
+
+        back.addEventListener("click", event => {
+            if (event.target === back) back.remove();
+        });
+
+        document.body.appendChild(back);
+        paint();
+    }
+
+    /* ---------- the card under the player list (host only) ---------- */
+    function renderBotsPanel() {
+        const list = document.getElementById("playerList");
+        let panel = document.getElementById("mwBotsPanel");
+
+        if (!list) return;
+
+        if (!isHost) {
+            if (panel) panel.remove();
+            return;
+        }
+
+        if (!panel) {
+            panel = document.createElement("div");
+            panel.id = "mwBotsPanel";
+            panel.className = "bots-panel";
+            list.insertAdjacentElement("afterend", panel);
+        }
+
+        const bots = lobbyBots();
+        const levels = new Set(bots.map(bot => bot.botLevel));
+        const same = levels.size === 1 ? bots[0].botLevel : "";
+
+        panel.innerHTML = `
+            <div class="bots-panel-head">
+                <div class="bots-panel-title">
+                    <span class="bots-panel-icon">🤖</span>
+                    <span>BOTS</span>
+                    <span class="bots-count">${bots.length}</span>
+                </div>
+                <div class="bots-panel-actions">
+                    <button type="button" class="mw-btn" data-bots="add">➕ ADD BOTS</button>
+                    ${bots.length ? '<button type="button" class="mw-btn ghost" data-bots="clear">🧹 REMOVE ALL</button>' : ""}
+                </div>
+            </div>
+            <p class="bots-panel-hint">${bots.length
+                ? "Bots play every role and never earn points. Click a bot's badge in the list to change its level."
+                : "Not enough players? Add bots to fill the room and pick how smart they are."}</p>
+            ${bots.length ? `
+                <div class="bots-quick">
+                    <span>ALL BOTS</span>
+                    ${LEVELS.map(item => `
+                        <button type="button" class="bots-quick-btn bots-level-${item.id}${same === item.id ? " is-on" : ""}" data-quick="${item.id}">
+                            ${item.icon} ${item.name}
+                        </button>`).join("")}
+                </div>` : ""}`;
+
+        panel.querySelector('[data-bots="add"]').addEventListener("click", openAddBotsPopup);
+
+        const clear = panel.querySelector('[data-bots="clear"]');
+        if (clear) clear.addEventListener("click", () => socket.emit("botRemove", { roomCode, all: true }));
+
+        panel.querySelectorAll("[data-quick]").forEach(button => {
+            button.addEventListener("click", () => socket.emit("botSetLevel", { roomCode, level: button.dataset.quick }));
+        });
+    }
+
+    /* ---------- the badge on every bot in the lists ---------- */
+    function decorateList(listId, list, inLobby) {
+        const ul = document.getElementById(listId);
+        if (!ul) return;
+
+        ul.querySelectorAll(".bot-chip, .bot-remove-btn").forEach(el => el.remove());
+
+        Array.from(ul.children).forEach((li, index) => {
+            const player = list[index];
+
+            li.classList.remove("is-bot");
+
+            if (!player || !player.isBot) return;
+
+            li.classList.add("is-bot");
+
+            // A bot has no account to look at, and "kick" is replaced by remove.
+            const view = li.querySelector(".view-account-btn");
+            if (view) view.remove();
+
+            const nameEl = Array.from(li.querySelectorAll("span")).find(el => el.textContent.includes(player.name)) || li;
+            const level = LEVEL_NAME[player.botLevel] ? player.botLevel : "medium";
+
+            const chip = document.createElement(inLobby && isHost ? "button" : "span");
+            chip.className = `bot-chip bot-level-${level}`;
+            chip.textContent = `🤖 BOT · ${LEVEL_NAME[level]}`;
+
+            if (inLobby && isHost) {
+                chip.type = "button";
+                chip.title = "Click to change this bot's level";
+                chip.addEventListener("click", event => {
+                    event.stopPropagation();
+                    const next = LEVELS[(LEVELS.findIndex(item => item.id === level) + 1) % LEVELS.length].id;
+                    socket.emit("botSetLevel", { roomCode, botId: player.id, level: next });
+                });
+            }
+
+            nameEl.appendChild(chip);
+
+            if (inLobby && isHost) {
+                const kick = li.querySelector(".mw-kick-row");
+                if (kick) kick.remove();
+
+                const remove = document.createElement("button");
+                remove.type = "button";
+                remove.className = "bot-remove-btn";
+                remove.title = "Remove this bot";
+                remove.textContent = "✕";
+                remove.addEventListener("click", event => {
+                    event.stopPropagation();
+                    socket.emit("botRemove", { roomCode, botId: player.id });
+                });
+                li.appendChild(remove);
+            }
+        });
+    }
+
+    if (typeof renderLobbyPlayers === "function") {
+        const baseRenderLobbyPlayers = renderLobbyPlayers;
+
+        renderLobbyPlayers = function () {
+            const result = baseRenderLobbyPlayers.apply(this, arguments);
+
+            try {
+                decorateList("playerList", lobbyPlayers(), true);
+                renderBotsPanel();
+            } catch (error) {
+                console.error("bots lobby UI:", error);
+            }
+
+            return result;
+        };
+    }
+
+    if (typeof renderGamePlayers === "function") {
+        const baseRenderGamePlayers = renderGamePlayers;
+
+        renderGamePlayers = function () {
+            const result = baseRenderGamePlayers.apply(this, arguments);
+
+            try {
+                decorateList("gamePlayerList", players, false);
+            } catch (error) {
+                console.error("bots game UI:", error);
+            }
+
+            return result;
+        };
+    }
+})();
+
+
+/* =========================================================
+   NEW MATCH = EMPTY CHAT
+   The public chat and the Mafia chat are cleared when the host
+   restarts the game and again when a new match starts.
+   (The lobby chat is not touched.)
+   ========================================================= */
+(function () {
+    function clearMatchChats() {
+        ["chatMessages", "mafiaChatMessages"].forEach(id => {
+            const box = document.getElementById(id);
+            if (box) box.innerHTML = "";
+        });
+    }
+
+    let lastPhase = null;
+
+    socket.on("gameRestarted", () => { lastPhase = "lobby"; clearMatchChats(); });
+
+    socket.on("gameInformation", info => {
+        if (!info || typeof info !== "object") return;
+
+        const phase = info.phase;
+        const startsNewMatch =
+            phase === "night" && Number(info.nightNumber) === 1 &&
+            (lastPhase === null || lastPhase === "lobby" || lastPhase === "gameover");
+
+        if (startsNewMatch) clearMatchChats();
+        if (phase) lastPhase = phase;
     });
+
+    socket.on("gameOver", () => { lastPhase = "gameover"; });
 })();
