@@ -66,6 +66,8 @@ async function initDatabase() {
     const accounts = await dbLoad("accounts");
     if (accounts && typeof accounts.users === "object") {
         accountsDb = accounts;
+        if (!accountsDb.guilds || typeof accountsDb.guilds !== "object") accountsDb.guilds = {};
+        if (!Array.isArray(accountsDb.reports)) accountsDb.reports = [];
         console.log("[db] Loaded " + Object.keys(accountsDb.users).length + " accounts from Neon.");
     } else {
         await writeAccountsNow();
@@ -400,6 +402,7 @@ function getRanksList() {
             displayName: getDisplayName(user),
             badge: user.badge || "member",
             tier: getEquippedTierKey(user),
+            guild: getGuildOfUser(user),
             total: totalStats(user.stats)
         }))
         .sort((a, b) =>
@@ -413,6 +416,7 @@ function getRanksList() {
             displayName: user.displayName,
             badge: user.badge,
             tier: user.tier,
+            guild: user.guild,
             points: user.total
         }));
 }
@@ -423,6 +427,7 @@ function loginSocket(socket, accountKey, silent) {
 
     socketAccounts.set(socket.id, accountKey);
     syncAccountBadge(socket, false);
+    communityTrackOnline(socket, accountKey);
 
     const token = crypto.randomBytes(24).toString("hex");
     accountSessions.set(token, accountKey);
@@ -577,6 +582,22 @@ function getEquippedTierKey(user) {
 function getTierOfPlayer(player) {
     const user = player && player.account ? accountsDb.users[player.account] : null;
     return getEquippedTierKey(user);
+}
+
+/* ---------- GUILDS: name + color shown under a player's name ---------- */
+const GUILD_COLORS = ["#ff3b3b","#ff8a00","#ffd400","#35d36b","#00d1c1","#2f9bff","#7b61ff","#d84dff","#ff4da6","#ffffff"];
+const GUILD_MAX_MEMBERS = 50;
+function guildSafeColor(c) {
+    c = String(c || "").toLowerCase();
+    return GUILD_COLORS.includes(c) ? c : GUILD_COLORS[0];
+}
+function getGuildOfUser(user) {
+    const g = user && user.guildId && accountsDb.guilds ? accountsDb.guilds[user.guildId] : null;
+    return g ? { id: user.guildId, name: g.name, color: guildSafeColor(g.color), tag: g.tag || guildDeriveTag(g.name) } : null;
+}
+function getGuildOfPlayer(player) {
+    const user = player && player.account ? accountsDb.users[player.account] : null;
+    return getGuildOfUser(user);
 }
 
 function sniffAudioExt(buf) {
@@ -1462,6 +1483,7 @@ function finalizeMatch(room, winnerTest) {
                 players: contenders.length,
                 winner: winnerLabel,
                 mvpName: mvpDisplayName,
+                mvpGuild: getGuildOfPlayer(mvp.player),
                 nights: room.nightNumber || 1
             });
             if (profile.history.length > PROFILE_HISTORY_LIMIT) profile.history.length = PROFILE_HISTORY_LIMIT;
@@ -1484,11 +1506,12 @@ function finalizeMatch(room, winnerTest) {
             id: matchId,
             t: Date.now(),
             winner: winnerLabel,
-            mvp: { name: mvpDisplayName, role: mvp.player.matchPerf.startRole || mvp.player.role, score: mvp.score },
+            mvp: { name: mvpDisplayName, role: mvp.player.matchPerf.startRole || mvp.player.role, score: mvp.score, guild: getGuildOfPlayer(mvp.player) },
             nights: room.nightNumber || 1,
             accounts: contenders.map(entry => entry.player.account).filter(Boolean),
             players: contenders.map(entry => ({
                 name: nameOf(entry),
+                guild: getGuildOfPlayer(entry.player),
                 role: entry.player.role,
                 startRole: entry.player.matchPerf.startRole || entry.player.role,
                 team: teamOfRole(entry.player.matchPerf.startRole || entry.player.role),
@@ -1524,6 +1547,7 @@ function finalizeMatch(room, winnerTest) {
             playerId: mvp.player.id,
             look: getLookOfPlayer(mvp.player),
             tier: mvpUser ? getEquippedTierKey(mvpUser) : null,
+            guild: mvpUser ? getGuildOfUser(mvpUser) : null,
             badge: mvpUser ? (mvpUser.badge || "member") : null,
             role: mvp.player.role,
             team: teamOfRole(mvp.player.matchPerf.startRole || mvp.player.role),
@@ -1804,6 +1828,7 @@ function buildFullProfile(user) {
         displayName: getDisplayName(user),
         badge: user.badge || "member",
         tier: getEquippedTierKey(user),
+        guild: getGuildOfUser(user),
         look: getLookOfUser(user),
         memberSince: Number(user.created) || null,
         card: (syncProfileCards(user), user.cards.selected),
@@ -2533,11 +2558,13 @@ function getPublicPlayers(room, viewer) {
                 name: player.name,
                 badge: getBadgeOf(player.id),
                 tier: getTierOfPlayer(player),
+                guild: getGuildOfPlayer(player),
                 look: getLookOfPlayer(player),
                 registered: Boolean(player.account),
                 alive: player.alive,
                 role: visibleRole,
                 connected: true,
+                ready: Boolean(player.ready),
                 isBot: Boolean(player.isBot),
                 botLevel: player.isBot ? player.botLevel : null
             };
@@ -2587,7 +2614,11 @@ function emitLobby(roomCode) {
             botLevel:
                 room.botLevel || "medium",
 
-            roomCode
+            roomCode,
+            description: String(room.description || ""),
+            readyPlayers: room.players.filter(p => p.ready && p.connected !== false).map(p => p.id),
+            spectatorCount: Array.isArray(room.spectators) ? room.spectators.length : 0,
+            spectatorLimit: Number(room.spectatorLimit) || 10
         }
     );
 }
@@ -5341,6 +5372,7 @@ io.on(
 
             socketAccounts.set(socket.id, key);
             syncAccountBadge(socket, false);
+            communityTrackOnline(socket, key);
 
             socket.emit("authResult", {
                 ok: true,
@@ -5502,6 +5534,7 @@ io.on(
                 displayName: getDisplayName(user),
                 badge: user.badge || "member",
                 tier: getEquippedTierKey(user),
+                guild: getGuildOfUser(user),
                 level: levelInfo(ensureProgress(user).xp).level,
                 look: getLookOfUser(user),
                 points: totalStats(user.stats),
@@ -5558,6 +5591,7 @@ io.on(
                 name: getDisplayName(user),
                 badge: user.badge || "member",
                 tier: getEquippedTierKey(user),
+                guild: getGuildOfUser(user),
                 points,
                 position: board.position,
                 accounts: board.count,
@@ -7149,6 +7183,17 @@ io.on(
                     return socket.emit(
                         "gameError",
                         "Only the host can start the game!"
+                    );
+                }
+
+                const playersWhoMustBeReady = room.players.filter(
+                    player => !player.isBot && player.connected !== false
+                );
+                const notReadyPlayers = playersWhoMustBeReady.filter(player => !player.ready);
+                if (notReadyPlayers.length) {
+                    return socket.emit(
+                        "gameError",
+                        `Everyone must click READY before the host starts. Waiting for: ${notReadyPlayers.map(player => player.name).join(", " )}`
                     );
                 }
 
@@ -9366,7 +9411,7 @@ io.on("connection", socket => {
             entries: room.replay || [],
             players: room.players
                 .filter(p => p.connected !== false)
-                .map(p => ({ name: p.name, role: p.role, alive: p.alive }))
+                .map(p => ({ name: p.name, role: p.role, alive: p.alive, guild: getGuildOfPlayer(p) }))
         });
     });
 
@@ -11338,5 +11383,685 @@ io.on("connection", socket => {
         });
 
         emitLobby(roomCode);
+    });
+});
+
+
+/* =========================================================
+   MAFIA WARS COMMUNITY + LOBBY EXPANSION
+   Persistent social data lives in the existing accounts KV record.
+   Existing account and room mechanics remain the source of truth.
+========================================================= */
+if (!accountsDb.guilds || typeof accountsDb.guilds !== "object") accountsDb.guilds = {};
+if (!Array.isArray(accountsDb.reports)) accountsDb.reports = [];
+const communityOnline = new Map(); // account key -> Set(socket ids)
+const communityChatLimits = new Map();
+
+function communityTrackOnline(socket, accountKey) {
+    if (!accountKey || !accountsDb.users[accountKey]) return;
+    if (!communityOnline.has(accountKey)) communityOnline.set(accountKey, new Set());
+    communityOnline.get(accountKey).add(socket.id);
+    communityEmitFriendPresence(accountKey, true);
+    socket.emit("communityOnline", { friends: (accountsDb.users[accountKey].friends || []).map(k => ({ account: k, player: communityPublicUser(k) })).filter(x => x.player) });
+}
+
+function communityUser(socket) {
+    const key = getSocketAccountKey(socket);
+    return key && accountsDb.users[key] ? { key, user: accountsDb.users[key] } : null;
+}
+function communityReply(callback, payload) {
+    if (typeof callback === "function") callback(payload);
+}
+function communityPublicUser(key) {
+    const u = accountsDb.users[key];
+    if (!u) return null;
+    const prog = ensureProgress(u);
+    const profile = ensureProfile(u);
+    return {
+        username: getDisplayName(u),
+        level: levelInfo(prog.xp).level,
+        online: Boolean(communityOnline.get(key)?.size),
+        badge: u.badge || "member",
+        guildId: u.guildId || null,
+        guild: getGuildOfUser(u),
+        wins: Number(profile.wins) || 0,
+        games: Number(profile.games) || 0
+    };
+}
+function communityEmitFriendPresence(key, online) {
+    const u = accountsDb.users[key];
+    (u?.friends || []).forEach(friendKey => {
+        for (const sid of communityOnline.get(friendKey) || []) {
+            io.to(sid).emit("friendPresence", { account: key, player: communityPublicUser(key), online });
+        }
+    });
+}
+function communityGetRoom(socket) {
+    const code = findRoomCodeBySocket(socket.id);
+    return code ? { code, room: rooms[code] } : null;
+}
+function communityIsStaff(socket) {
+    return socket.badge === "owner" || socket.badge === "admin";
+}
+
+/* ---------- GUILD SYSTEM: roles, requests, invites, announcement, stats, leaderboard ---------- */
+const GUILD_DESC_MAX = 140;
+const GUILD_ANNOUNCE_MAX = 200;
+const GUILD_CHAT_KEEP = 100;
+const GUILD_REQUESTS_MAX = 50;
+const GUILD_INVITES_PER_USER = 15;
+const GUILD_CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+function guildCleanText(v, max) {
+    return String(v ?? "").replace(/[\u0000-\u001f\u007f<>]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
+}
+function guildDeriveTag(name) {
+    return String(name || "").replace(/[^a-z0-9]/gi, "").toUpperCase().slice(0, 3) || "GLD";
+}
+function guildCleanTag(v) {
+    return String(v || "").replace(/[^a-z0-9]/gi, "").toUpperCase().slice(0, 4);
+}
+function guildNewCode() {
+    let code;
+    do {
+        code = Array.from({ length: 6 }, () => GUILD_CODE_CHARS[crypto.randomInt(GUILD_CODE_CHARS.length)]).join("");
+    } while (Object.values(accountsDb.guilds).some(g => g.inviteCode === code));
+    return code;
+}
+/* Gives older guilds (created before this update) every new field. Safe to call any time. */
+function guildNormalize(g) {
+    if (!g) return g;
+    if (!Array.isArray(g.members)) g.members = [];
+    if (typeof g.description !== "string") g.description = "";
+    if (typeof g.open !== "boolean") g.open = true;
+    if (!Array.isArray(g.officers)) g.officers = [];
+    g.officers = g.officers.filter(k => g.members.includes(k) && k !== g.leader);
+    if (!Array.isArray(g.requests)) g.requests = [];
+    g.requests = g.requests.filter(r => r && accountsDb.users[r.account] && !g.members.includes(r.account));
+    if (!Array.isArray(g.chat)) g.chat = [];
+    if (!g.tag) g.tag = guildDeriveTag(g.name);
+    if (!g.inviteCode) g.inviteCode = guildNewCode();
+    if (g.announcement && !g.announcement.text) g.announcement = null;
+    return g;
+}
+function guildOfCtx(ctx) {
+    const id = ctx && ctx.user ? ctx.user.guildId : null;
+    const g = id ? accountsDb.guilds[id] : null;
+    return g ? { id, g: guildNormalize(g) } : null;
+}
+function guildRoleOf(g, key) {
+    return g.leader === key ? "leader" : (g.officers.includes(key) ? "officer" : "member");
+}
+function guildCanManage(g, key) {
+    return g.leader === key || g.officers.includes(key);
+}
+function guildStatsOf(g) {
+    let wins = 0, games = 0, points = 0;
+    g.members.forEach(k => {
+        const u = accountsDb.users[k];
+        if (!u) return;
+        const p = ensureProfile(u);
+        wins += p.wins;
+        games += p.games;
+        points += totalStats(u.stats);
+    });
+    return { wins, games, points, members: g.members.length, winRate: games ? Math.round((wins / games) * 100) : 0 };
+}
+function guildBroadcast(g, event, payload) {
+    g.members.forEach(k => { for (const sid of communityOnline.get(k) || []) io.to(sid).emit(event, payload); });
+}
+function guildTouch(g) { guildBroadcast(g, "guildRefresh", {}); }
+function guildSystemLine(g, text) {
+    const item = { system: true, message: guildCleanText(text, 160), at: Date.now() };
+    g.chat.push(item);
+    g.chat = g.chat.slice(-GUILD_CHAT_KEEP);
+    guildBroadcast(g, "guildChatMessage", item);
+}
+function guildRefreshRooms(accountKey) {
+    for (const sid of communityOnline.get(accountKey) || []) {
+        const code = findRoomCodeBySocket(sid);
+        if (code && rooms[code] && rooms[code].phase === "lobby") emitLobby(code);
+    }
+}
+function guildNotify(accountKey) {
+    for (const sid of communityOnline.get(accountKey) || []) io.to(sid).emit("guildChanged", getGuildOfUser(accountsDb.users[accountKey]));
+}
+function guildToast(accountKey, text, bad) {
+    for (const sid of communityOnline.get(accountKey) || []) io.to(sid).emit("guildToast", { text, bad: Boolean(bad) });
+}
+function guildFindUser(name) {
+    const q = String(name || "").trim().toLowerCase();
+    if (!q) return null;
+    if (accountsDb.users[q]) return q;
+    for (const [key, u] of Object.entries(accountsDb.users)) {
+        if (String(getDisplayName(u)).toLowerCase() === q) return key;
+    }
+    return null;
+}
+function guildMemberView(g, key) {
+    const u = accountsDb.users[key];
+    if (!u) return null;
+    const p = ensureProfile(u);
+    return {
+        account: key,
+        username: getDisplayName(u),
+        online: Boolean(communityOnline.get(key)?.size),
+        role: guildRoleOf(g, key),
+        level: levelInfo(ensureProgress(u).xp).level,
+        wins: p.wins,
+        games: p.games,
+        points: totalStats(u.stats)
+    };
+}
+function guildCard(id, g) {
+    const s = guildStatsOf(g);
+    return {
+        id, name: g.name, tag: g.tag, color: guildSafeColor(g.color), description: g.description, open: g.open,
+        members: g.members.length, max: GUILD_MAX_MEMBERS, full: g.members.length >= GUILD_MAX_MEMBERS,
+        wins: s.wins, points: s.points
+    };
+}
+function guildMineView(id, g, key) {
+    const order = { leader: 0, officer: 1, member: 2 };
+    const members = g.members.map(k => guildMemberView(g, k)).filter(Boolean)
+        .sort((a, b) => order[a.role] - order[b.role] || Number(b.online) - Number(a.online) || a.username.localeCompare(b.username));
+    const staff = guildCanManage(g, key);
+    return {
+        ...guildCard(id, g),
+        me: key,
+        role: guildRoleOf(g, key),
+        isLeader: g.leader === key,
+        canManage: staff,
+        createdAt: g.createdAt || 0,
+        stats: guildStatsOf(g),
+        announcement: g.announcement || null,
+        members,
+        chat: g.chat.slice(-60),
+        inviteCode: staff ? g.inviteCode : null,
+        requests: staff ? g.requests.map(r => ({ account: r.account, username: getDisplayName(accountsDb.users[r.account]), at: r.at })) : []
+    };
+}
+/* Removes someone from a guild (leave / kick). Handles leader hand-over and empty guilds. */
+function guildDropMember(id, g, key) {
+    g.members = g.members.filter(k => k !== key);
+    g.officers = g.officers.filter(k => k !== key);
+    const u = accountsDb.users[key];
+    if (u && u.guildId === id) delete u.guildId;
+    if (!g.members.length) {
+        delete accountsDb.guilds[id];
+    } else if (g.leader === key) {
+        g.leader = g.officers[0] || g.members[0];
+        g.officers = g.officers.filter(k => k !== g.leader);
+        guildSystemLine(g, getDisplayName(accountsDb.users[g.leader]) + " is the new guild leader.");
+    }
+    guildRefreshRooms(key);
+    guildNotify(key);
+}
+/* Puts someone in a guild and clears their other pending requests and invites. */
+function guildAddMember(id, g, key) {
+    const u = accountsDb.users[key];
+    g.members.push(key);
+    g.requests = g.requests.filter(r => r.account !== key);
+    u.guildId = id;
+    u.guildInvites = [];
+    Object.values(accountsDb.guilds).forEach(other => {
+        if (Array.isArray(other.requests)) other.requests = other.requests.filter(r => r.account !== key);
+    });
+    guildSystemLine(g, getDisplayName(u) + " joined the guild.");
+    guildRefreshRooms(key);
+    guildNotify(key);
+    guildTouch(g);
+}
+
+io.on("connection", socket => {
+    if (socket.isBot) return;
+    const key = getSocketAccountKey(socket);
+    if (key) {
+        if (!communityOnline.has(key)) communityOnline.set(key, new Set());
+        communityOnline.get(key).add(socket.id);
+        communityEmitFriendPresence(key, true);
+        socket.emit("communityOnline", { friends: (accountsDb.users[key].friends || []).map(k => ({ account: k, player: communityPublicUser(k) })).filter(x => x.player) });
+    }
+
+    socket.on("communityFriends", (data, callback) => {
+        const ctx = communityUser(socket);
+        if (!ctx) return communityReply(callback, { ok: false, error: "Sign in to use friends." });
+        const u = ctx.user;
+        if (!Array.isArray(u.friends)) u.friends = [];
+        if (!Array.isArray(u.friendRequests)) u.friendRequests = [];
+        communityReply(callback, {
+            ok: true,
+            friends: u.friends.map(k => ({ account: k, player: communityPublicUser(k) })).filter(x => x.player),
+            incoming: u.friendRequests.map(k => ({ account: k, player: communityPublicUser(k) })).filter(x => x.player)
+        });
+    });
+
+    socket.on("friendRequest", (data, callback) => {
+        const ctx = communityUser(socket);
+        if (!ctx) return communityReply(callback, { ok: false, error: "Sign in first." });
+        const targetName = String(data?.username || "").trim().toLowerCase();
+        const target = accountsDb.users[targetName];
+        if (!target || targetName === ctx.key) return communityReply(callback, { ok: false, error: "Player not found." });
+        if (!Array.isArray(target.friendRequests)) target.friendRequests = [];
+        if (!Array.isArray(ctx.user.friends)) ctx.user.friends = [];
+        if (ctx.user.friends.includes(targetName)) return communityReply(callback, { ok: false, error: "Already friends." });
+        if (!target.friendRequests.includes(ctx.key)) target.friendRequests.push(ctx.key);
+        saveAccounts();
+        for (const sid of communityOnline.get(targetName) || []) io.to(sid).emit("friendRequestReceived", { player: communityPublicUser(ctx.key) });
+        communityReply(callback, { ok: true, message: "Friend request sent." });
+    });
+
+    socket.on("friendRequestRespond", (data, callback) => {
+        const ctx = communityUser(socket);
+        if (!ctx) return communityReply(callback, { ok: false, error: "Sign in first." });
+        const from = String(data?.account || "").toLowerCase();
+        const accept = Boolean(data?.accept);
+        if (!Array.isArray(ctx.user.friendRequests)) ctx.user.friendRequests = [];
+        ctx.user.friendRequests = ctx.user.friendRequests.filter(k => k !== from);
+        if (accept && accountsDb.users[from]) {
+            if (!Array.isArray(ctx.user.friends)) ctx.user.friends = [];
+            if (!Array.isArray(accountsDb.users[from].friends)) accountsDb.users[from].friends = [];
+            if (!ctx.user.friends.includes(from)) ctx.user.friends.push(from);
+            if (!accountsDb.users[from].friends.includes(ctx.key)) accountsDb.users[from].friends.push(ctx.key);
+        }
+        saveAccounts();
+        communityReply(callback, { ok: true });
+    });
+
+    socket.on("friendRemove", (data, callback) => {
+        const ctx = communityUser(socket);
+        if (!ctx) return communityReply(callback, { ok: false, error: "Sign in first." });
+        const other = String(data?.account || "").toLowerCase();
+        ctx.user.friends = (ctx.user.friends || []).filter(k => k !== other);
+        if (accountsDb.users[other]) accountsDb.users[other].friends = (accountsDb.users[other].friends || []).filter(k => k !== ctx.key);
+        saveAccounts(); communityReply(callback, { ok: true });
+    });
+
+    /* ---------- GUILD EVENTS ---------- */
+    socket.on("communityGuild", (data, callback) => {
+        const ctx = communityUser(socket);
+        if (!ctx) return communityReply(callback, { ok: false, error: "Sign in to use guilds." });
+        const guilds = accountsDb.guilds;
+        Object.values(guilds).forEach(guildNormalize);
+        const list = Object.entries(guilds).map(([id, g]) => guildCard(id, g)).sort((a, b) => b.members - a.members || a.name.localeCompare(b.name));
+        const mine = guildOfCtx(ctx);
+        /* invites addressed to me (drop invites whose guild no longer exists) */
+        if (!Array.isArray(ctx.user.guildInvites)) ctx.user.guildInvites = [];
+        ctx.user.guildInvites = ctx.user.guildInvites.filter(i => i && guilds[i.guildId]);
+        const invites = mine ? [] : ctx.user.guildInvites.map(i => ({ guildId: i.guildId, guildName: guilds[i.guildId].name, color: guildSafeColor(guilds[i.guildId].color), by: i.by, at: i.at }));
+        const requested = mine ? [] : Object.entries(guilds).filter(([, g]) => g.requests.some(r => r.account === ctx.key)).map(([id]) => id);
+        communityReply(callback, {
+            ok: true, colors: GUILD_COLORS, guilds: list,
+            mine: mine ? guildMineView(mine.id, mine.g, ctx.key) : null,
+            invites, requested
+        });
+    });
+
+    socket.on("guildLeaderboard", (data, callback) => {
+        const ctx = communityUser(socket);
+        if (!ctx) return communityReply(callback, { ok: false, error: "Sign in to use guilds." });
+        const by = data?.by === "points" ? "points" : "wins";
+        const rows = Object.entries(accountsDb.guilds).map(([id, g]) => {
+            guildNormalize(g);
+            const s = guildStatsOf(g);
+            return { id, name: g.name, tag: g.tag, color: guildSafeColor(g.color), members: s.members, wins: s.wins, games: s.games, points: s.points, winRate: s.winRate };
+        }).sort((a, b) => b[by] - a[by] || b[by === "wins" ? "points" : "wins"] - a[by === "wins" ? "points" : "wins"] || a.name.localeCompare(b.name));
+        rows.forEach((r, i) => { r.rank = i + 1; });
+        communityReply(callback, { ok: true, by, rows: rows.slice(0, 50), myGuildId: ctx.user.guildId || null });
+    });
+
+    socket.on("guildCreate", (data, callback) => {
+        const ctx = communityUser(socket);
+        if (!ctx) return communityReply(callback, { ok: false, error: "Sign in first." });
+        if (guildOfCtx(ctx)) return communityReply(callback, { ok: false, error: "Leave your current guild first." });
+        const name = guildCleanText(data?.name, 16);
+        if (name.length < 3) return communityReply(callback, { ok: false, error: "Guild name must be 3 to 16 characters." });
+        if (Object.values(accountsDb.guilds).some(g => g.name.toLowerCase() === name.toLowerCase())) return communityReply(callback, { ok: false, error: "That guild name is already taken." });
+        const id = crypto.randomBytes(6).toString("hex");
+        accountsDb.guilds[id] = {
+            name, color: guildSafeColor(data?.color), tag: guildCleanTag(data?.tag).length >= 2 ? guildCleanTag(data?.tag) : guildDeriveTag(name),
+            description: guildCleanText(data?.description, GUILD_DESC_MAX), open: data?.open !== false,
+            leader: ctx.key, officers: [], members: [ctx.key], requests: [], chat: [], announcement: null,
+            inviteCode: guildNewCode(), createdAt: Date.now()
+        };
+        ctx.user.guildId = id;
+        ctx.user.guildInvites = [];
+        saveAccounts();
+        guildRefreshRooms(ctx.key); guildNotify(ctx.key);
+        communityReply(callback, { ok: true, id });
+    });
+
+    /* Open guild -> join straight away. Invite-only guild -> sends a join request. */
+    socket.on("guildJoin", (data, callback) => {
+        const ctx = communityUser(socket);
+        if (!ctx) return communityReply(callback, { ok: false, error: "Sign in first." });
+        if (guildOfCtx(ctx)) return communityReply(callback, { ok: false, error: "Leave your current guild first." });
+        const id = String(data?.id || "");
+        const g = guildNormalize(accountsDb.guilds[id]);
+        if (!g) return communityReply(callback, { ok: false, error: "Guild not found." });
+        if (g.members.length >= GUILD_MAX_MEMBERS) return communityReply(callback, { ok: false, error: "This guild is full." });
+        if (g.open) {
+            guildAddMember(id, g, ctx.key);
+            saveAccounts();
+            return communityReply(callback, { ok: true, joined: true, name: g.name });
+        }
+        if (g.requests.some(r => r.account === ctx.key)) return communityReply(callback, { ok: false, error: "You already asked to join this guild." });
+        if (g.requests.length >= GUILD_REQUESTS_MAX) return communityReply(callback, { ok: false, error: "This guild has too many pending requests." });
+        g.requests.push({ account: ctx.key, at: Date.now() });
+        saveAccounts();
+        g.members.filter(k => guildCanManage(g, k)).forEach(k => guildToast(k, getDisplayName(ctx.user) + " wants to join " + g.name + "."));
+        guildTouch(g);
+        communityReply(callback, { ok: true, joined: false, requested: true, name: g.name });
+    });
+
+    socket.on("guildJoinByCode", (data, callback) => {
+        const ctx = communityUser(socket);
+        if (!ctx) return communityReply(callback, { ok: false, error: "Sign in first." });
+        if (guildOfCtx(ctx)) return communityReply(callback, { ok: false, error: "Leave your current guild first." });
+        const code = String(data?.code || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+        const entry = code ? Object.entries(accountsDb.guilds).find(([, g]) => g.inviteCode === code) : null;
+        if (!entry) return communityReply(callback, { ok: false, error: "That invite code is not valid." });
+        const [id, raw] = entry;
+        const g = guildNormalize(raw);
+        if (g.members.length >= GUILD_MAX_MEMBERS) return communityReply(callback, { ok: false, error: "This guild is full." });
+        guildAddMember(id, g, ctx.key);
+        saveAccounts();
+        communityReply(callback, { ok: true, name: g.name });
+    });
+
+    socket.on("guildCancelRequest", (data, callback) => {
+        const ctx = communityUser(socket);
+        if (!ctx) return communityReply(callback, { ok: false, error: "Sign in first." });
+        const g = accountsDb.guilds[String(data?.id || "")];
+        if (g && Array.isArray(g.requests)) { g.requests = g.requests.filter(r => r.account !== ctx.key); guildTouch(guildNormalize(g)); }
+        saveAccounts();
+        communityReply(callback, { ok: true });
+    });
+
+    socket.on("guildRequestRespond", (data, callback) => {
+        const ctx = communityUser(socket);
+        const mine = ctx && guildOfCtx(ctx);
+        if (!mine) return communityReply(callback, { ok: false, error: "You are not in a guild." });
+        const { id, g } = mine;
+        if (!guildCanManage(g, ctx.key)) return communityReply(callback, { ok: false, error: "Only the leader or an officer can answer join requests." });
+        const target = String(data?.account || "").toLowerCase();
+        const req = g.requests.find(r => r.account === target);
+        if (!req) return communityReply(callback, { ok: false, error: "That request no longer exists." });
+        if (data?.accept) {
+            if (g.members.length >= GUILD_MAX_MEMBERS) return communityReply(callback, { ok: false, error: "The guild is full." });
+            if (accountsDb.users[target]?.guildId && accountsDb.guilds[accountsDb.users[target].guildId]) {
+                g.requests = g.requests.filter(r => r.account !== target); saveAccounts(); guildTouch(g);
+                return communityReply(callback, { ok: false, error: "That player already joined another guild." });
+            }
+            guildAddMember(id, g, target);
+            guildToast(target, "Your request was accepted. Welcome to " + g.name + "!");
+        } else {
+            g.requests = g.requests.filter(r => r.account !== target);
+            guildToast(target, g.name + " declined your join request.", true);
+            guildTouch(g);
+        }
+        saveAccounts();
+        communityReply(callback, { ok: true });
+    });
+
+    socket.on("guildInvite", (data, callback) => {
+        const ctx = communityUser(socket);
+        const mine = ctx && guildOfCtx(ctx);
+        if (!mine) return communityReply(callback, { ok: false, error: "You are not in a guild." });
+        const { id, g } = mine;
+        if (!guildCanManage(g, ctx.key)) return communityReply(callback, { ok: false, error: "Only the leader or an officer can invite players." });
+        const targetKey = guildFindUser(data?.username);
+        if (!targetKey) return communityReply(callback, { ok: false, error: "No player with that username." });
+        const target = accountsDb.users[targetKey];
+        if (g.members.includes(targetKey)) return communityReply(callback, { ok: false, error: "That player is already in your guild." });
+        if (target.guildId && accountsDb.guilds[target.guildId]) return communityReply(callback, { ok: false, error: "That player is already in another guild." });
+        if (g.members.length >= GUILD_MAX_MEMBERS) return communityReply(callback, { ok: false, error: "Your guild is full." });
+        if (!Array.isArray(target.guildInvites)) target.guildInvites = [];
+        if (target.guildInvites.some(i => i.guildId === id)) return communityReply(callback, { ok: false, error: "That player already has an invite from your guild." });
+        if (target.guildInvites.length >= GUILD_INVITES_PER_USER) return communityReply(callback, { ok: false, error: "That player has too many pending invites." });
+        target.guildInvites.push({ guildId: id, by: getDisplayName(ctx.user), at: Date.now() });
+        saveAccounts();
+        for (const sid of communityOnline.get(targetKey) || []) io.to(sid).emit("guildInviteReceived", { guildId: id, guildName: g.name, by: getDisplayName(ctx.user) });
+        communityReply(callback, { ok: true, name: getDisplayName(target) });
+    });
+
+    socket.on("guildInviteRespond", (data, callback) => {
+        const ctx = communityUser(socket);
+        if (!ctx) return communityReply(callback, { ok: false, error: "Sign in first." });
+        const id = String(data?.guildId || "");
+        if (!Array.isArray(ctx.user.guildInvites)) ctx.user.guildInvites = [];
+        const invite = ctx.user.guildInvites.find(i => i.guildId === id);
+        if (!invite) return communityReply(callback, { ok: false, error: "That invite is no longer valid." });
+        const g = guildNormalize(accountsDb.guilds[id]);
+        if (!data?.accept || !g) {
+            ctx.user.guildInvites = ctx.user.guildInvites.filter(i => i.guildId !== id);
+            saveAccounts();
+            return communityReply(callback, { ok: true, declined: true });
+        }
+        if (guildOfCtx(ctx)) return communityReply(callback, { ok: false, error: "Leave your current guild first." });
+        if (g.members.length >= GUILD_MAX_MEMBERS) return communityReply(callback, { ok: false, error: "This guild is full." });
+        guildAddMember(id, g, ctx.key);
+        saveAccounts();
+        communityReply(callback, { ok: true, name: g.name });
+    });
+
+    socket.on("guildLeave", (data, callback) => {
+        const ctx = communityUser(socket);
+        if (!ctx) return communityReply(callback, { ok: false, error: "Sign in first." });
+        const mine = guildOfCtx(ctx);
+        if (!mine) { delete ctx.user.guildId; saveAccounts(); return communityReply(callback, { ok: false, error: "You are not in a guild." }); }
+        const { id, g } = mine;
+        const name = getDisplayName(ctx.user);
+        guildDropMember(id, g, ctx.key);
+        if (accountsDb.guilds[id]) { guildSystemLine(g, name + " left the guild."); guildTouch(g); }
+        saveAccounts();
+        communityReply(callback, { ok: true });
+    });
+
+    socket.on("guildKick", (data, callback) => {
+        const ctx = communityUser(socket);
+        const mine = ctx && guildOfCtx(ctx);
+        if (!mine) return communityReply(callback, { ok: false, error: "You are not in a guild." });
+        const { id, g } = mine;
+        const target = String(data?.account || "").toLowerCase();
+        if (target === ctx.key || !g.members.includes(target)) return communityReply(callback, { ok: false, error: "Member not found." });
+        const myRole = guildRoleOf(g, ctx.key), theirRole = guildRoleOf(g, target);
+        if (myRole === "member") return communityReply(callback, { ok: false, error: "Only the leader or an officer can kick members." });
+        if (myRole === "officer" && theirRole !== "member") return communityReply(callback, { ok: false, error: "Officers can only kick regular members." });
+        const name = getDisplayName(accountsDb.users[target]);
+        guildDropMember(id, g, target);
+        guildSystemLine(g, name + " was kicked from the guild.");
+        guildToast(target, "You were kicked from " + g.name + ".", true);
+        guildTouch(g);
+        saveAccounts();
+        communityReply(callback, { ok: true });
+    });
+
+    /* Promote / demote between Officer and Member (leader only). */
+    socket.on("guildSetRole", (data, callback) => {
+        const ctx = communityUser(socket);
+        const mine = ctx && guildOfCtx(ctx);
+        if (!mine) return communityReply(callback, { ok: false, error: "You are not in a guild." });
+        const { g } = mine;
+        if (g.leader !== ctx.key) return communityReply(callback, { ok: false, error: "Only the guild leader can change roles." });
+        const target = String(data?.account || "").toLowerCase();
+        if (target === ctx.key || !g.members.includes(target)) return communityReply(callback, { ok: false, error: "Member not found." });
+        const role = data?.role === "officer" ? "officer" : "member";
+        g.officers = g.officers.filter(k => k !== target);
+        if (role === "officer") g.officers.push(target);
+        const name = getDisplayName(accountsDb.users[target]);
+        guildSystemLine(g, name + (role === "officer" ? " was promoted to Officer." : " was demoted to Member."));
+        guildToast(target, role === "officer" ? "You are now an Officer of " + g.name + "." : "You are now a Member of " + g.name + ".");
+        guildTouch(g); saveAccounts();
+        communityReply(callback, { ok: true });
+    });
+
+    socket.on("guildTransferLeader", (data, callback) => {
+        const ctx = communityUser(socket);
+        const mine = ctx && guildOfCtx(ctx);
+        if (!mine) return communityReply(callback, { ok: false, error: "You are not in a guild." });
+        const { g } = mine;
+        if (g.leader !== ctx.key) return communityReply(callback, { ok: false, error: "Only the guild leader can transfer leadership." });
+        const target = String(data?.account || "").toLowerCase();
+        if (target === ctx.key || !g.members.includes(target)) return communityReply(callback, { ok: false, error: "Member not found." });
+        g.officers = g.officers.filter(k => k !== target);
+        if (!g.officers.includes(ctx.key)) g.officers.push(ctx.key);
+        g.leader = target;
+        guildSystemLine(g, getDisplayName(accountsDb.users[target]) + " is now the guild leader.");
+        guildToast(target, "You are now the leader of " + g.name + "!");
+        guildTouch(g); saveAccounts();
+        communityReply(callback, { ok: true });
+    });
+
+    socket.on("guildEdit", (data, callback) => {
+        const ctx = communityUser(socket);
+        const mine = ctx && guildOfCtx(ctx);
+        if (!mine) return communityReply(callback, { ok: false, error: "You are not in a guild." });
+        const { id, g } = mine;
+        if (g.leader !== ctx.key) return communityReply(callback, { ok: false, error: "Only the guild leader can edit the guild." });
+        if (data?.name !== undefined) {
+            const name = guildCleanText(data.name, 16);
+            if (name.length < 3) return communityReply(callback, { ok: false, error: "Guild name must be 3 to 16 characters." });
+            if (Object.entries(accountsDb.guilds).some(([gid, x]) => gid !== id && x.name.toLowerCase() === name.toLowerCase())) return communityReply(callback, { ok: false, error: "That guild name is already taken." });
+            g.name = name;
+        }
+        if (data?.tag !== undefined) {
+            const tag = guildCleanTag(data.tag);
+            if (tag.length < 2) return communityReply(callback, { ok: false, error: "The guild tag needs 2 to 4 letters or numbers." });
+            g.tag = tag;
+        }
+        if (data?.color !== undefined) g.color = guildSafeColor(data.color);
+        if (data?.description !== undefined) g.description = guildCleanText(data.description, GUILD_DESC_MAX);
+        if (data?.open !== undefined) g.open = Boolean(data.open);
+        guildTouch(g); saveAccounts();
+        g.members.forEach(k => { guildRefreshRooms(k); guildNotify(k); });
+        communityReply(callback, { ok: true });
+    });
+
+    socket.on("guildRegenCode", (data, callback) => {
+        const ctx = communityUser(socket);
+        const mine = ctx && guildOfCtx(ctx);
+        if (!mine) return communityReply(callback, { ok: false, error: "You are not in a guild." });
+        if (!guildCanManage(mine.g, ctx.key)) return communityReply(callback, { ok: false, error: "Only the leader or an officer can change the invite code." });
+        mine.g.inviteCode = guildNewCode();
+        guildTouch(mine.g); saveAccounts();
+        communityReply(callback, { ok: true, code: mine.g.inviteCode });
+    });
+
+    /* Leader pins (or clears, with empty text) the guild announcement. */
+    socket.on("guildAnnounce", (data, callback) => {
+        const ctx = communityUser(socket);
+        const mine = ctx && guildOfCtx(ctx);
+        if (!mine) return communityReply(callback, { ok: false, error: "You are not in a guild." });
+        const { g } = mine;
+        if (g.leader !== ctx.key) return communityReply(callback, { ok: false, error: "Only the guild leader can pin an announcement." });
+        const text = guildCleanText(data?.text, GUILD_ANNOUNCE_MAX);
+        g.announcement = text ? { text, by: getDisplayName(ctx.user), at: Date.now() } : null;
+        if (text) guildSystemLine(g, "📌 New announcement pinned by the leader.");
+        guildTouch(g); saveAccounts();
+        communityReply(callback, { ok: true });
+    });
+
+    socket.on("guildDisband", (data, callback) => {
+        const ctx = communityUser(socket);
+        const mine = ctx && guildOfCtx(ctx);
+        if (!mine) return communityReply(callback, { ok: false, error: "You are not in a guild." });
+        const { id, g } = mine;
+        if (g.leader !== ctx.key) return communityReply(callback, { ok: false, error: "Only the guild leader can disband the guild." });
+        if (String(data?.confirmName || "").trim().toLowerCase() !== g.name.toLowerCase()) return communityReply(callback, { ok: false, error: "Type the guild name exactly to confirm." });
+        const members = g.members.slice();
+        delete accountsDb.guilds[id];
+        members.forEach(k => { const u = accountsDb.users[k]; if (u && u.guildId === id) delete u.guildId; });
+        Object.values(accountsDb.users).forEach(u => { if (Array.isArray(u.guildInvites)) u.guildInvites = u.guildInvites.filter(i => i.guildId !== id); });
+        saveAccounts();
+        members.forEach(k => { guildRefreshRooms(k); guildNotify(k); if (k !== ctx.key) guildToast(k, g.name + " was disbanded by the leader.", true); for (const sid of communityOnline.get(k) || []) io.to(sid).emit("guildRefresh", {}); });
+        communityReply(callback, { ok: true });
+    });
+
+    socket.on("guildChatSend", (data, callback) => {
+        const ctx = communityUser(socket);
+        if (!ctx) return communityReply(callback, { ok: false, error: "Sign in first." });
+        const mine = guildOfCtx(ctx);
+        if (!mine) return communityReply(callback, { ok: false, error: "Join a guild first." });
+        const { g } = mine;
+        const now = Date.now(), last = communityChatLimits.get(socket.id) || 0;
+        if (now - last < 1200) return communityReply(callback, { ok: false, error: "Slow down before sending another message." });
+        communityChatLimits.set(socket.id, now);
+        const message = String(data?.message || "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 220);
+        if (!message) return communityReply(callback, { ok: false, error: "Message is empty." });
+        const item = { username: getDisplayName(ctx.user), role: guildRoleOf(g, ctx.key), message, at: now };
+        g.chat.push(item);
+        g.chat = g.chat.slice(-GUILD_CHAT_KEEP);
+        saveAccounts();
+        guildBroadcast(g, "guildChatMessage", item);
+        communityReply(callback, { ok: true });
+    });
+
+    socket.on("playerReport", (data, callback) => {
+        const ctx=communityUser(socket); if(!ctx) return communityReply(callback,{ok:false,error:"Sign in to report players."});
+        const target=String(data?.username||"").trim().slice(0,20); const reason=String(data?.reason||"").trim().slice(0,40); const details=String(data?.details||"").trim().slice(0,500);
+        if(!target || !reason) return communityReply(callback,{ok:false,error:"Choose a player and reason."});
+        if(target.toLowerCase()===ctx.key) return communityReply(callback,{ok:false,error:"You cannot report yourself."});
+        accountsDb.reports.push({ id:crypto.randomBytes(8).toString("hex"), reporter:ctx.key, target, reason, details, status:"pending", createdAt:Date.now() });
+        saveAccounts(); communityReply(callback,{ok:true,message:"Report submitted for review."});
+    });
+
+    socket.on("ownerReportResolve", (data, callback) => {
+        if (!communityIsStaff(socket) || !getSocketAccountKey(socket)) return communityReply(callback,{ok:false,error:"Staff access required."});
+        const report=(accountsDb.reports||[]).find(r=>r.id===String(data?.id||""));
+        if(!report) return communityReply(callback,{ok:false,error:"Report not found."});
+        report.status="resolved"; report.resolvedAt=Date.now(); report.resolvedBy=getSocketAccountKey(socket); saveAccounts(); communityReply(callback,{ok:true});
+    });
+
+    socket.on("ownerCommunityDashboard", (data, callback) => {
+        if (!communityIsStaff(socket) || !getSocketAccountKey(socket)) return communityReply(callback,{ok:false,error:"Staff access required."});
+        const activeRooms=Object.values(rooms).filter(r=>r && r.phase!="gameover");
+        const roleCounts={}; activeRooms.forEach(r=>(r.players||[]).forEach(p=>{if(p.role) roleCounts[p.role]=(roleCounts[p.role]||0)+1;}));
+        communityReply(callback,{ok:true,registeredAccounts:Object.keys(accountsDb.users).length,onlinePlayers:[...communityOnline.values()].reduce((n,s)=>n+s.size,0),activeMatches:activeRooms.filter(r=>r.phase!=="lobby").length,totalMatches:Object.values(accountsDb.users).reduce((n,u)=>n+(Number(ensureProfile(u).games)||0),0),popularRoles:Object.entries(roleCounts).sort((a,b)=>b[1]-a[1]).slice(0,8),bannedAccounts:Object.values(accountsDb.users).filter(u=>u.banned).length,pendingReports:(accountsDb.reports||[]).filter(r=>r.status==="pending").length,reports:accountsDb.reports||[]});
+    });
+
+    socket.on("lobbySetReady", (data, callback) => {
+        const found=communityGetRoom(socket); if(!found || found.room.phase!=="lobby") return communityReply(callback,{ok:false,error:"Not in a lobby."});
+        const player=found.room.players.find(p=>p.id===socket.id); if(!player || player.isBot) return communityReply(callback,{ok:false,error:"Player unavailable."});
+        player.ready=Boolean(data?.ready); emitLobby(found.code); communityReply(callback,{ok:true,ready:player.ready});
+    });
+
+    socket.on("lobbySetDescription", (data, callback) => {
+        const found=communityGetRoom(socket); if(!found || found.room.host!==socket.id || found.room.phase!=="lobby") return communityReply(callback,{ok:false,error:"Only the host can edit the room description."});
+        found.room.description=String(data?.description||"").replace(/[\u0000-\u001f\u007f]/g," ").trim().slice(0,120); emitLobby(found.code); communityReply(callback,{ok:true});
+    });
+
+    socket.on("lobbyTransferHost", (data, callback) => {
+        const found=communityGetRoom(socket); if(!found || found.room.host!==socket.id || found.room.phase!=="lobby") return communityReply(callback,{ok:false,error:"Only the current host can transfer hosting."});
+        const target=found.room.players.find(p=>p.id===String(data?.playerId||"") && p.connected!==false && !p.isBot);
+        if(!target) return communityReply(callback,{ok:false,error:"Choose a connected player."});
+        found.room.host=target.id; emitLobby(found.code); communityReply(callback,{ok:true});
+    });
+
+    socket.on("lobbyInviteFriend", (data, callback) => {
+        const ctx=communityUser(socket); const found=communityGetRoom(socket); if(!ctx || !found) return communityReply(callback,{ok:false,error:"Sign in and join a room first."});
+        const target=String(data?.account||"").toLowerCase(); if(!(ctx.user.friends||[]).includes(target)) return communityReply(callback,{ok:false,error:"That player is not your friend."});
+        let sent=0; for(const sid of communityOnline.get(target)||[]){io.to(sid).emit("roomFriendInvite",{roomCode:found.code,from:getDisplayName(ctx.user)});sent++;}
+        communityReply(callback,{ok:true,sent});
+    });
+
+    socket.on("joinAsSpectator", (data, callback) => {
+        const code=String(data?.roomCode||"").trim().toUpperCase(), room=rooms[code];
+        if(!room || room.phase==="gameover") return communityReply(callback,{ok:false,error:"Room is unavailable."});
+        if(room.players.some(p=>p.id===socket.id)) return communityReply(callback,{ok:false,error:"You are already a player."});
+        if(!Array.isArray(room.spectators)) room.spectators=[];
+        const max=Math.max(0,Math.min(20,Number(room.spectatorLimit)||10));
+        if(room.spectators.length>=max) return communityReply(callback,{ok:false,error:"Spectator slots are full."});
+        room.spectators=room.spectators.filter(x=>x.id!==socket.id); room.spectators.push({id:socket.id,name:communityUser(socket)?.user ? getDisplayName(communityUser(socket).user) : "Guest",joinedAt:Date.now()});
+        socket.join(code); io.to(code).emit("spectatorCount",{count:room.spectators.length});
+        try { if (typeof sendGameInformation === "function" && room.phase !== "lobby") sendGameInformation(code); } catch (_) {}
+        communityReply(callback,{ok:true,roomCode:code});
+    });
+
+    socket.on("disconnect", () => {
+        const ctx=communityOnline;
+        for(const [account,sockets] of ctx){ if(sockets.delete(socket.id) && sockets.size===0){ctx.delete(account); communityEmitFriendPresence(account,false);} }
+        communityChatLimits.delete(socket.id);
+        for(const room of Object.values(rooms)){ if(Array.isArray(room.spectators)){ const before=room.spectators.length; room.spectators=room.spectators.filter(x=>x.id!==socket.id); if(before!==room.spectators.length) io.emit("spectatorCount",{count:room.spectators.length}); } }
     });
 });
