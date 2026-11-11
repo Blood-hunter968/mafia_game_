@@ -1036,6 +1036,7 @@ function renderLobbyPlayers() {
             name.appendChild(you);
         }
 
+        applyGuildLine(name, player.guild);
         li.appendChild(name);
         li.appendChild(makeViewAccountButton(player));
 
@@ -2406,6 +2407,7 @@ function renderGamePlayers() {
             name.appendChild(tag);
         }
 
+        applyGuildLine(name, player.guild);
         li.appendChild(name);
 
         if (!player.alive) {
@@ -2461,7 +2463,7 @@ function addOption(select, id) {
         id;
 
     option.textContent =
-        tierPrefix(player.tier) + player.name;
+        tierPrefix(player.tier) + player.name + (player.guild && player.guild.name ? "  ·  " + player.guild.name : "");
 
     select.appendChild(option);
 }
@@ -3329,6 +3331,7 @@ function keepDeadPlayerOnDeathScreen(data) {
 
     if (nameBox) {
         setTierName(nameBox, me.name || "You", me.tier);
+        guildBelow(nameBox, me.guild);
     }
 
     overlay.style.display = "flex";
@@ -3564,11 +3567,14 @@ function chatAddBubble(container, data) {
 
     meta.append(name, time);
 
+    const chatGuild = guildLineNode(data.fromId ? guildOfPlayerId(data.fromId) : null, "player-guild lc-guild");
+
     const text = document.createElement("div");
     text.className = "lc-text";
     text.textContent = String(data.message || "");
 
-    row.append(meta, text);
+    if (chatGuild) row.append(meta, chatGuild, text);
+    else row.append(meta, text);
     container.appendChild(row);
 
     while (container.children.length > 120) container.firstElementChild.remove();
@@ -5057,6 +5063,7 @@ function updateAccountChip() {
         if (name) {
             setTierName(name, authState.username, myTierKey);
             appendUserBadge(name, myBadge);
+            guildBelow(name, myGuild);
         }
     } else {
         text.textContent = "👻 Guest";
@@ -5243,6 +5250,7 @@ function renderRanks(list) {
         name.className = "rank-name";
         setTierName(name, entry.displayName || entry.username, entry.tier);
         appendUserBadge(name, entry.badge);
+        guildBelow(name, entry.guild);
 
         const details = document.createElement("button");
         details.type = "button";
@@ -5270,6 +5278,7 @@ socket.on("playerStatsData", data => {
     setTierName($("ranksDetailsName"), data.displayName || data.username, data.tier);
     showDetailsAvatar(data.look);
     appendUserBadge($("ranksDetailsName"), data.badge);
+    guildBelow($("ranksDetailsName"), data.guild);
     $("statKills").textContent = data.stats.kills || 0;
     $("statSaves").textContent = data.stats.saves || 0;
     $("statDetects").textContent = data.stats.detects || 0;
@@ -5532,6 +5541,7 @@ function setMyBadge(badge) {
     if (accountName && typeof authState !== "undefined" && authState.username) {
         setTierName(accountName, authState.username, myTierKey);
         appendUserBadge(accountName, myBadge);
+        guildBelow(accountName, myGuild);
     }
 }
 
@@ -6562,6 +6572,100 @@ function tierNameHtml(name, key) {
     return `<span class="tier-name" style="color:${tier.color}">${tier.symbol} ${escapeHtml(name)}</span>`;
 }
 
+/* ---------- GUILD NAME UNDER THE PLAYER NAME (Free Fire style) ---------- */
+function guildSafeColorClient(c) {
+    return /^#[0-9a-f]{6}$/i.test(String(c || "")) ? c : "#ff3b3b";
+}
+
+function guildLineNode(guild, className) {
+    if (!guild || !guild.name) return null;
+    const line = document.createElement("span");
+    line.className = className || "player-guild";
+    line.textContent = (guild.tag ? "[" + guild.tag + "] " : "") + guild.name;
+    const color = guildSafeColorClient(guild.color);
+    line.style.setProperty("color", color, "important");
+    line.style.setProperty("-webkit-text-fill-color", color, "important");
+    line.title = "Guild: " + guild.name;
+    return line;
+}
+
+/* Keeps the avatar (first child) on the left and stacks name + guild name in a column. */
+function applyGuildLine(nameEl, guild) {
+    if (!nameEl || !guild || !guild.name || nameEl.classList.contains("has-guild")) return;
+    const first = nameEl.firstChild;
+    const col = document.createElement("span");
+    col.className = "pg-col";
+    const main = document.createElement("span");
+    main.className = "pg-main";
+    while (first && first.nextSibling) main.appendChild(first.nextSibling);
+    if (!first) { while (nameEl.firstChild) main.appendChild(nameEl.firstChild); }
+    col.appendChild(main);
+    col.appendChild(guildLineNode(guild));
+    nameEl.appendChild(col);
+    nameEl.classList.add("has-guild");
+}
+
+var myGuild = null;
+
+/* Guild name as an HTML string (for places that build rows with innerHTML). */
+function guildHtml(guild, block) {
+    if (!guild || !guild.name) return "";
+    const color = guildSafeColorClient(guild.color);
+    const safe = String(guild.name).replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+    return `<span class="player-guild" style="color:${color} !important;-webkit-text-fill-color:${color} !important;${block ? "display:block;" : "display:inline;margin-left:6px;"}">${guild.tag ? "[" + String(guild.tag).replace(/[^A-Za-z0-9]/g, "") + "] " : ""}${safe}</span>`;
+}
+
+/* Adds the guild name on its own line under an existing name element. */
+function guildBelow(el, guild, className) {
+    if (!el) return;
+    el.querySelectorAll(":scope > .ac-guild, :scope > .player-guild.pg-below").forEach(x => x.remove());
+    const line = guildLineNode(guild, className || "ac-guild");
+    if (line) el.appendChild(line);
+}
+
+function guildOfPlayerId(id) {
+    try {
+        const p = Array.isArray(players) ? players.find(x => x.id === id) : null;
+        return p && p.guild ? p.guild : null;
+    } catch (e) { return null; }
+}
+
+function refreshMyGuildEverywhere() {
+    try { if (typeof refreshOwnTierName === "function") refreshOwnTierName(); } catch (e) { /* ignore */ }
+    try { if (typeof updateAccountChip === "function") updateAccountChip(); } catch (e) { /* ignore */ }
+}
+
+socket.on("guildChanged", guild => {
+    myGuild = guild && guild.name ? guild : null;
+    refreshMyGuildEverywhere();
+});
+
+socket.on("authResult", data => {
+    if (data && data.ok && !data.guest) {
+        socket.emit("communityGuild", {}, r => {
+            myGuild = r && r.ok && r.mine ? { name: r.mine.name, color: r.mine.color, tag: r.mine.tag } : null;
+            refreshMyGuildEverywhere();
+        });
+    } else {
+        myGuild = null;
+        refreshMyGuildEverywhere();
+    }
+});
+
+(function injectGuildCss() {
+    if (document.getElementById("guildNameCss")) return;
+    const st = document.createElement("style");
+    st.id = "guildNameCss";
+    st.textContent = `
+        .has-guild { display: inline-flex !important; align-items: center; gap: 0; min-width: 0; }
+        .pg-col { display: flex; flex-direction: column; justify-content: center; line-height: 1.15; min-width: 0; }
+        .pg-main { display: inline; }
+        .player-guild { display: block; font-size: .72em; font-weight: 800; letter-spacing: .4px; margin-top: 2px; opacity: .95; text-shadow: 0 0 8px rgba(0,0,0,.45); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 190px; }
+        .ac-guild { display: block; font-size: .9em; font-weight: 800; letter-spacing: .5px; margin-top: 3px; }
+    `;
+    document.head.appendChild(st);
+})();
+
 /* ---------- CSS for everything in this block ---------- */
 
 (function injectProgressionCss() {
@@ -6622,6 +6726,7 @@ function refreshOwnTierName() {
     if (name && authState?.username) {
         setTierName(name, authState.username, myTierKey);
         appendUserBadge(name, myBadge);
+        guildBelow(name, myGuild);
     }
 }
 
@@ -8469,6 +8574,7 @@ function openVoicePicker(mode, startPayload) {
 
             const name = document.createElement("span");
             name.textContent = player.name + (player.id === socket.id ? " (you)" : "");
+            guildBelow(name, player.guild, "player-guild pg-below");
 
             row.append(checkbox, name);
             card.appendChild(row);
@@ -10232,6 +10338,7 @@ function renderSoundboardPermissions(container) {
         const name = document.createElement("span");
         name.className = "sb-perm-name";
         name.textContent = player.name + (player.id === socket.id ? " (you)" : "");
+        guildBelow(name, player.guild, "player-guild pg-below");
 
         const tag = document.createElement("span");
         tag.className = "sb-perm-tag";
@@ -10880,7 +10987,9 @@ function renderAccountCard(data) {
         tags.appendChild(you);
     }
 
-    who.append(name, tags);
+    const guildUnderName = data.guest ? null : guildLineNode(data.guild, "ac-guild");
+    if (guildUnderName) who.append(name, guildUnderName, tags);
+    else who.append(name, tags);
     top.append(avatarBox, who);
     card.appendChild(top);
 
@@ -11627,6 +11736,8 @@ socket.on("accountCardData", data => {
     function addDeadLine(m) {
         const d = el("div");
         d.innerHTML = `<b class="${m.fromMedium ? "med" : ""}">${m.fromMedium ? "🔮 " : ""}${esc(m.playerName)}:</b> ${esc(m.message)}`;
+        const deadGuild = guildLineNode(m.fromId ? guildOfPlayerId(m.fromId) : null, "player-guild lc-guild");
+        if (deadGuild) d.insertBefore(deadGuild, d.firstChild);
         deadMsgs.appendChild(d);
         deadMsgs.scrollTop = deadMsgs.scrollHeight;
     }
@@ -12022,7 +12133,7 @@ socket.on("accountCardData", data => {
         const body = replayModal.querySelector(".mwx-body");
         body.innerHTML = "";
         const pl = el("div", "mwx-rp-p");
-        replayData.players.forEach(p => pl.appendChild(el("span", p.alive ? "" : "dead", `${esc(p.name)} - ${esc(p.role || "?")}`)));
+        replayData.players.forEach(p => pl.appendChild(el("span", p.alive ? "" : "dead", `${esc(p.name)} - ${esc(p.role || "?")}${guildHtml(p.guild, true)}`)));
         body.appendChild(el("div", "mwx-rp-h", "Final roles"));
         body.appendChild(pl);
         let lastKey = "";
@@ -13791,6 +13902,7 @@ socket.on("accountBanned", data => {
         name.className = "mvp-name";
         setTierName(name, data.name, data.guest ? null : data.tier);
         if (!data.guest) appendUserBadge(name, data.badge);
+        if (!data.guest) guildBelow(name, data.guild);
 
         const chips = document.createElement("div");
         chips.className = "mvp-chips";
@@ -13984,6 +14096,7 @@ socket.on("accountBanned", data => {
         name.className = "mwp-name";
         setTierName(name, data.displayName || data.username, data.tier);
         appendUserBadge(name, data.badge);
+        guildBelow(name, data.guild);
 
         const tags = document.createElement("div");
         tags.className = "mwp-tags";
@@ -14739,7 +14852,7 @@ socket.on("accountBanned", data => {
                         <div class="mwh-res">${m.won ? "WIN" : "LOSS"}</div>
                         <div class="mwh-main">
                             <b>${esc(m.role)}${team ? " · " + esc(team) : ""}${m.mvp ? " · 👑 MVP" : ""}</b>
-                            <span>🏁 ${esc(m.winner || "—")} won${m.mvpName ? " · MVP " + esc(m.mvpName) : ""}${m.nights ? " · " + esc(m.nights) + " night" + (m.nights === 1 ? "" : "s") : ""}</span>
+                            <span>🏁 ${esc(m.winner || "—")} won${m.mvpName ? " · MVP " + esc(m.mvpName) + guildHtml(m.mvpGuild, false) : ""}${m.nights ? " · " + esc(m.nights) + " night" + (m.nights === 1 ? "" : "s") : ""}</span>
                         </div>
                         <div class="mwh-kd">${esc(m.kills)}🔪 ${esc(m.saves)}🛡️ ${esc(m.detects)}🔎</div>
                         <div class="mwh-date">${esc(fmtDate(m.t))}</div>
@@ -14795,12 +14908,12 @@ socket.on("accountBanned", data => {
         const winnerClass = /Mafia/.test(match.winner) ? "mafia" : /Civilian/.test(match.winner) ? "civilian" : "neutral";
         card.appendChild(mk("div", "mwh-banner mwh-" + winnerClass, `
             <div class="mwh-banner-win">🏁 ${esc(match.winner)} won</div>
-            <div class="mwh-banner-sub">${match.mvp ? "👑 MVP: <b>" + esc(match.mvp.name) + "</b> (" + esc(match.mvp.role) + ")" : ""} · ${esc(match.nights || 1)} night${(match.nights || 1) === 1 ? "" : "s"} · ${esc(fmtDate(match.t, true))}</div>`));
+            <div class="mwh-banner-sub">${match.mvp ? "👑 MVP: <b>" + esc(match.mvp.name) + "</b>" + guildHtml(match.mvp.guild, false) + " (" + esc(match.mvp.role) + ")" : ""} · ${esc(match.nights || 1)} night${(match.nights || 1) === 1 ? "" : "s"} · ${esc(fmtDate(match.t, true))}</div>`));
 
         const players = mk("div", "mwh-players");
         (match.players || []).forEach(p => {
             players.appendChild(mk("div", "mwh-player " + (p.won ? "won" : "lost") + (p.alive ? "" : " dead"),
-                `<b>${p.mvp ? "👑 " : ""}${esc(p.name)}</b><span>${esc(p.startRole)}${p.role !== p.startRole ? " → " + esc(p.role) : ""}</span><em>${p.won ? "WON" : "LOST"}${p.alive ? "" : " · ☠️"}</em>`));
+                `<b>${p.mvp ? "👑 " : ""}${esc(p.name)}${guildHtml(p.guild, true)}</b><span>${esc(p.startRole)}${p.role !== p.startRole ? " → " + esc(p.role) : ""}</span><em>${p.won ? "WON" : "LOST"}${p.alive ? "" : " · ☠️"}</em>`));
         });
         card.appendChild(players);
 
@@ -15040,6 +15153,10 @@ socket.on("accountBanned", data => {
         });
         add("📜", "Match History", "Finished matches, timelines, MVP and winners", openHistory);
         add("🎴", "Profile Cards", "Animated cards, streak rewards and titles", openCardPicker);
+        add("🛡️", "Guild", "Guild Hall: join or create a guild, chat, invite, leaderboard", () => {
+            if (typeof closeSettings === "function") closeSettings();
+            setTimeout(() => { if (typeof window.mafiaOpenGuilds === "function") window.mafiaOpenGuilds(); }, 120);
+        });
     }
 
     if (typeof renderSettingsPage === "function") {
@@ -15389,4 +15506,568 @@ socket.on("accountBanned", data => {
     });
 
     socket.on("gameOver", () => { lastPhase = "gameover"; });
+})();
+
+/* =========================================================
+   COMMUNITY HUB + ENHANCED LOBBY CONTROLS
+   Theme-aware: follows the existing Dark / White theme switch.
+========================================================= */
+(function mafiaCommunityUpgrade(){
+    const style = document.createElement('style');
+    style.textContent = `
+      .mw-community-btn,.mw-ready-btn{border:1px solid #a72b35;background:linear-gradient(135deg,#270b10,#08090d);color:#fff;border-radius:12px;padding:11px 16px;font-weight:900;letter-spacing:.7px;cursor:pointer;box-shadow:0 8px 22px #0005;transition:.2s}
+      .mw-community-btn:hover,.mw-ready-btn:hover{transform:translateY(-2px);filter:brightness(1.2)}
+      .mw-community-overlay{position:fixed;inset:0;z-index:100000;background:#03050bd9;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(9px)}
+      .mw-community-panel{width:min(850px,96vw);max-height:88vh;overflow:auto;border:1px solid #a72b35;border-radius:20px;background:linear-gradient(145deg,#171014,#090b11 65%);color:#f8edf0;box-shadow:0 25px 90px #000b;padding:22px}
+      .mw-community-head{display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px solid #ffffff22;padding-bottom:14px;margin-bottom:16px}
+      .mw-community-head h2{margin:0;font-size:22px;letter-spacing:2px}.mw-community-close{background:#2b1118;color:white;border:1px solid #b33b48;border-radius:10px;padding:8px 12px;cursor:pointer}
+      .mw-community-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}.mw-community-actions button,.mw-community-panel button{cursor:pointer;border:1px solid #a83a46;border-radius:10px;padding:9px 12px;background:#271017;color:#fff;font-weight:800}
+      .mw-community-panel input,.mw-community-panel textarea,.mw-community-panel select{width:100%;box-sizing:border-box;margin:5px 0 10px;padding:10px;border-radius:9px;border:1px solid #75404a;background:#0d0d13;color:#fff}
+      .mw-community-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}.mw-community-item{padding:12px;border:1px solid #ffffff22;border-radius:13px;background:#ffffff08}.mw-community-muted{opacity:.7;font-size:12px}.mw-community-section{margin:16px 0}.mw-community-section h3{letter-spacing:1px;font-size:14px;color:#ffb4bd}
+      .mw-room-desc{padding:8px 12px;margin:8px auto;border:1px solid #a72b3555;border-radius:10px;background:#160b10;color:inherit;max-width:520px;text-align:center;font-size:13px}
+      html[data-mafia-theme="white"] .mw-community-panel{background:linear-gradient(145deg,#fff,#eaf1ff);color:#10264d;border-color:#2f6bff;box-shadow:0 25px 90px #244b8833}
+      html[data-mafia-theme="white"] .mw-community-close,html[data-mafia-theme="white"] .mw-community-actions button,html[data-mafia-theme="white"] .mw-community-panel button{background:linear-gradient(135deg,#2f6bff,#1645b8);border-color:#1d55d6;color:#fff}
+      html[data-mafia-theme="white"] .mw-community-panel input,html[data-mafia-theme="white"] .mw-community-panel textarea,html[data-mafia-theme="white"] .mw-community-panel select{background:#fff;color:#10264d;border-color:#8eafff}
+      html[data-mafia-theme="white"] .mw-community-item{background:#fff;border-color:#b9ccf5}html[data-mafia-theme="white"] .mw-community-section h3{color:#174fc5}html[data-mafia-theme="white"] .mw-room-desc{background:#eaf1ff;border-color:#8eafff}
+      @media(max-width:600px){.mw-community-panel{padding:15px;max-height:92vh}.mw-community-head h2{font-size:17px}.mw-community-actions button{flex:1 1 42%}}
+    `;
+    document.head.appendChild(style);
+
+    let communityOverlay=null;
+    const safeText = v => String(v ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    function addLobbyControls(){
+      const lobby=document.getElementById('lobby'); if(!lobby || document.getElementById('mwCommunityButton')) return;
+      const controls=document.createElement('div'); controls.className='mw-community-actions'; controls.style.justifyContent='center';
+      controls.innerHTML='<button id="mwCommunityButton" class="mw-community-btn" type="button">✦ COMMUNITY HUB</button><button id="mwReadyButton" class="mw-ready-btn" type="button">✓ READY</button>';
+      const roomCodeEl=document.getElementById('displayRoomCode'); (roomCodeEl?.parentElement || lobby).insertAdjacentElement('afterend',controls);
+      document.getElementById('mwCommunityButton').addEventListener('click',openHub);
+      document.getElementById('mwReadyButton').addEventListener('click',()=>{ const ready=document.getElementById('mwReadyButton').dataset.ready!=='true'; socket.emit('lobbySetReady',{ready},r=>{if(!r?.ok) alert(r?.error||'Could not update ready status');}); });
+      const desc=document.createElement('div'); desc.id='mwRoomDescription'; desc.className='mw-room-desc'; desc.textContent='No room description'; controls.insertAdjacentElement('afterend',desc);
+    }
+    function showOverlay(initialTab = 'friends'){
+      if(communityOverlay) communityOverlay.remove();
+      communityOverlay=document.createElement('div'); communityOverlay.className='mw-community-overlay';
+      communityOverlay.innerHTML=`<div class="mw-community-panel"><div class="mw-community-head"><h2>✦ MAFIA WARS COMMUNITY</h2><button class="mw-community-close" id="mwHubClose">✕</button></div><div class="mw-community-actions"><button data-tab="friends">FRIENDS</button><button data-tab="report">REPORT PLAYER</button><button data-tab="owner">OWNER DASHBOARD</button><button data-tab="spectate">SPECTATE</button></div><div id="mwHubContent"><p>Loading community data…</p></div></div>`;
+      document.body.appendChild(communityOverlay);
+      communityOverlay.querySelector('#mwHubClose').onclick=()=>communityOverlay.remove();
+      communityOverlay.addEventListener('click',e=>{if(e.target===communityOverlay)communityOverlay.remove();});
+      communityOverlay.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>loadTab(b.dataset.tab));
+      loadTab(initialTab);
+    }
+
+    /* ================= GUILD HALL =================
+       Tabbed guild screen: Overview, Members, Chat, Requests, Invite, Leaderboard, Settings.
+       Players without a guild get: Discover, Create, Join Code, Invites, Leaderboard. */
+    (function(){
+      const g=document.createElement('style'); g.id='mwgStyles';
+      g.textContent=`
+        .mwg-panel{--bg1:#1a1116;--bg2:#08090e;--txt:#f8edf0;--mut:#f8edf0a6;--line:#ffffff1f;--card:#ffffff0b;--card2:#ffffff16;--g:#ff3b3b;--g33:#ff3b3b33;--g66:#ff3b3b66;
+          width:min(1000px,97vw);height:min(88vh,840px);display:flex;flex-direction:column;border:1px solid #a72b35;border-radius:22px;background:linear-gradient(150deg,var(--bg1),var(--bg2) 72%);color:var(--txt);box-shadow:0 30px 100px #000c,inset 0 0 0 1px #ffffff08;overflow:hidden;animation:mwgIn .25s ease;box-sizing:border-box}
+        @keyframes mwgIn{from{opacity:0;transform:translateY(14px) scale(.98)}to{opacity:1;transform:none}}
+        .mwg-top{display:flex;align-items:center;justify-content:space-between;padding:13px 18px;border-bottom:1px solid var(--line);flex:0 0 auto}
+        .mwg-top h2{margin:0;font-size:17px;letter-spacing:3px}
+        .mwg-x{width:36px;height:36px;border-radius:10px;border:1px solid #b33b48;background:#2b1118;color:#fff;cursor:pointer;font-size:15px}
+        .mwg-root{flex:1;min-height:0;display:flex;flex-direction:column;color:var(--txt)}
+        .mwg-root *{box-sizing:border-box}
+        .mwg-head{padding:16px 18px 0;flex:0 0 auto}
+        .mwg-banner{position:relative;display:flex;gap:16px;align-items:center;padding:16px 18px;border-radius:18px;border:1px solid var(--g66);background:radial-gradient(130% 170% at 0% 0%,var(--g33),transparent 62%),var(--card);overflow:hidden}
+        .mwg-banner:after{content:"";position:absolute;right:-40px;top:-40px;width:170px;height:170px;border-radius:50%;background:radial-gradient(circle,var(--g33),transparent 70%);pointer-events:none}
+        .mwg-emblem{flex:0 0 auto;min-width:72px;height:72px;padding:0 8px;border-radius:22px;display:grid;place-items:center;font-weight:900;font-size:22px;letter-spacing:1px;color:#fff;text-shadow:0 1px 5px #000b;background:linear-gradient(145deg,var(--g),var(--g66));box-shadow:0 0 30px var(--g66),inset 0 0 0 2px #ffffff40}
+        .mwg-binfo{min-width:0;position:relative;z-index:1}
+        .mwg-bname{font-size:26px;font-weight:900;letter-spacing:1.5px;color:var(--g);text-shadow:0 0 18px var(--g66);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .mwg-chips{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+        .mwg-chip{font-size:11px;font-weight:800;letter-spacing:.6px;padding:3px 9px;border-radius:99px;border:1px solid var(--line);background:var(--card2)}
+        .mwg-chip.role-leader{border-color:#ffd400aa;background:#ffd40022;color:#ffd400}.mwg-chip.role-officer{border-color:#4aa3ffaa;background:#4aa3ff22;color:#6bb6ff}
+        .mwg-bdesc{font-size:13px;color:var(--mut);max-width:640px}
+        .mwg-dim{color:var(--mut);opacity:.8}
+        .mwg-tabs{display:flex;gap:2px;overflow-x:auto;padding:0 12px;margin-top:12px;border-bottom:1px solid var(--line);flex:0 0 auto;scrollbar-width:none}
+        .mwg-tabs::-webkit-scrollbar{display:none}
+        .mwg-tab{background:none;border:0;border-bottom:3px solid transparent;color:var(--mut);padding:12px 13px;font-weight:800;letter-spacing:.9px;font-size:12px;cursor:pointer;white-space:nowrap;transition:.18s}
+        .mwg-tab:hover{color:var(--txt)}
+        .mwg-tab.on{color:var(--txt);border-bottom-color:var(--g);text-shadow:0 0 12px var(--g66)}
+        .mwg-badge{display:inline-block;background:#e0364a;color:#fff;border-radius:99px;font-size:10px;padding:1px 6px;margin-left:6px;min-width:17px;text-align:center}
+        .mwg-content{flex:1;min-height:0;overflow:auto;padding:16px 18px 20px;scrollbar-width:thin;animation:mwgFade .2s ease}
+        @keyframes mwgFade{from{opacity:0}to{opacity:1}}
+        .mwg-btn{border:1px solid #a83a46;background:linear-gradient(135deg,#3a1219,#1a0a0e);color:#fff;border-radius:11px;padding:9px 14px;font-weight:800;font-size:13px;letter-spacing:.4px;cursor:pointer;transition:.18s;white-space:nowrap}
+        .mwg-btn:hover:not(:disabled){transform:translateY(-1px);filter:brightness(1.25)}
+        .mwg-btn:disabled{opacity:.45;cursor:not-allowed}
+        .mwg-btn.primary{background:linear-gradient(135deg,var(--g),var(--g66));border-color:var(--g);text-shadow:0 1px 4px #000b;box-shadow:0 6px 20px var(--g33)}
+        .mwg-btn.ok{background:linear-gradient(135deg,#1f9d55,#0f5c31);border-color:#35d36b}
+        .mwg-btn.danger{background:linear-gradient(135deg,#c92a3a,#6d1019);border-color:#ff5a68}
+        .mwg-btn.ghost{background:transparent;border-color:var(--line)}
+        .mwg-btn.sm{padding:6px 10px;font-size:12px;border-radius:9px}
+        .mwg-card{border:1px solid var(--line);background:var(--card);border-radius:15px;padding:14px;margin-bottom:12px}
+        .mwg-card h3{margin:0 0 10px;font-size:12px;letter-spacing:1.4px;color:var(--g)}
+        .mwg-input,.mwg-ta,.mwg-sel{width:100%;padding:11px 12px;border-radius:11px;border:1px solid var(--line);background:#00000040;color:var(--txt);font-size:14px;outline:none;transition:.18s}
+        .mwg-input:focus,.mwg-ta:focus,.mwg-sel:focus{border-color:var(--g);box-shadow:0 0 0 3px var(--g33)}
+        .mwg-ta{resize:vertical;min-height:80px}
+        .mwg-label{display:block;font-size:11px;font-weight:800;letter-spacing:1px;color:var(--mut);margin:12px 0 5px}
+        .mwg-count{text-align:right;font-size:11px;color:var(--mut);margin-top:3px}
+        .mwg-flex{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.mwg-grow{flex:1;min-width:0}
+        .mwg-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:10px;margin-bottom:12px}
+        .mwg-stat{border:1px solid var(--line);background:var(--card);border-radius:14px;padding:13px;text-align:center;position:relative;overflow:hidden}
+        .mwg-stat:before{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:linear-gradient(90deg,var(--g),transparent)}
+        .mwg-stat b{display:block;font-size:26px;font-weight:900}.mwg-stat span{font-size:11px;letter-spacing:1px;color:var(--mut);font-weight:700}
+        .mwg-ann{display:flex;gap:12px;align-items:flex-start;border:1px solid #ffd40088;background:linear-gradient(135deg,#ffd40024,#ffd4000a);border-radius:15px;padding:13px 15px;margin-bottom:12px}
+        .mwg-ann .pin{font-size:22px}.mwg-ann p{margin:0 0 4px;font-size:14px;line-height:1.45;word-break:break-word}.mwg-ann small{color:var(--mut)}
+        .mwg-row{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:14px;background:var(--card);margin-bottom:8px;transition:.18s}
+        .mwg-row:hover{background:var(--card2);transform:translateX(2px)}
+        .mwg-row.me{border-color:var(--g);box-shadow:0 0 0 1px var(--g33)}
+        .mwg-av{position:relative;flex:0 0 auto;width:42px;height:42px;border-radius:50%;display:grid;place-items:center;font-weight:900;background:linear-gradient(145deg,#ffffff22,#ffffff08);border:1px solid var(--line)}
+        .mwg-av i{position:absolute;right:-1px;bottom:-1px;width:12px;height:12px;border-radius:50%;background:#6b6b75;border:2px solid var(--bg2)}.mwg-av i.on{background:#35d36b;box-shadow:0 0 8px #35d36b}
+        .mwg-rname{font-weight:800;font-size:15px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+        .mwg-sub{font-size:12px;color:var(--mut)}
+        .mwg-role{font-size:10px;font-weight:900;letter-spacing:.8px;padding:2px 8px;border-radius:99px;border:1px solid var(--line);color:var(--mut)}
+        .mwg-role.leader{color:#ffd400;border-color:#ffd400aa;background:#ffd40022}.mwg-role.officer{color:#6bb6ff;border-color:#4aa3ffaa;background:#4aa3ff22}
+        .mwg-acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+        .mwg-chatwrap{display:flex;flex-direction:column;height:100%;min-height:300px}.mwg-chatlog{flex:1;min-height:150px;overflow:auto;padding:12px;border:1px solid var(--line);border-radius:15px;background:#00000030;display:flex;flex-direction:column;gap:8px;scrollbar-width:thin}
+        .mwg-msg{max-width:82%;padding:8px 12px;border-radius:14px 14px 14px 4px;background:var(--card2);border:1px solid var(--line);align-self:flex-start;word-break:break-word}
+        .mwg-msg.me{align-self:flex-end;border-radius:14px 14px 4px 14px;background:linear-gradient(135deg,var(--g33),var(--card2));border-color:var(--g66)}
+        .mwg-mhead{font-size:11px;color:var(--mut);margin-bottom:2px;display:flex;gap:7px;align-items:center}.mwg-mhead b{color:var(--txt);font-size:12px}
+        .mwg-mtext{font-size:14px;line-height:1.4}
+        .mwg-sys{align-self:center;font-size:11px;color:var(--mut);background:var(--card);border:1px dashed var(--line);padding:3px 12px;border-radius:99px;text-align:center}
+        .mwg-chatbar{display:flex;gap:8px;margin-top:10px;flex:0 0 auto}
+        .mwg-pin-mini{display:flex;gap:8px;align-items:center;padding:8px 12px;margin-bottom:10px;border-radius:12px;border:1px solid #ffd40077;background:#ffd40014;font-size:13px}
+        .mwg-code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:34px;font-weight:900;letter-spacing:9px;padding:12px 18px;border-radius:14px;border:2px dashed var(--g);background:var(--g33);text-align:center;user-select:all}
+        .mwg-seg{display:inline-flex;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+        .mwg-seg button{border:0;background:transparent;color:var(--mut);padding:10px 16px;font-weight:800;cursor:pointer;font-size:12px;letter-spacing:.6px;transition:.18s}
+        .mwg-seg button.on{background:linear-gradient(135deg,var(--g),var(--g66));color:#fff;text-shadow:0 1px 4px #000b}
+        .mwg-colors{display:flex;flex-wrap:wrap;gap:10px;margin-top:4px}
+        .mwg-dot{width:34px;height:34px;padding:0;border-radius:50%;border:3px solid transparent;box-shadow:0 0 0 1px #ffffff55;cursor:pointer;transition:.18s}
+        .mwg-dot.sel{border-color:#fff;box-shadow:0 0 14px #fffa;transform:scale(1.14)}
+        .mwg-preview{display:flex;align-items:center;gap:12px;padding:12px;border-radius:14px;border:1px dashed var(--line);background:#00000026;margin-top:12px}
+        .mwg-pv-name{font-weight:900}.mwg-pv-guild{display:block;font-size:12px;font-weight:800}
+        .mwg-gcard{display:flex;align-items:center;gap:14px;padding:13px;border:1px solid var(--line);border-left:4px solid var(--g);border-radius:15px;background:var(--card);margin-bottom:10px;transition:.18s}
+        .mwg-gcard:hover{background:var(--card2);transform:translateY(-1px);box-shadow:0 8px 24px var(--g33)}
+        .mwg-mini-emb{flex:0 0 auto;min-width:50px;height:50px;padding:0 6px;border-radius:15px;display:grid;place-items:center;font-weight:900;font-size:14px;color:#fff;text-shadow:0 1px 4px #000b;background:linear-gradient(145deg,var(--g),var(--g66));box-shadow:0 0 16px var(--g33)}
+        .mwg-filters{display:flex;gap:8px;margin:10px 0 14px;flex-wrap:wrap}
+        .mwg-pill{border:1px solid var(--line);background:var(--card);color:var(--mut);border-radius:99px;padding:6px 13px;font-weight:800;font-size:12px;cursor:pointer}.mwg-pill.on{color:#fff;border-color:var(--acc,#e0485a);background:#e0485a44}
+        .mwg-lb{display:grid;grid-template-columns:46px 1fr 70px 70px 80px;gap:8px;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:13px;background:var(--card);margin-bottom:7px;font-size:14px}
+        .mwg-lb.head{background:none;border:0;font-size:11px;letter-spacing:1px;color:var(--mut);font-weight:800;padding-bottom:0}
+        .mwg-lb.me{border-color:var(--g);box-shadow:0 0 0 1px var(--g33);background:var(--g33)}
+        .mwg-lb .rk{font-size:20px;font-weight:900;text-align:center}.mwg-lb .num{text-align:right;font-weight:800}.mwg-lb .num.hl{color:var(--g)}
+        .mwg-empty{text-align:center;padding:34px 12px;color:var(--mut)}.mwg-empty b{display:block;font-size:34px;margin-bottom:6px}
+        .mwg-hero{text-align:center;padding:6px 10px 2px}.mwg-hero .big{font-size:46px}
+        .mwg-modalback{position:fixed;inset:0;z-index:100001;background:#000b;display:grid;place-items:center;padding:14px;backdrop-filter:blur(6px);animation:mwgFade .15s}
+        .mwg-modal{width:min(440px,94vw);border:1px solid #a72b35;border-radius:18px;background:linear-gradient(150deg,var(--bg1),var(--bg2));color:var(--txt);padding:18px;box-shadow:0 20px 70px #000d}
+        .mwg-modal h3{margin:0 0 10px;letter-spacing:1.5px;font-size:15px}.mwg-modal p{margin:0 0 10px;font-size:14px;line-height:1.45}
+        .mwg-modal .mwg-flex{justify-content:flex-end;margin-top:14px}
+        .mwg-toast{position:fixed;left:50%;bottom:30px;transform:translate(-50%,20px);z-index:100005;padding:12px 18px;border-radius:13px;font-weight:800;font-size:14px;color:#fff;background:linear-gradient(135deg,#1f9d55,#0f5c31);border:1px solid #35d36b;box-shadow:0 12px 40px #000a;opacity:0;transition:.25s;max-width:92vw;text-align:center;pointer-events:none}
+        .mwg-toast.show{opacity:1;transform:translate(-50%,0)}.mwg-toast.bad{background:linear-gradient(135deg,#c92a3a,#6d1019);border-color:#ff5a68}
+        html[data-mafia-theme="white"] .mwg-panel{--bg1:#ffffff;--bg2:#e6eeff;--txt:#10264d;--mut:#10264da0;--line:#2f6bff33;--card:#ffffffd9;--card2:#2f6bff14;border-color:#2f6bff;box-shadow:0 25px 90px #244b8844}
+        html[data-mafia-theme="white"] .mwg-x{background:linear-gradient(135deg,#2f6bff,#1645b8);border-color:#1d55d6}
+        html[data-mafia-theme="white"] .mwg-btn{background:linear-gradient(135deg,#2f6bff,#1645b8);border-color:#1d55d6}
+        html[data-mafia-theme="white"] .mwg-btn.ghost{background:transparent;color:#10264d}
+        html[data-mafia-theme="white"] .mwg-btn.ok{background:linear-gradient(135deg,#1f9d55,#0f5c31)}html[data-mafia-theme="white"] .mwg-btn.danger{background:linear-gradient(135deg,#c92a3a,#7d1520)}
+        html[data-mafia-theme="white"] .mwg-input,html[data-mafia-theme="white"] .mwg-ta,html[data-mafia-theme="white"] .mwg-sel{background:#fff}
+        html[data-mafia-theme="white"] .mwg-chatlog,html[data-mafia-theme="white"] .mwg-preview{background:#f3f7ff}
+        html[data-mafia-theme="white"] .mwg-modal{border-color:#2f6bff}
+        html[data-mafia-theme="white"] .mwg-ann,html[data-mafia-theme="white"] .mwg-pin-mini{background:#fff6d6;border-color:#e0b400}
+        html[data-mafia-theme="white"] .mwg-chip.role-leader,html[data-mafia-theme="white"] .mwg-role.leader{color:#9a7400}html[data-mafia-theme="white"] .mwg-chip.role-officer,html[data-mafia-theme="white"] .mwg-role.officer{color:#1d55d6}
+        @media(max-width:640px){
+          .mwg-panel{height:94vh;border-radius:16px}.mwg-head{padding:12px 12px 0}.mwg-content{padding:12px}
+          .mwg-banner{padding:12px;gap:12px}.mwg-emblem{min-width:56px;height:56px;font-size:17px;border-radius:17px}.mwg-bname{font-size:20px}
+          .mwg-row{flex-wrap:wrap}.mwg-acts{width:100%;justify-content:flex-start}
+          .mwg-lb{grid-template-columns:34px 1fr 52px 52px 62px;font-size:12px;padding:8px}
+          .mwg-code{font-size:26px;letter-spacing:6px}.mwg-gcard{flex-wrap:wrap}.mwg-msg{max-width:94%}
+        }
+      `;
+      document.head.appendChild(g);
+    })();
+
+    let guildCtl=null;
+    const gEsc=safeText;
+    const gCol=c=>/^#[0-9a-f]{6}$/i.test(c||'')?c:'#ff3b3b';
+    const gVars=c=>{c=gCol(c);return `--g:${c};--g33:${c}33;--g66:${c}66;`;};
+    const gRole={leader:'👑 LEADER',officer:'⭐ OFFICER',member:'MEMBER'};
+    function gAgo(ts){const s=Math.max(0,Math.floor((Date.now()-ts)/1000));if(s<60)return 'just now';const m=Math.floor(s/60);if(m<60)return m+'m ago';const h=Math.floor(m/60);if(h<24)return h+'h ago';return Math.floor(h/24)+'d ago';}
+    function gTime(ts){try{return new Date(ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});}catch(e){return '';}}
+    function gToast(text,bad){
+      let t=document.getElementById('mwgToast');
+      if(!t){t=document.createElement('div');t.id='mwgToast';document.body.appendChild(t);}
+      t.className='mwg-toast'+(bad?' bad':'');t.textContent=text;
+      void t.offsetWidth;t.classList.add('show');
+      clearTimeout(gToast._t);gToast._t=setTimeout(()=>t.classList.remove('show'),3200);
+    }
+    function gModal({title,body,confirmText,danger,noCancel,onOpen,onConfirm}){
+      const back=document.createElement('div');back.className='mwg-modalback';
+      back.innerHTML=`<div class="mwg-modal mwg-panel" style="width:min(440px,94vw);height:auto;animation:none"><h3>${title}</h3><div>${body}</div><div class="mwg-flex">${noCancel?'':'<button type="button" class="mwg-btn ghost" data-x>CANCEL</button>'}<button type="button" class="mwg-btn ${danger?'danger':'primary'}" data-ok>${gEsc(confirmText||'CONFIRM')}</button></div></div>`;
+      (communityOverlay||document.body).appendChild(back);
+      const close=()=>back.remove();
+      back.querySelector('[data-x]')?.addEventListener('click',close);
+      back.addEventListener('mousedown',e=>{if(e.target===back)close();});
+      back.querySelector('[data-ok]').onclick=async()=>{const ok=back.querySelector('[data-ok]');ok.disabled=true;const res=await onConfirm(back);ok.disabled=false;if(res!==false)close();};
+      if(onOpen)onOpen(back);
+      return back;
+    }
+    function gBoardHtml(d){
+      if(!d?.ok)return `<div class="mwg-empty">${gEsc(d?.error||'Could not load the leaderboard.')}</div>`;
+      if(!d.rows.length)return '<div class="mwg-empty"><b>🏆</b>No guilds yet. Create the first one!</div>';
+      const medal=['🥇','🥈','🥉'];
+      return `<div class="mwg-lb head"><span style="text-align:center">#</span><span>GUILD</span><span class="num">MEMBERS</span><span class="num">${d.by==='wins'?'WINS ▼':'WINS'}</span><span class="num">${d.by==='points'?'POINTS ▼':'POINTS'}</span></div>`+
+        d.rows.map(x=>`<div class="mwg-lb${x.id===d.myGuildId?' me':''}" style="${gVars(x.color)}"><span class="rk">${medal[x.rank-1]||x.rank}</span><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b style="color:var(--g)">[${gEsc(x.tag)}] ${gEsc(x.name)}</b><div class="mwg-sub">${x.games} games · ${x.winRate}% win rate</div></span><span class="num">${x.members}</span><span class="num${d.by==='wins'?' hl':''}">${x.wins}</span><span class="num${d.by==='points'?' hl':''}">${x.points}</span></div>`).join('');
+    }
+    function gChatItem(it,myName){
+      if(it.system)return `<div class="mwg-sys">${gEsc(it.message)}</div>`;
+      const role=it.role==='leader'?' 👑':it.role==='officer'?' ⭐':'';
+      return `<div class="mwg-msg${it.username===myName?' me':''}"><div class="mwg-mhead"><b>${gEsc(it.username)}${role}</b><span>${gTime(it.at)}</span></div><div class="mwg-mtext">${gEsc(it.message)}</div></div>`;
+    }
+
+    function renderGuildUI(box){
+      const st={tab:null,lb:'wins',filter:'all',search:'',mSearch:'',unread:0,r:null,
+        draft:{name:'',tag:'',desc:'',open:true,color:null},edit:null};
+      box.classList.add('mwg-root');
+      const ctl={box,st,reload,pushChat};
+      guildCtl=ctl;
+      const ack=(ev,p)=>emitAck(ev,p);
+      const myName=()=>{const m=st.r?.mine;return m?(m.members.find(x=>x.account===m.me)||{}).username:'';};
+
+      async function reload(){
+        const r=await ack('communityGuild');
+        if(!box.isConnected)return;
+        st.r=r;paint();
+      }
+      function pushChat(item){
+        const m=st.r?.mine;if(!m)return;
+        m.chat.push(item);m.chat=m.chat.slice(-100);
+        const log=box.querySelector('#mwgChatLog');
+        if(log){const stick=log.scrollTop+log.clientHeight>=log.scrollHeight-40;log.insertAdjacentHTML('beforeend',gChatItem(item,myName()));if(stick||item.username===myName())log.scrollTop=log.scrollHeight;}
+        else{st.unread++;const b=box.querySelector('[data-tab="chat"] .mwg-badge');if(b)b.textContent=st.unread;else{const t=box.querySelector('[data-tab="chat"]');if(t)t.insertAdjacentHTML('beforeend',`<span class="mwg-badge">${st.unread}</span>`);}}
+      }
+      function paint(){
+        const r=st.r;
+        if(!r?.ok){box.innerHTML=`<div class="mwg-empty"><b>🛡️</b>${gEsc(r?.error||'Sign in to use guilds.')}</div>`;return;}
+        const act=document.activeElement;
+        const keep=act&&box.contains(act)&&act.id?{id:act.id,v:act.value,p:act.selectionStart}:null;
+        const sc=box.querySelector('.mwg-content')?.scrollTop||0;
+        r.mine?paintMember(r):paintOutside(r);
+        const c=box.querySelector('.mwg-content');if(c)c.scrollTop=sc;
+        if(keep){const el=box.querySelector('#'+keep.id);if(el){el.value=keep.v;el.focus();try{el.setSelectionRange(keep.p,keep.p);}catch(e){}}}
+      }
+      function frame(vars,banner,tabs,content){
+        box.innerHTML=`<div class="mwg-head">${banner}</div><div class="mwg-tabs">${tabs.map(t=>`<button type="button" class="mwg-tab${st.tab===t[0]?' on':''}" data-tab="${t[0]}">${t[1]}${t[2]?`<span class="mwg-badge">${t[2]}</span>`:''}</button>`).join('')}</div><div class="mwg-content" id="mwgContent" style="${vars}">${content}</div>`;
+        box.querySelector('.mwg-head').style.cssText=vars;box.querySelector('.mwg-tabs').style.cssText=vars;
+        box.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{st.tab=b.dataset.tab;if(st.tab==='chat')st.unread=0;paint();});
+      }
+      async function loadBoard(){
+        const body=box.querySelector('#mwgBoardBody');if(!body)return;
+        body.innerHTML='<div class="mwg-empty">Loading…</div>';
+        const d=await ack('guildLeaderboard',{by:st.lb});
+        const b=box.querySelector('#mwgBoardBody');if(b)b.innerHTML=gBoardHtml(d);
+      }
+      function boardTab(){
+        return `<div class="mwg-flex" style="justify-content:space-between;margin-bottom:12px"><div class="mwg-seg"><button type="button" data-lb="wins" class="${st.lb==='wins'?'on':''}">🏆 BY WINS</button><button type="button" data-lb="points" class="${st.lb==='points'?'on':''}">⭐ BY POINTS</button></div><span class="mwg-sub">Totals of every member's wins and rank points</span></div><div id="mwgBoardBody"></div>`;
+      }
+      function bindBoard(){
+        box.querySelectorAll('[data-lb]').forEach(b=>b.onclick=()=>{st.lb=b.dataset.lb;box.querySelectorAll('[data-lb]').forEach(x=>x.classList.toggle('on',x===b));loadBoard();});
+        loadBoard();
+      }
+      const colorDots=(colors,sel)=>`<div class="mwg-colors">${colors.map(c=>`<button type="button" class="mwg-dot${c===sel?' sel':''}" data-color="${gCol(c)}" style="background:${gCol(c)}" title="${gCol(c)}"></button>`).join('')}</div>`;
+      const openSeg=open=>`<div class="mwg-seg"><button type="button" data-open="1" class="${open?'on':''}">🌐 OPEN</button><button type="button" data-open="0" class="${open?'':'on'}">🔒 INVITE ONLY</button></div><div class="mwg-sub" style="margin-top:6px">${open?'Anyone can join instantly.':'Players must send a join request, or be invited / use your invite code.'}</div>`;
+
+      /* ---------- MEMBER VIEW ---------- */
+      function paintMember(r){
+        const m=r.mine;
+        const tabs=[['overview','🏠 OVERVIEW'],['members','👥 MEMBERS'],['chat','💬 CHAT',st.unread||0]];
+        if(m.canManage)tabs.push(['requests','📥 REQUESTS',m.requests.length||0],['invite','✉️ INVITE']);
+        tabs.push(['board','🏆 LEADERBOARD']);
+        if(m.isLeader)tabs.push(['settings','⚙️ SETTINGS']);
+        if(!tabs.some(t=>t[0]===st.tab))st.tab='overview';
+        const banner=`<div class="mwg-banner"><div class="mwg-emblem">${gEsc(m.tag)}</div><div class="mwg-binfo"><div class="mwg-bname">${gEsc(m.name)}</div><div class="mwg-chips"><span class="mwg-chip">${m.open?'🌐 OPEN':'🔒 INVITE ONLY'}</span><span class="mwg-chip role-${m.role}">${gRole[m.role]}</span><span class="mwg-chip">👥 ${m.members.length}/${m.max}</span></div><div class="mwg-bdesc">${m.description?gEsc(m.description):'<span class="mwg-dim">No description yet.</span>'}</div></div></div>`;
+        let html='';
+        if(st.tab==='overview')html=overviewTab(m);
+        else if(st.tab==='members')html=membersTab(m);
+        else if(st.tab==='chat')html=chatTab(m);
+        else if(st.tab==='requests')html=requestsTab(m);
+        else if(st.tab==='invite')html=inviteTab(m);
+        else if(st.tab==='board')html=boardTab();
+        else if(st.tab==='settings')html=settingsTab(m,r.colors||[]);
+        frame(gVars(m.color),banner,tabs,html);
+        if(st.tab==='overview')bindOverview(m);
+        else if(st.tab==='members')bindMembers(m);
+        else if(st.tab==='chat')bindChat(m);
+        else if(st.tab==='requests')bindRequests(m);
+        else if(st.tab==='invite')bindInvite(m);
+        else if(st.tab==='board')bindBoard();
+        else if(st.tab==='settings')bindSettings(m,r.colors||[]);
+      }
+      function annBlock(m){
+        const a=m.announcement;
+        if(a)return `<div class="mwg-ann"><span class="pin">📌</span><div class="mwg-grow"><p>${gEsc(a.text)}</p><small>Pinned by ${gEsc(a.by)} · ${gAgo(a.at)}</small></div>${m.isLeader?'<div class="mwg-acts"><button type="button" class="mwg-btn sm" data-ann>✎ EDIT</button><button type="button" class="mwg-btn sm ghost" data-unpin>UNPIN</button></div>':''}</div>`;
+        return m.isLeader?`<div class="mwg-ann" style="opacity:.9"><span class="pin">📌</span><div class="mwg-grow"><p>No announcement pinned.</p><small>Pin a message that every guild member will see.</small></div><button type="button" class="mwg-btn sm primary" data-ann>PIN ANNOUNCEMENT</button></div>`:'';
+      }
+      function bindAnn(m){
+        const edit=box.querySelector('[data-ann]');
+        if(edit)edit.onclick=()=>gModal({title:'📌 PIN ANNOUNCEMENT',body:`<textarea class="mwg-ta" id="mwgAnnText" maxlength="200" placeholder="Write a message for your guild…">${gEsc(m.announcement?.text||'')}</textarea><div class="mwg-count">Max 200 characters</div>`,confirmText:'PIN',
+          onConfirm:async back=>{const a=await ack('guildAnnounce',{text:back.querySelector('#mwgAnnText').value});if(!a?.ok){gToast(a?.error||'Could not pin.',true);return false;}gToast('Announcement pinned.');reload();}});
+        const un=box.querySelector('[data-unpin]');
+        if(un)un.onclick=async()=>{const a=await ack('guildAnnounce',{text:''});gToast(a?.ok?'Announcement removed.':(a?.error||'Failed.'),!a?.ok);reload();};
+      }
+      function overviewTab(m){
+        const s=m.stats,online=m.members.filter(x=>x.online).length;
+        return `${annBlock(m)}<div class="mwg-stats">${[['🏆',s.wins,'TOTAL WINS'],['🎮',s.games,'GAMES PLAYED'],['📈',s.winRate+'%','WIN RATE'],['👥',s.members+'/'+m.max,'MEMBERS'],['⭐',s.points,'RANK POINTS'],['🟢',online,'ONLINE NOW']].map(x=>`<div class="mwg-stat"><b>${x[1]}</b><span>${x[0]} ${x[2]}</span></div>`).join('')}</div>
+          <div class="mwg-card"><h3>ABOUT</h3><div class="mwg-sub">Created ${m.createdAt?new Date(m.createdAt).toLocaleDateString():'a while ago'} · Your role: <b>${gRole[m.role]}</b></div><div class="mwg-sub" style="margin-top:6px">Your guild tag <b style="color:var(--g)">[${gEsc(m.tag)}] ${gEsc(m.name)}</b> shows next to your name in lobbies and games.</div></div>
+          <div class="mwg-flex"><button type="button" class="mwg-btn danger" id="mwgLeave">🚪 LEAVE GUILD</button></div>`;
+      }
+      function bindOverview(m){
+        bindAnn(m);
+        box.querySelector('#mwgLeave').onclick=()=>gModal({title:'LEAVE GUILD?',danger:true,confirmText:'LEAVE',body:`<p>You will leave <b>${gEsc(m.name)}</b>.${m.isLeader?' Leadership will pass to an officer or the next member.':''}</p>`,
+          onConfirm:async()=>{const a=await ack('guildLeave');if(!a?.ok){gToast(a?.error||'Could not leave.',true);return false;}gToast('You left the guild.');st.tab=null;reload();}});
+      }
+      function membersTab(m){
+        const q=st.mSearch.toLowerCase();
+        const list=m.members.filter(x=>!q||x.username.toLowerCase().includes(q));
+        return `<input class="mwg-input" id="mwgMSearch" placeholder="🔍 Search members…" value="${gEsc(st.mSearch)}" style="margin-bottom:12px">`+
+          (list.map(x=>{
+            const you=x.account===m.me;
+            let acts='';
+            if(!you){
+              if(m.isLeader&&x.role!=='leader'){
+                acts+=x.role==='member'?`<button type="button" class="mwg-btn sm" data-role="officer" data-acc="${gEsc(x.account)}">⬆ PROMOTE</button>`:`<button type="button" class="mwg-btn sm ghost" data-role="member" data-acc="${gEsc(x.account)}">⬇ DEMOTE</button>`;
+                acts+=`<button type="button" class="mwg-btn sm ghost" data-lead="${gEsc(x.account)}" data-name="${gEsc(x.username)}">👑 MAKE LEADER</button>`;
+                acts+=`<button type="button" class="mwg-btn sm danger" data-kick="${gEsc(x.account)}" data-name="${gEsc(x.username)}">KICK</button>`;
+              } else if(m.role==='officer'&&x.role==='member')acts+=`<button type="button" class="mwg-btn sm danger" data-kick="${gEsc(x.account)}" data-name="${gEsc(x.username)}">KICK</button>`;
+            }
+            return `<div class="mwg-row${you?' me':''}"><div class="mwg-av">${gEsc((x.username||'?').charAt(0).toUpperCase())}<i class="${x.online?'on':''}"></i></div><div class="mwg-grow"><div class="mwg-rname">${gEsc(x.username)}${you?' <span class="mwg-sub">(you)</span>':''}<span class="mwg-role ${x.role}">${gRole[x.role]}</span></div><div class="mwg-sub">${x.online?'🟢 Online':'⚪ Offline'} · Lv ${x.level} · ${x.wins} wins / ${x.games} games · ${x.points} pts</div></div><div class="mwg-acts">${acts}</div></div>`;
+          }).join('')||'<div class="mwg-empty">No members match.</div>');
+      }
+      function bindMembers(m){
+        const s=box.querySelector('#mwgMSearch');s.oninput=()=>{st.mSearch=s.value;paint();};
+        box.querySelectorAll('[data-role]').forEach(b=>b.onclick=async()=>{const a=await ack('guildSetRole',{account:b.dataset.acc,role:b.dataset.role});gToast(a?.ok?(b.dataset.role==='officer'?'Promoted to Officer.':'Demoted to Member.'):(a?.error||'Failed.'),!a?.ok);reload();});
+        box.querySelectorAll('[data-kick]').forEach(b=>b.onclick=()=>gModal({title:'KICK MEMBER?',danger:true,confirmText:'KICK',body:`<p>Remove <b>${gEsc(b.dataset.name)}</b> from the guild?</p>`,onConfirm:async()=>{const a=await ack('guildKick',{account:b.dataset.kick});if(!a?.ok){gToast(a?.error||'Could not kick.',true);return false;}gToast(b.dataset.name+' was kicked.');reload();}}));
+        box.querySelectorAll('[data-lead]').forEach(b=>b.onclick=()=>gModal({title:'TRANSFER LEADERSHIP?',danger:true,confirmText:'TRANSFER',body:`<p><b>${gEsc(b.dataset.name)}</b> becomes the guild leader. You become an Officer and lose leader powers (edit, disband, roles).</p>`,onConfirm:async()=>{const a=await ack('guildTransferLeader',{account:b.dataset.lead});if(!a?.ok){gToast(a?.error||'Failed.',true);return false;}gToast('Leadership transferred.');reload();}}));
+      }
+      function chatTab(m){
+        const me=myName();
+        const pin=m.announcement?`<div class="mwg-pin-mini">📌 <span>${gEsc(m.announcement.text)}</span></div>`:'';
+        return `<div class="mwg-chatwrap">${pin}<div class="mwg-chatlog" id="mwgChatLog">${m.chat.length?m.chat.map(x=>gChatItem(x,me)).join(''):'<div class="mwg-sys">No messages yet — say hello! 👋</div>'}</div><div class="mwg-chatbar"><input class="mwg-input" id="mwgChatInput" maxlength="220" placeholder="Message your guild…" autocomplete="off"><button type="button" class="mwg-btn primary" id="mwgChatSend">SEND</button></div><div class="mwg-sub" style="margin-top:6px">Guild chat is private to your guild and separate from the game chat.</div></div>`;
+      }
+      function bindChat(m){
+        const log=box.querySelector('#mwgChatLog');log.scrollTop=log.scrollHeight;
+        const inp=box.querySelector('#mwgChatInput');
+        const send=async()=>{const v=inp.value;if(!v.trim())return;inp.value='';const a=await ack('guildChatSend',{message:v});if(!a?.ok){gToast(a?.error||'Could not send.',true);inp.value=v;}};
+        box.querySelector('#mwgChatSend').onclick=send;
+        inp.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();send();}};
+      }
+      function requestsTab(m){
+        return m.requests.length?m.requests.map(x=>`<div class="mwg-row"><div class="mwg-av">${gEsc((x.username||'?').charAt(0).toUpperCase())}</div><div class="mwg-grow"><div class="mwg-rname">${gEsc(x.username)}</div><div class="mwg-sub">Asked to join ${gAgo(x.at)}</div></div><div class="mwg-acts"><button type="button" class="mwg-btn sm ok" data-acc="${gEsc(x.account)}" data-yes="1">✓ ACCEPT</button><button type="button" class="mwg-btn sm danger" data-acc="${gEsc(x.account)}" data-yes="0">✕ REJECT</button></div></div>`).join(''):`<div class="mwg-empty"><b>📭</b>No pending join requests.${m.open?'<br><span class="mwg-sub">Your guild is open, so players join instantly. Switch to Invite Only in Settings to review requests.</span>':''}</div>`;
+      }
+      function bindRequests(m){
+        box.querySelectorAll('[data-yes]').forEach(b=>b.onclick=async()=>{b.disabled=true;const a=await ack('guildRequestRespond',{account:b.dataset.acc,accept:b.dataset.yes==='1'});gToast(a?.ok?(b.dataset.yes==='1'?'Player accepted.':'Request rejected.'):(a?.error||'Failed.'),!a?.ok);reload();});
+      }
+      function inviteTab(m){
+        return `<div class="mwg-card"><h3>INVITE A PLAYER BY USERNAME</h3><div class="mwg-chatbar" style="margin-top:0"><input class="mwg-input" id="mwgInvUser" maxlength="24" placeholder="Player username" autocomplete="off"><button type="button" class="mwg-btn primary" id="mwgInvSend">SEND INVITE</button></div><div class="mwg-sub" style="margin-top:8px">They get a notification and can accept or decline from the Invites tab. Leaders and officers can invite.</div></div>
+          <div class="mwg-card"><h3>GUILD INVITE CODE</h3><div class="mwg-code" id="mwgCode">${gEsc(m.inviteCode||'------')}</div><div class="mwg-flex" style="justify-content:center;margin-top:12px"><button type="button" class="mwg-btn" id="mwgCopy">📋 COPY CODE</button><button type="button" class="mwg-btn ghost" id="mwgRegen">🔄 NEW CODE</button></div><div class="mwg-sub" style="margin-top:10px;text-align:center">Anyone who enters this code joins instantly — even when the guild is Invite Only. Make a new code to cancel the old one.</div></div>`;
+      }
+      function bindInvite(m){
+        const inp=box.querySelector('#mwgInvUser');
+        const send=async()=>{const v=inp.value.trim();if(!v)return;const a=await ack('guildInvite',{username:v});if(a?.ok){gToast('Invite sent to '+a.name+'.');inp.value='';}else gToast(a?.error||'Could not invite.',true);};
+        box.querySelector('#mwgInvSend').onclick=send;inp.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();send();}};
+        box.querySelector('#mwgCopy').onclick=()=>{try{navigator.clipboard.writeText(m.inviteCode);gToast('Code copied: '+m.inviteCode);}catch(e){gToast('Select the code and copy it.',true);}};
+        box.querySelector('#mwgRegen').onclick=async()=>{const a=await ack('guildRegenCode');gToast(a?.ok?'New invite code created.':(a?.error||'Failed.'),!a?.ok);reload();};
+      }
+      function settingsTab(m,colors){
+        if(!st.edit)st.edit={name:m.name,tag:m.tag,desc:m.description,open:m.open,color:m.color};
+        const e=st.edit,others=m.members.filter(x=>x.account!==m.me);
+        return `<div class="mwg-card"><h3>EDIT GUILD</h3>
+          <label class="mwg-label">GUILD NAME</label><input class="mwg-input" id="mwgEName" maxlength="16" value="${gEsc(e.name)}">
+          <label class="mwg-label">GUILD TAG (2-4 letters/numbers, shown next to names)</label><input class="mwg-input" id="mwgETag" maxlength="4" value="${gEsc(e.tag)}" style="text-transform:uppercase">
+          <label class="mwg-label">DESCRIPTION</label><textarea class="mwg-ta" id="mwgEDesc" maxlength="140" placeholder="What is your guild about?">${gEsc(e.desc)}</textarea>
+          <label class="mwg-label">JOIN MODE</label><div id="mwgEOpen">${openSeg(e.open)}</div>
+          <label class="mwg-label">GUILD COLOR</label>${colorDots(colors,e.color)}
+          <div class="mwg-preview" style="${gVars(e.color)}"><div class="mwg-mini-emb">${gEsc(e.tag||'?')}</div><div><span class="mwg-pv-name">${gEsc(myName())}</span><span class="mwg-pv-guild" style="color:var(--g)">[${gEsc(e.tag)}] ${gEsc(e.name)}</span></div></div>
+          <div class="mwg-flex" style="margin-top:14px"><button type="button" class="mwg-btn primary" id="mwgSave">💾 SAVE CHANGES</button></div></div>
+          <div class="mwg-card"><h3>TRANSFER LEADERSHIP</h3>${others.length?`<div class="mwg-chatbar" style="margin-top:0"><select class="mwg-sel" id="mwgTransferSel">${others.map(x=>`<option value="${gEsc(x.account)}">${gEsc(x.username)} (${gRole[x.role]})</option>`).join('')}</select><button type="button" class="mwg-btn" id="mwgTransfer">TRANSFER</button></div><div class="mwg-sub" style="margin-top:8px">You become an Officer. This also works from the Members tab.</div>`:'<div class="mwg-sub">You need another member before you can transfer leadership.</div>'}</div>
+          <div class="mwg-card" style="border-color:#ff5a6888"><h3 style="color:#ff5a68">DANGER ZONE</h3><div class="mwg-sub" style="margin-bottom:10px">Disbanding removes the guild, its chat and its stats for everyone. This cannot be undone.</div><button type="button" class="mwg-btn danger" id="mwgDisband">💥 DISBAND GUILD</button></div>`;
+      }
+      function bindSettings(m,colors){
+        const e=st.edit;
+        const sync=()=>{ // live preview without losing focus
+          const pv=box.querySelector('.mwg-preview');pv.style.cssText=gVars(e.color);
+          pv.querySelector('.mwg-mini-emb').textContent=e.tag||'?';
+          pv.querySelector('.mwg-pv-guild').textContent=`[${e.tag}] ${e.name}`;
+        };
+        box.querySelector('#mwgEName').oninput=ev=>{e.name=ev.target.value;sync();};
+        const tag=box.querySelector('#mwgETag');tag.oninput=()=>{tag.value=tag.value.toUpperCase().replace(/[^A-Z0-9]/g,'');e.tag=tag.value;sync();};
+        box.querySelector('#mwgEDesc').oninput=ev=>{e.desc=ev.target.value;};
+        box.querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>{e.open=b.dataset.open==='1';box.querySelector('#mwgEOpen').innerHTML=openSeg(e.open);bindSettings(m,colors);});
+        box.querySelectorAll('[data-color]').forEach(b=>b.onclick=()=>{e.color=b.dataset.color;paint();});
+        box.querySelector('#mwgSave').onclick=async()=>{
+          const a=await ack('guildEdit',{name:e.name,tag:e.tag,description:e.desc,open:e.open,color:e.color});
+          if(a?.ok){st.edit=null;gToast('Guild updated.');}else gToast(a?.error||'Could not save.',true);
+          reload();
+        };
+        const tr=box.querySelector('#mwgTransfer');
+        if(tr)tr.onclick=()=>{const sel=box.querySelector('#mwgTransferSel');const name=sel.options[sel.selectedIndex].text;
+          gModal({title:'TRANSFER LEADERSHIP?',danger:true,confirmText:'TRANSFER',body:`<p>Make <b>${gEsc(name)}</b> the guild leader? You become an Officer.</p>`,onConfirm:async()=>{const a=await ack('guildTransferLeader',{account:sel.value});if(!a?.ok){gToast(a?.error||'Failed.',true);return false;}gToast('Leadership transferred.');st.edit=null;reload();}});};
+        box.querySelector('#mwgDisband').onclick=()=>gModal({title:'💥 DISBAND GUILD',danger:true,confirmText:'DISBAND FOREVER',
+          body:`<p>This permanently deletes <b>${gEsc(m.name)}</b> for all ${m.members.length} member(s).</p><p>Type the guild name to confirm:</p><input class="mwg-input" id="mwgConfirmName" placeholder="${gEsc(m.name)}" autocomplete="off">`,
+          onConfirm:async back=>{const a=await ack('guildDisband',{confirmName:back.querySelector('#mwgConfirmName').value});if(!a?.ok){gToast(a?.error||'Could not disband.',true);return false;}gToast('Guild disbanded.');st.tab=null;st.edit=null;reload();}});
+      }
+
+      /* ---------- NO-GUILD VIEW ---------- */
+      function paintOutside(r){
+        const tabs=[['discover','🔎 DISCOVER'],['create','✨ CREATE'],['code','🔑 JOIN CODE'],['invites','✉️ INVITES',r.invites.length||0],['board','🏆 LEADERBOARD']];
+        if(!tabs.some(t=>t[0]===st.tab))st.tab='discover';
+        const banner=`<div class="mwg-banner"><div class="mwg-emblem">🛡️</div><div class="mwg-binfo"><div class="mwg-bname" style="color:var(--txt);text-shadow:none">GUILD HALL</div><div class="mwg-bdesc">Join a guild or start your own. Your guild tag and name show next to your name in lobbies and games.</div></div></div>`;
+        let html='';
+        if(st.tab==='discover')html=discoverTab(r);
+        else if(st.tab==='create')html=createTab(r);
+        else if(st.tab==='code')html=codeTab();
+        else if(st.tab==='invites')html=invitesTab(r);
+        else html=boardTab();
+        frame('',banner,tabs,html);
+        if(st.tab==='discover')bindDiscover(r);
+        else if(st.tab==='create')bindCreate(r);
+        else if(st.tab==='code')bindCode();
+        else if(st.tab==='invites')bindInvites(r);
+        else bindBoard();
+      }
+      function discoverTab(r){
+        const q=st.search.toLowerCase();
+        const list=r.guilds.filter(x=>(!q||x.name.toLowerCase().includes(q)||x.tag.toLowerCase().includes(q))&&(st.filter==='all'||(st.filter==='open'?x.open:!x.open)));
+        const cards=list.map(x=>{
+          const asked=r.requested.includes(x.id);
+          const btn=x.full?'<button type="button" class="mwg-btn sm" disabled>FULL</button>':asked?`<button type="button" class="mwg-btn sm ghost" data-cancel="${gEsc(x.id)}">⏳ REQUESTED · CANCEL</button>`:x.open?`<button type="button" class="mwg-btn sm primary" data-join="${gEsc(x.id)}">JOIN</button>`:`<button type="button" class="mwg-btn sm" data-join="${gEsc(x.id)}">🔒 REQUEST TO JOIN</button>`;
+          return `<div class="mwg-gcard" style="${gVars(x.color)}"><div class="mwg-mini-emb">${gEsc(x.tag)}</div><div class="mwg-grow"><div class="mwg-rname" style="color:var(--g)">${gEsc(x.name)}<span class="mwg-role">${x.open?'🌐 OPEN':'🔒 INVITE ONLY'}</span></div><div class="mwg-sub">${x.description?gEsc(x.description):'No description.'}</div><div class="mwg-sub" style="margin-top:3px">👥 ${x.members}/${x.max} · 🏆 ${x.wins} wins · ⭐ ${x.points} pts</div></div><div>${btn}</div></div>`;
+        }).join('');
+        return `<input class="mwg-input" id="mwgSearch" placeholder="🔍 Search by name or tag…" value="${gEsc(st.search)}"><div class="mwg-filters">${[['all','ALL'],['open','🌐 OPEN'],['closed','🔒 INVITE ONLY']].map(f=>`<button type="button" class="mwg-pill${st.filter===f[0]?' on':''}" data-filter="${f[0]}">${f[1]}</button>`).join('')}</div>${cards||'<div class="mwg-empty"><b>🛡️</b>No guilds found. Create the first one!</div>'}`;
+      }
+      function bindDiscover(r){
+        const s=box.querySelector('#mwgSearch');s.oninput=()=>{st.search=s.value;paint();};
+        box.querySelectorAll('[data-filter]').forEach(b=>b.onclick=()=>{st.filter=b.dataset.filter;paint();});
+        box.querySelectorAll('[data-join]').forEach(b=>b.onclick=async()=>{b.disabled=true;const a=await ack('guildJoin',{id:b.dataset.join});if(a?.ok)gToast(a.joined?`You joined ${a.name}!`:`Request sent to ${a.name}.`);else gToast(a?.error||'Could not join.',true);st.tab=null;reload();});
+        box.querySelectorAll('[data-cancel]').forEach(b=>b.onclick=async()=>{await ack('guildCancelRequest',{id:b.dataset.cancel});gToast('Request cancelled.');reload();});
+      }
+      function createTab(r){
+        const d=st.draft;if(!d.color)d.color=(r.colors||['#ff3b3b'])[0];
+        return `<div class="mwg-card"><h3>CREATE YOUR GUILD</h3>
+          <label class="mwg-label">GUILD NAME (3-16 characters)</label><input class="mwg-input" id="mwgCName" maxlength="16" placeholder="e.g. Night Owls" value="${gEsc(d.name)}">
+          <label class="mwg-label">GUILD TAG (2-4 letters/numbers — optional, auto-made from the name)</label><input class="mwg-input" id="mwgCTag" maxlength="4" placeholder="OWL" value="${gEsc(d.tag)}" style="text-transform:uppercase">
+          <label class="mwg-label">DESCRIPTION (optional)</label><textarea class="mwg-ta" id="mwgCDesc" maxlength="140" placeholder="What is your guild about?">${gEsc(d.desc)}</textarea>
+          <label class="mwg-label">JOIN MODE</label><div id="mwgCOpen">${openSeg(d.open)}</div>
+          <label class="mwg-label">GUILD COLOR</label>${colorDots(r.colors||[],d.color)}
+          <div class="mwg-preview" style="${gVars(d.color)}"><div class="mwg-mini-emb" id="mwgPvEmb"></div><div><span class="mwg-pv-name">${gEsc(myName()||authName())}</span><span class="mwg-pv-guild" id="mwgPvGuild" style="color:var(--g)"></span></div></div>
+          <div class="mwg-flex" style="margin-top:14px"><button type="button" class="mwg-btn primary" id="mwgCreate">✨ CREATE GUILD</button></div></div>`;
+      }
+      function authName(){try{return(typeof authState!=='undefined'&&authState&&authState.username)?authState.username:'Player';}catch(e){return 'Player';}}
+      function bindCreate(r){
+        const d=st.draft;
+        const tagOf=()=>d.tag||d.name.replace(/[^a-z0-9]/gi,'').toUpperCase().slice(0,3)||'GLD';
+        const sync=()=>{box.querySelector('#mwgPvEmb').textContent=tagOf();box.querySelector('#mwgPvGuild').textContent=`[${tagOf()}] ${d.name.trim()||'Your Guild'}`;const pv=box.querySelector('.mwg-preview');pv.style.cssText=gVars(d.color);};
+        const nm=box.querySelector('#mwgCName');nm.oninput=()=>{d.name=nm.value;sync();};
+        const tg=box.querySelector('#mwgCTag');tg.oninput=()=>{tg.value=tg.value.toUpperCase().replace(/[^A-Z0-9]/g,'');d.tag=tg.value;sync();};
+        box.querySelector('#mwgCDesc').oninput=ev=>{d.desc=ev.target.value;};
+        box.querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>{d.open=b.dataset.open==='1';box.querySelector('#mwgCOpen').innerHTML=openSeg(d.open);bindCreate(r);});
+        box.querySelectorAll('[data-color]').forEach(b=>b.onclick=()=>{d.color=b.dataset.color;paint();});
+        sync();
+        box.querySelector('#mwgCreate').onclick=async()=>{
+          const n=d.name.trim().replace(/\s+/g,' ');
+          if(n.length<3){gToast('Guild name must be at least 3 characters.',true);return;}
+          if(r.guilds.some(x=>x.name.toLowerCase()===n.toLowerCase())){gToast('That guild name is already taken.',true);return;}
+          if(d.tag&&d.tag.length<2){gToast('The tag needs 2 to 4 characters, or leave it empty.',true);return;}
+          const a=await ack('guildCreate',{name:n,tag:d.tag,description:d.desc,open:d.open,color:d.color});
+          if(a?.ok){gToast(`Guild "${n}" created!`);st.draft={name:'',tag:'',desc:'',open:true,color:null};st.tab='overview';}else gToast(a?.error||'Could not create the guild.',true);
+          reload();
+        };
+      }
+      function codeTab(){
+        return `<div class="mwg-card"><div class="mwg-hero"><div class="big">🔑</div><h3 style="margin-top:6px">JOIN WITH AN INVITE CODE</h3></div><div class="mwg-sub" style="text-align:center;margin-bottom:12px">Got a 6-character code from a guild leader or officer? Enter it to join instantly — even invite-only guilds.</div><div class="mwg-chatbar" style="margin-top:0"><input class="mwg-input" id="mwgJoinCode" maxlength="6" placeholder="ABC123" autocomplete="off" style="text-transform:uppercase;text-align:center;font-size:22px;letter-spacing:6px;font-weight:900"><button type="button" class="mwg-btn primary" id="mwgJoinGo">JOIN</button></div></div>`;
+      }
+      function bindCode(){
+        const inp=box.querySelector('#mwgJoinCode');
+        const go=async()=>{const v=inp.value.trim();if(!v)return;const a=await ack('guildJoinByCode',{code:v});if(a?.ok){gToast(`You joined ${a.name}!`);st.tab=null;reload();}else gToast(a?.error||'Invalid code.',true);};
+        inp.oninput=()=>{inp.value=inp.value.toUpperCase().replace(/[^A-Z0-9]/g,'');};
+        inp.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();go();}};
+        box.querySelector('#mwgJoinGo').onclick=go;
+      }
+      function invitesTab(r){
+        return r.invites.length?r.invites.map(x=>`<div class="mwg-gcard" style="${gVars(x.color)}"><div class="mwg-mini-emb">✉️</div><div class="mwg-grow"><div class="mwg-rname" style="color:var(--g)">${gEsc(x.guildName)}</div><div class="mwg-sub">Invited by <b>${gEsc(x.by)}</b> · ${gAgo(x.at)}</div></div><div class="mwg-acts"><button type="button" class="mwg-btn sm ok" data-inv="${gEsc(x.guildId)}" data-yes="1">✓ ACCEPT</button><button type="button" class="mwg-btn sm danger" data-inv="${gEsc(x.guildId)}" data-yes="0">✕ DECLINE</button></div></div>`).join(''):'<div class="mwg-empty"><b>📭</b>No guild invites right now.</div>';
+      }
+      function bindInvites(r){
+        box.querySelectorAll('[data-inv]').forEach(b=>b.onclick=async()=>{b.disabled=true;const a=await ack('guildInviteRespond',{guildId:b.dataset.inv,accept:b.dataset.yes==='1'});if(a?.ok)gToast(a.declined?'Invite declined.':`You joined ${a.name}!`);else gToast(a?.error||'Failed.',true);st.tab=null;reload();});
+      }
+      reload();
+    }
+    function openHub(){showOverlay();}
+    function showGuildOverlay(){
+      if(communityOverlay) communityOverlay.remove();
+      communityOverlay=document.createElement('div'); communityOverlay.className='mw-community-overlay';
+      communityOverlay.innerHTML=`<div class="mwg-panel"><div class="mwg-top"><h2>🛡️ GUILD HALL</h2><button class="mwg-x" id="mwHubClose" type="button">✕</button></div><div id="mwHubContent" class="mwg-root"></div></div>`;
+      document.body.appendChild(communityOverlay);
+      communityOverlay.querySelector('#mwHubClose').onclick=()=>{communityOverlay.remove();guildCtl=null;};
+      communityOverlay.addEventListener('mousedown',e=>{if(e.target===communityOverlay){communityOverlay.remove();guildCtl=null;}});
+      renderGuildUI(communityOverlay.querySelector('#mwHubContent'));
+    }
+    window.mafiaOpenGuilds = showGuildOverlay;
+    function content(){return communityOverlay?.querySelector('#mwHubContent');}
+    function emitAck(event,payload){return new Promise(resolve=>socket.emit(event,payload||{},resolve));}
+    async function loadTab(tab){
+      const box=content(); if(!box)return; box.innerHTML='<p>Loading…</p>';
+      if(tab==='friends'){
+        const r=await emitAck('communityFriends'); if(!r?.ok){box.innerHTML=`<p>${safeText(r?.error||'Sign in to use friends.')}</p>`;return;}
+        box.innerHTML=`<div class="mw-community-section"><h3>ADD A FRIEND</h3><input id="mwFriendName" placeholder="Exact account username"><button id="mwAddFriend">SEND REQUEST</button></div><div class="mw-community-section"><h3>FRIENDS</h3><div class="mw-community-list">${(r.friends||[]).map(x=>`<div class="mw-community-item"><b>${safeText(x.player.username)}</b>${x.player.guild?`<div style="font-size:12px;font-weight:800;color:${/^#[0-9a-f]{6}$/i.test(x.player.guild.color)?x.player.guild.color:'#ff3b3b'}">${safeText(x.player.guild.name)}</div>`:''}<div class="mw-community-muted">${x.player.online?'● ONLINE':'○ OFFLINE'} · LEVEL ${x.player.level}</div><button data-invite="${safeText(x.account)}">INVITE TO ROOM</button><button data-remove="${safeText(x.account)}">REMOVE</button></div>`).join('')||'<p>No friends yet.</p>'}</div></div><div class="mw-community-section"><h3>INCOMING REQUESTS</h3>${(r.incoming||[]).map(x=>`<div class="mw-community-item">${safeText(x.player.username)} <button data-accept="${safeText(x.account)}">ACCEPT</button> <button data-reject="${safeText(x.account)}">DECLINE</button></div>`).join('')||'<p class="mw-community-muted">No pending requests.</p>'}</div>`;
+        box.querySelector('#mwAddFriend').onclick=async()=>{const username=box.querySelector('#mwFriendName').value;const a=await emitAck('friendRequest',{username});alert(a?.message||a?.error||'Done');loadTab('friends');};
+        box.querySelectorAll('[data-accept],[data-reject]').forEach(b=>b.onclick=async()=>{await emitAck('friendRequestRespond',{account:b.dataset.accept||b.dataset.reject,accept:!!b.dataset.accept});loadTab('friends');});
+        box.querySelectorAll('[data-remove]').forEach(b=>b.onclick=async()=>{await emitAck('friendRemove',{account:b.dataset.remove});loadTab('friends');});
+        box.querySelectorAll('[data-invite]').forEach(b=>b.onclick=async()=>{const a=await emitAck('lobbyInviteFriend',{account:b.dataset.invite});alert(a?.sent?'Invite sent.':a?.error||'Friend is offline.');});
+      } else if(tab==='guilds'){
+        renderGuildUI(box);
+      } else if(tab==='report'){
+        box.innerHTML=`<div class="mw-community-section"><h3>REPORT A PLAYER</h3><p class="mw-community-muted">Reports are reviewed by the moderation team. Only report genuine rule violations.</p><input id="mwReportPlayer" maxlength="20" placeholder="Player account username"><select id="mwReportReason"><option>Harassment</option><option>Cheating</option><option>Spam</option><option>Inappropriate username</option><option>Exploiting bugs</option><option>Other</option></select><textarea id="mwReportDetails" maxlength="500" rows="4" placeholder="Describe what happened (optional)"></textarea><button id="mwSubmitReport">SUBMIT REPORT</button></div>`;
+        box.querySelector('#mwSubmitReport').onclick=async()=>{const a=await emitAck('playerReport',{username:box.querySelector('#mwReportPlayer').value,reason:box.querySelector('#mwReportReason').value,details:box.querySelector('#mwReportDetails').value});alert(a?.message||a?.error||'Done');};
+      } else if(tab==='owner'){
+        const r=await emitAck('ownerCommunityDashboard'); if(!r?.ok){box.innerHTML='<p>Owner/Admin access only.</p>';return;}
+        box.innerHTML=`<div class="mw-community-list">${[['REGISTERED ACCOUNTS',r.registeredAccounts],['ONLINE PLAYERS',r.onlinePlayers],['ACTIVE MATCHES',r.activeMatches],['TOTAL MATCHES',r.totalMatches],['BANNED ACCOUNTS',r.bannedAccounts],['PENDING REPORTS',r.pendingReports]].map(x=>`<div class="mw-community-item"><div class="mw-community-muted">${x[0]}</div><strong style="font-size:28px">${x[1]}</strong></div>`).join('')}</div><div class="mw-community-section"><h3>POPULAR ROLES IN ACTIVE MATCHES</h3>${(r.popularRoles||[]).map(x=>`<p>${safeText(x[0])}: ${x[1]}</p>`).join('')||'No active role data.'}</div><div class="mw-community-section"><h3>PLAYER REPORTS</h3>${(r.reports||[]).map(x=>`<div class="mw-community-item"><b>${safeText(x.target)}</b> · ${safeText(x.reason)} · ${safeText(x.status)}<p>${safeText(x.details)}</p>${x.status==='pending'?`<button data-resolve="${safeText(x.id)}">MARK RESOLVED</button><button data-ban="${safeText(x.target)}">BAN ACCOUNT</button>`:''}</div>`).join('')||'No reports.'}</div>`;
+        box.querySelectorAll('[data-resolve]').forEach(b=>b.onclick=async()=>{const a=await emitAck('ownerReportResolve',{id:b.dataset.resolve});if(!a?.ok)alert(a?.error||'Could not update report');loadTab('owner');});
+        box.querySelectorAll('[data-ban]').forEach(b=>b.onclick=()=>{if(confirm(`Ban account ${b.dataset.ban}?`))socket.emit('ownerAccountBan',{username:b.dataset.ban,banned:true},a=>{alert(a?.error||'Ban updated.');loadTab('owner');});});
+      } else if(tab==='spectate'){
+        box.innerHTML=`<div class="mw-community-section"><h3>JOIN AS SPECTATOR</h3><p class="mw-community-muted">Enter a room code to watch without taking a player slot.</p><input id="mwSpectateCode" maxlength="6" placeholder="ROOM CODE"><button id="mwSpectateJoin">JOIN SPECTATOR SLOT</button></div>`;
+        box.querySelector('#mwSpectateJoin').onclick=async()=>{const a=await emitAck('joinAsSpectator',{roomCode:box.querySelector('#mwSpectateCode').value});alert(a?.error||'Spectator request accepted.');};
+      }
+    }
+    function openLobbyModal(title, bodyHtml, onConfirm){
+      document.getElementById('mwLobbyModal')?.remove();
+      const modal=document.createElement('div'); modal.id='mwLobbyModal'; modal.className='mw-community-overlay';
+      modal.innerHTML=`<div class="mw-community-panel" style="width:min(430px,94vw);max-height:80vh"><div class="mw-community-head"><h2>${safeText(title)}</h2><button type="button" class="mw-community-close" id="mwLobbyModalClose">✕</button></div><div id="mwLobbyModalBody">${bodyHtml}</div><div class="mw-community-actions" style="justify-content:flex-end"><button type="button" id="mwLobbyModalCancel">CANCEL</button><button type="button" id="mwLobbyModalConfirm">CONFIRM</button></div></div>`;
+      document.body.appendChild(modal);
+      const close=()=>modal.remove();
+      modal.querySelector('#mwLobbyModalClose').onclick=close;
+      modal.querySelector('#mwLobbyModalCancel').onclick=close;
+      modal.addEventListener('click',e=>{if(e.target===modal)close();});
+      modal.querySelector('#mwLobbyModalConfirm').onclick=async()=>{const result=await onConfirm(modal);if(result!==false)close();};
+      return modal;
+    }
+    function refreshHostControls(data){
+      document.getElementById('mwTransferHost')?.remove();
+      document.getElementById('mwRoomDescriptionEdit')?.remove();
+      if(data.hostId!==socket.id)return;
+      const desc=document.getElementById('mwRoomDescription'); if(!desc)return;
+      const edit=document.createElement('button'); edit.id='mwRoomDescriptionEdit'; edit.className='mw-community-btn'; edit.type='button'; edit.textContent='✎ ROOM DESCRIPTION';
+      edit.onclick=()=>openLobbyModal('ROOM DESCRIPTION',`<textarea id="mwDescriptionInput" maxlength="120" rows="4" placeholder="Write a short room description...">${safeText(data.description||'')}</textarea>`,async modal=>{const r=await emitAck('lobbySetDescription',{description:modal.querySelector('#mwDescriptionInput').value});if(!r?.ok){alert(r?.error||'Could not save description');return false;}return true;});
+      desc.insertAdjacentElement('afterend',edit);
+      const transfer=document.createElement('button'); transfer.id='mwTransferHost'; transfer.className='mw-community-btn'; transfer.type='button'; transfer.textContent='♛ TRANSFER HOST';
+      transfer.onclick=()=>{
+        const choices=(data.players||[]).filter(p=>p.id!==socket.id && !p.isBot && p.connected!==false);
+        if(!choices.length){alert('No other connected players.');return;}
+        const options=choices.map(p=>`<option value="${safeText(p.id)}">${safeText(p.name)}${p.guild&&p.guild.name?'  ·  '+safeText(p.guild.name):''}</option>`).join('');
+        openLobbyModal('TRANSFER HOST',`<p class="mw-community-muted">Choose the player who will become the new host.</p><select id="mwHostTarget">${options}</select>`,async modal=>{const r=await emitAck('lobbyTransferHost',{playerId:modal.querySelector('#mwHostTarget').value});if(!r?.ok){alert(r?.error||'Host transfer failed');return false;}return true;});
+      };
+      edit.insertAdjacentElement('afterend',transfer);
+    }
+    socket.on('playerJoined',data=>{
+      addLobbyControls();
+      const b=document.getElementById('mwReadyButton'); if(b){const ready=(data.readyPlayers||[]).includes(socket.id);b.dataset.ready=String(ready);b.textContent=ready?'✓ READY — CLICK TO CANCEL':'✓ READY';}
+      const d=document.getElementById('mwRoomDescription');if(d)d.textContent=data.description||'No room description set';
+      refreshHostControls(data);
+      const count=document.getElementById('rolePlayerCount'); if(count && data.spectatorCount!==undefined){let n=document.getElementById('mwSpectatorCount');if(!n){n=document.createElement('div');n.id='mwSpectatorCount';n.className='mw-community-muted';count.parentElement?.insertAdjacentElement('afterend',n);}n.textContent=`👁 ${data.spectatorCount}/${data.spectatorLimit} spectators`;}
+    });
+    socket.on('friendPresence',data=>{if(communityOverlay && communityOverlay.isConnected && communityOverlay.querySelector('[data-tab="friends"]')){/* refreshed on next open */}});
+    socket.on('friendRequestReceived',data=>{if(data?.player) alert(`New friend request from ${data.player.username}`);});
+    socket.on('roomFriendInvite',data=>{if(data?.roomCode && confirm(`${data.from} invited you to room ${data.roomCode}. Copy the code?`)){navigator.clipboard?.writeText(data.roomCode).catch(()=>{});}});
+    socket.on('guildChatMessage',item=>{if(guildCtl&&guildCtl.box.isConnected)guildCtl.pushChat(item);});
+    socket.on('guildRefresh',()=>{if(guildCtl&&guildCtl.box.isConnected)guildCtl.reload();});
+    socket.on('guildToast',d=>{if(d&&d.text)gToast(d.text,d.bad);});
+    socket.on('guildInviteReceived',d=>{if(!d)return;gToast(`✉️ ${d.by} invited you to join ${d.guildName}!`);if(guildCtl&&guildCtl.box.isConnected)guildCtl.reload();});
+    document.addEventListener('DOMContentLoaded',addLobbyControls); addLobbyControls();
 })();
