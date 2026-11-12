@@ -11,7 +11,7 @@
     <!-- Browser tab icon -->
     <link rel="icon" type="image/x-icon" href="/mafia-wars-chrome-icon.ico">
 
-    <link rel="stylesheet" href="style.css?v=teams1">
+    <link rel="stylesheet" href="style.css?v=live2">
 </head>
 
 <body>
@@ -1004,7 +1004,7 @@
          SCRIPTS
     ====================================================== -->
     <script src="/socket.io/socket.io.js"></script>
-    <script src="client.js?v=teams1"></script>
+    <script src="client.js?v=live2"></script>
 
     <script>
         const guideButton = document.getElementById("guideButton");
@@ -1042,8 +1042,18 @@
                 const theme = document.documentElement.dataset.mafiaTheme;
                 const color = theme === "white" ? "blue" : "red";
                 const mobile = window.matchMedia("(max-width: 800px), (pointer: coarse)").matches;
-                const file = "/images/backgrounds/bg-" + color + (mobile ? "-mobile" : "") + ".html";
-                if (file !== current) { current = file; frame.src = file; }
+                const device = (typeof detectWallpaperDevice === "function") ? detectWallpaperDevice() : (mobile ? "mobile" : "laptop");
+                const base = "/images/backgrounds/bg-" + color;
+                const normal = base + (mobile ? "-mobile" : "") + ".html";
+                const key = device + "|" + normal;
+                if (key === current) return;
+                current = key;
+                if (device !== "ipad") { frame.src = normal; return; }
+                // iPad: use bg-<color>-ipad.html when it exists, otherwise the normal one
+                const ipadFile = base + "-ipad.html";
+                fetch(ipadFile, { method: "HEAD" })
+                    .then(r => { if (current === key) frame.src = r.ok ? ipadFile : normal; })
+                    .catch(() => { if (current === key) frame.src = normal; });
             }
             pick();
             window.addEventListener("resize", pick);

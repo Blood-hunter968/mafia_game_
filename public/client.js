@@ -993,7 +993,7 @@ function renderLobbyPlayers() {
         avatarWrap.className =
             "lobby-avatar-wrap";
 
-        avatarWrap.appendChild(avatarNode(player.look, 40, false));
+        avatarWrap.appendChild(avatarNode(hostCrownLook(player.look, player.id === getCurrentHostId()), 40, false));
 
         name.insertBefore(avatarWrap, name.firstChild);
 
@@ -1001,7 +1001,8 @@ function renderLobbyPlayers() {
 
         if (
             player.id ===
-            getCurrentHostId()
+            getCurrentHostId() &&
+            !(player.look && player.look.minecraft)
         ) {
 
             const crown =
@@ -1774,44 +1775,61 @@ function hideNightTurnOverlay() {
 ========================================================= */
 
 /* =========================================================
-   LOADING IMAGES  (start-game loading + join-room loading)
+   LOADING IMAGES  (game-open, start-game and join-room loading)
    Put the pictures in  public/images/loading/  (public/images/ also works).
-   Names:  mafia-loding   civilian-loding   neutral-loding   join-loding
-   ("-loading" spelling works too).  Extensions: jpg jpeg png webp
+   One picture per device, e.g.  open-loading-laptop  open-loading-mobile  open-loading-ipad
+   (same for join-, mafia-, civilian-, neutral-).  The plain name (open-loading, mafia-loding ...)
+   is used when a device has no picture of its own.  "-loding" spelling works too.
+   Extensions: jpg jpeg png webp gif avif
 ========================================================= */
 
 const mwxLoadingImageCache = {};
 
 function mwxLoadingImageCandidates(name) {
-    const names = [`${name}-loding`, `${name}-loading`];
-    const exts = ["jpg", "jpeg", "png", "webp", "JPG", "PNG"];
-    const dirs = ["/images/loading/", "/images/", "/images/backgrounds/"];
+    /* This device's own picture first (open-loading-laptop / -mobile / -ipad), then the plain one. */
+    const device = (typeof detectWallpaperDevice === "function") ? detectWallpaperDevice() : "laptop";
+    const names = [`${name}-loading-${device}`, `${name}-loding-${device}`, `${name}-loading_${device}`];
+    if (name === "open") {
+        // also accept the names the pictures were first saved with: loding_image_laptop / loding_image_moble / loding_image_ipad
+        names.push(`loding_image_${device}`, `loding-image-${device}`, `loading_image_${device}`);
+        if (device === "mobile") names.push("loding_image_moble", "loding image moble");
+    }
+    names.push(`${name}-loding`, `${name}-loading`);
+    const exts = ["png", "jpg", "jpeg", "webp", "gif", "avif"];
+    const dirs = ["/images/loading/", "/images/", "/images/backgrounds/", "/"];
     const list = [];
-    dirs.forEach(d => names.forEach(n => exts.forEach(e => list.push(`${d}${n}.${e}`))));
+    names.forEach(n => dirs.forEach(d => exts.forEach(e => list.push(`${d}${encodeURI(n)}.${e}`))));
     return list;
 }
 
-function mwxResolveLoadingImage(name, overlay) {
-    if (mwxLoadingImageCache[name]) {
-        overlay.style.setProperty("--mwx-team-loading-image", `url("${mwxLoadingImageCache[name]}")`);
-        return;
-    }
+/* Tries every possible file name at the same time and uses the best match (the first in the list).
+   onMiss() is called when none of them exists. */
+function mwxResolveLoadingImage(name, overlay, onMiss) {
+    const apply = url => {
+        if (overlay.dataset.team === name) overlay.style.setProperty("--mwx-team-loading-image", `url("${url}")`);
+    };
+    if (mwxLoadingImageCache[name]) { apply(mwxLoadingImageCache[name]); return; }
+
     const candidates = mwxLoadingImageCandidates(name);
-    let i = 0;
-    const tryNext = () => {
-        if (i >= candidates.length) return;
-        const url = candidates[i++];
+    let best = -1;
+    let finished = 0;
+    candidates.forEach((url, index) => {
         const img = new Image();
         img.onload = () => {
-            mwxLoadingImageCache[name] = url;
-            if (overlay.dataset.team === name) {
-                overlay.style.setProperty("--mwx-team-loading-image", `url("${url}")`);
+            if (best === -1 || index < best) {
+                best = index;
+                mwxLoadingImageCache[name] = url;
+                apply(url);
             }
         };
-        img.onerror = tryNext;
+        img.onerror = () => {
+            finished++;
+            if (finished === candidates.length && best === -1 && typeof onMiss === "function") onMiss(candidates[0]);
+        };
+        const done = img.onload;
+        img.onload = () => { done(); finished++; };
         img.src = url;
-    };
-    tryNext();
+    });
 }
 
 function setTeamLoadingTheme(role) {
@@ -1892,6 +1910,96 @@ function hideJoinLoading() {
     const overlay = $("joinLoadingOverlay");
     if (overlay) overlay.style.display = "none";
 }
+
+/* =========================================================
+   GAME-OPEN LOADING SCREEN  (image: open-loading)
+   Shows when the game page opens: 0% -> 100%, then fades away.
+   Pictures in  public/images/loading/ :
+       open-loading-laptop.jpg   open-loading-mobile.jpg   open-loading-ipad.jpg
+   (.png .webp .gif .avif also work).  open-loading.jpg is used for any device without its own.
+========================================================= */
+
+(function gameOpenLoadingScreen() {
+    const LOAD_MS = 3000;     // shortest time the screen stays
+    const MAX_MS = 12000;     // never block the game longer than this
+
+    function start() {
+        if (document.getElementById("gameOpenLoadingOverlay")) return;
+
+        const style = document.createElement("style");
+        style.id = "gameOpenLoadingCss";
+        style.textContent = `
+            #gameOpenLoadingOverlay {
+                --mwx-team-accent: #e32636;
+                position: fixed; inset: 0; z-index: 2147483640; display: flex; align-items: flex-end; justify-content: center;
+                width: 100vw; height: 100vh; height: 100dvh; overflow: hidden;
+                background-color: #05070c; background-position: center; background-size: cover; background-repeat: no-repeat;
+                background-image: var(--mwx-team-loading-image, radial-gradient(circle at 50% 30%, #30394a, #05070c 70%));
+                opacity: 1; transition: opacity .45s ease;
+            }
+            #gameOpenLoadingOverlay::after {
+                content: ""; position: absolute; inset: auto 0 0 0; height: 38%; pointer-events: none; z-index: 1;
+                background: linear-gradient(to top, rgba(0,0,0,.88), rgba(0,0,0,0));
+            }
+            #gameOpenLoadingOverlay .mwx-loadbox {
+                position: relative; z-index: 2; width: min(900px, 92vw); padding: 0 0 max(34px, env(safe-area-inset-bottom)) 0;
+                display: flex; flex-direction: column; align-items: stretch; gap: 10px;
+            }
+            #gameOpenLoadingOverlay .mwx-load-ready { align-self: center; margin-bottom: 6px; padding: 6px 18px; border-radius: 999px; background: rgba(0,0,0,.55); border: 1px solid #e32636; color: #fff; font: 900 14px sans-serif; letter-spacing: 3px; }
+            #gameOpenLoadingOverlay .mwx-load-row { display: flex; justify-content: space-between; align-items: baseline; color: #fff; font: 900 22px sans-serif; letter-spacing: 4px; text-shadow: 0 2px 12px #000; }
+            #gameOpenLoadingOverlay .mwx-load-bar { height: 16px; border-radius: 999px; overflow: hidden; background: rgba(0,0,0,.65); border: 1px solid rgba(255,255,255,.35); }
+            #gameOpenLoadingOverlay .mwx-load-fill { height: 100%; width: 0%; border-radius: 999px; background: linear-gradient(90deg, #7e0c0c, #e32636); transition: width .06s linear; }
+            #gameOpenLoadingOverlay.game-open-done { opacity: 0; pointer-events: none; }
+        `;
+        document.head.appendChild(style);
+
+        const overlay = document.createElement("div");
+        overlay.id = "gameOpenLoadingOverlay";
+        overlay.dataset.team = "open";
+        overlay.innerHTML = `
+            <div class="mwx-loadbox">
+                <div class="mwx-load-ready">OPENING GAME</div>
+                <div class="mwx-load-row">
+                    <div class="mwx-load-label">LOADING</div>
+                    <div class="mwx-load-percent" id="gameOpenLoadingPercent">0%</div>
+                </div>
+                <div class="mwx-load-bar"><div class="mwx-load-fill" id="gameOpenLoadingFill"></div></div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+
+        mwxResolveLoadingImage("open", overlay, firstGuess => {
+            console.warn("[loading] picture not found. Put it here: public" + firstGuess);
+            const hint = document.createElement("div");
+            hint.style.cssText = "position:absolute;top:12px;left:12px;right:12px;z-index:3;color:#ffb4b4;font:12px sans-serif;text-align:center;text-shadow:0 1px 4px #000";
+            hint.textContent = "Loading picture not found. Put it here: public" + firstGuess;
+            overlay.appendChild(hint);
+        });
+
+        const percent = document.getElementById("gameOpenLoadingPercent");
+        const fill = document.getElementById("gameOpenLoadingFill");
+        const startedAt = Date.now();
+
+        const timer = setInterval(() => {
+            const elapsed = Date.now() - startedAt;
+            const ready = document.readyState === "complete";
+            let pct = Math.min(100, Math.floor((elapsed / LOAD_MS) * 100));
+            if (pct >= 100 && !ready && elapsed < MAX_MS) pct = 99;   // wait for the page to finish loading
+
+            if (percent) percent.textContent = pct + "%";
+            if (fill) fill.style.width = pct + "%";
+
+            if (pct >= 100) {
+                clearInterval(timer);
+                overlay.classList.add("game-open-done");
+                setTimeout(() => { overlay.remove(); style.remove(); }, 600);
+            }
+        }, 50);
+    }
+
+    if (document.body) start();
+    else document.addEventListener("DOMContentLoaded", start);
+})();
 
 function updateRoleDisplay(role) {
 
@@ -2390,7 +2498,7 @@ function renderGamePlayers() {
 
         const name = document.createElement("span");
         setTierName(name, player.name, player.tier);
-        name.insertBefore(avatarNode(player.look, 30, true), name.firstChild);
+        name.insertBefore(avatarNode(hostCrownLook(player.look, player.id === getCurrentHostId()), 30, true), name.firstChild);
 
         if (player.role) {
             const role = document.createElement("span");
@@ -6942,9 +7050,11 @@ function getEquippedWallpaperUrl() {
 
 function applyWallpaper() {
     const value = (typeof getEquippedWallpaperValue === "function") ? getEquippedWallpaperValue() : null;
-    document.body.classList.toggle("has-custom-wallpaper", Boolean(value));
+    const liveUrl = (typeof getEquippedLiveWallpaperUrl === "function") ? getEquippedLiveWallpaperUrl() : null;
+    document.body.classList.toggle("has-custom-wallpaper", Boolean(value || liveUrl));
     if (value) document.body.style.setProperty("--custom-wallpaper", value);
     else document.body.style.removeProperty("--custom-wallpaper");
+    applyLiveWallpaperFrame(liveUrl);
     if (typeof applyThemeLogos === "function") applyThemeLogos(loadMafiaSettings().theme);
 }
 
@@ -7305,6 +7415,25 @@ function blockEdges(x, y, w, h, d, sideOnly) {
     return top + side;
 }
 
+/* Host crown for Minecraft skins: drawn ABOVE the head of the skin picture (extra room is added at the top).
+   (Normal characters keep their own crown.)  Move it with x / y, resize with scale. */
+const MC_HOST_CROWN = { x: 50, yFull: -19, yBust: -15, scale: 0.85 };   // y = how high above the skin's head (more negative = higher)
+
+function mcHostCrownSvg(bust) {
+    const c = MC_HOST_CROWN;
+    return `<g class="mc-host-crown" transform="translate(${c.x} ${bust ? c.yBust : c.yFull}) scale(${c.scale})">
+        <path d="M-14 16 L-16 2 L-8 8 L0 -2 L8 8 L16 2 L14 16 Z" fill="#ffd23f" stroke="#9a6b00" stroke-width="1.6" stroke-linejoin="round"/>
+        <rect x="-14" y="13" width="28" height="4.5" fill="#e0a800" stroke="#9a6b00" stroke-width="1.2"/>
+        <circle cx="-16" cy="2" r="2.2" fill="#ff4d4d"/><circle cx="0" cy="-2" r="2.4" fill="#4da6ff"/><circle cx="16" cy="2" r="2.2" fill="#ff4d4d"/>
+    </g>`;
+}
+
+/* The look to draw for a player: if he is the host and wears a Minecraft skin, mark it so the crown is drawn. */
+function hostCrownLook(look, isHostPlayer) {
+    if (isHostPlayer && look && look.minecraft) return Object.assign({}, look, { hostCrown: true });
+    return look;
+}
+
 function avatarMarkup(look, bust) {
     const wear = Object.assign({}, DEFAULT_LOOK, look || {});
     const face = shopItem(wear.face) || shopItem("face_basic");
@@ -7337,7 +7466,8 @@ function avatarMarkup(look, bust) {
     if (wear.minecraft) {
         const src = "/skins/" + encodeURIComponent(String(wear.minecraft)) + ".png";
         const box = bust ? 'x="8" y="-4" width="84" height="88" preserveAspectRatio="xMidYMin slice"' : 'x="0" y="-8" width="100" height="148" preserveAspectRatio="xMidYMid meet"';
-        return `<svg viewBox="${viewBox}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><g class="mc-fallback" style="display:none">${parts.join("")}</g><image href="${src}" ${box} style="image-rendering:pixelated" onerror="var g=this.parentNode.querySelector('.mc-fallback');if(g)g.style.display='';this.remove()"/></svg>`;
+        const mcViewBox = wear.hostCrown ? (bust ? "8 -20 84 104" : "0 -26 100 166") : viewBox;
+        return `<svg viewBox="${mcViewBox}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><g class="mc-fallback" style="display:none">${parts.join("")}</g><image href="${src}" ${box} style="image-rendering:pixelated" onerror="var g=this.parentNode.querySelector('.mc-fallback');if(g)g.style.display='';this.remove()"/>${wear.hostCrown ? mcHostCrownSvg(bust) : ""}</svg>`;
     }
 
     return `<svg viewBox="${viewBox}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">${parts.join("")}</svg>`;
@@ -7515,6 +7645,94 @@ function getEquippedShopSound(event) {
     return item && shopOwned(item.id) ? item : null;
 }
 
+/* ---------- Wallpaper per device (Laptop / Mobile / iPad) ----------
+   The server sends item.urls = { laptop, mobile, ipad } for every shop wallpaper.
+   The game detects which device this is and shows that device's picture.
+   The 3 buttons in Shop / Inventory only change which pictures you are LOOKING at. */
+var wallpaperViewDevice = null;
+var wallpaperDeviceCache = null;
+const WALLPAPER_DEVICES = [["laptop", "💻 Laptop"], ["mobile", "📱 Mobile"], ["ipad", "📲 iPad"]];
+
+function wallpaperDeviceLabel(key) {
+    const hit = WALLPAPER_DEVICES.find(([k]) => k === key);
+    return hit ? hit[1].replace(/^\S+\s/, "") : "Laptop";
+}
+
+function detectWallpaperDevice() {
+    if (wallpaperDeviceCache) return wallpaperDeviceCache;
+    const ua = navigator.userAgent || "";
+    const touch = navigator.maxTouchPoints || 0;
+    const shortSide = Math.min(window.screen?.width || 9999, window.screen?.height || 9999);
+    let device = "laptop";
+    // iPad (iPadOS also says "Macintosh", but it has a touch screen)
+    if (/iPad/i.test(ua) || (/Macintosh/i.test(ua) && touch > 1)) device = "ipad";
+    else if (/iPhone|iPod|Windows Phone|IEMobile|Opera Mini|BlackBerry/i.test(ua)) device = "mobile";
+    else if (/Android/i.test(ua)) device = /Mobile/i.test(ua) ? "mobile" : "ipad";   // Android tablets have no "Mobile" in their name
+    else if (touch > 0 && shortSide < 600) device = "mobile";                          // phone using "desktop site"
+    wallpaperDeviceCache = device;
+    return device;
+}
+
+function wallpaperViewDeviceKey() {
+    return WALLPAPER_DEVICES.some(([k]) => k === wallpaperViewDevice) ? wallpaperViewDevice : detectWallpaperDevice();
+}
+
+function wallpaperUrlFor(item, device) {
+    if (!item) return "";
+    return (item.urls && item.urls[device]) || item.url || "";
+}
+
+/* A copy of the item whose picture is the one for the device the player is looking at. */
+function wallpaperViewItem(item) {
+    if (!item || item.cat !== "wallpaper" || !item.urls) return item;
+    return Object.assign({}, item, { url: wallpaperUrlFor(item, wallpaperViewDeviceKey()) });
+}
+
+/* Is this wallpaper shown under the device button the player is looking at?
+   (Items without "devices" are on every button; the 2 iPad-only ones only on iPad.) */
+function wallpaperShownOnView(item) {
+    return !item || !Array.isArray(item.devices) || item.devices.includes(wallpaperViewDeviceKey());
+}
+
+/* LIVE wallpaper = an animated .html page (public/wallpapers/live/). It plays in an iframe behind the game. */
+function getEquippedLiveWallpaperUrl() {
+    const p = myProgress;
+    if (!p || !p.equipped || !authState?.username || !p.equipped.wallpaper) return null;
+    const id = p.equipped.wallpaper;
+    if ((p.wallpapers || []).some(w => w.id === id)) return null;
+    const item = shopItem(id);
+    if (!item || !shopOwned(id) || !item.live) return null;
+    return item.live[detectWallpaperDevice()] || null;
+}
+
+function applyLiveWallpaperFrame(url) {
+    let frame = document.getElementById("liveWallpaperFrame");
+    if (!url) {
+        if (frame) frame.remove();
+        return;
+    }
+    if (!frame) {
+        frame = document.createElement("iframe");
+        frame.id = "liveWallpaperFrame";
+        frame.title = "";
+        frame.setAttribute("aria-hidden", "true");
+        frame.tabIndex = -1;
+        frame.scrolling = "no";
+        frame.style.cssText = "position:fixed;inset:0;width:100%;height:100%;border:0;z-index:-1;pointer-events:none;background:#000;";
+        document.body.insertBefore(frame, document.body.firstChild);
+    }
+    if (frame.dataset.src !== url) { frame.dataset.src = url; frame.src = url; }
+}
+
+function wallpaperDeviceSwitchHtml(pageKey) {
+    const view = wallpaperViewDeviceKey();
+    const mine = detectWallpaperDevice();
+    return `<div class="settings-card">
+        <div class="shop-style-switch wallpaper-device-switch">${WALLPAPER_DEVICES.map(([key, label]) => `<button class="shop-chip ${view === key ? "active" : ""}" type="button" data-inv="wallpaper-device" data-device="${key}" data-page="${pageKey}">${label}</button>`).join("")}</div>
+        <small class="settings-muted">This device is detected as <b>${escapeHtml(wallpaperDeviceLabel(mine))}</b>, so you automatically get the ${escapeHtml(wallpaperDeviceLabel(mine))} picture in the game. These buttons only change which pictures you are looking at.</small>
+    </div>`;
+}
+
 /* ---------- Wallpaper (uploaded images OR bought gradients/images) ---------- */
 
 function getEquippedWallpaperValue() {
@@ -7526,7 +7744,11 @@ function getEquippedWallpaperValue() {
     if (upload) return `url("${upload.url}")`;
 
     const item = shopItem(id);
-    if (item && shopOwned(id)) return item.css ? item.css : (item.url ? `url("${item.url}")` : null);
+    if (item && shopOwned(id)) {
+        if (item.css) return item.css;
+        const deviceUrl = wallpaperUrlFor(item, detectWallpaperDevice());
+        return deviceUrl ? `url("${deviceUrl}")` : null;
+    }
 
     return null;
 }
@@ -7655,6 +7877,9 @@ function openItemDetailsPopup(item) {
     const isLogo = item.cat === "logo";
     const active = myProgress?.equipped?.[isLogo ? "logo" : "wallpaper"] === item.id;
     const status = item.free ? "Default" : (active ? "✅ Equipped" : (owned ? "✅ Owned" : "Not owned yet"));
+    const shown = isLogo ? item : wallpaperViewItem(item);
+    const liveSrc = (!isLogo && item.live) ? (item.live[wallpaperViewDeviceKey()] || "") : "";
+    const liveRatio = { laptop: "16 / 9", mobile: "9 / 16", ipad: "4 / 3" }[wallpaperViewDeviceKey()] || "16 / 9";
 
     const overlay = document.createElement("div");
     overlay.id = "itemDetailsPopup";
@@ -7662,8 +7887,8 @@ function openItemDetailsPopup(item) {
     overlay.innerHTML = `
         <div class="mw-modal mw-modal-wide" role="dialog" aria-modal="true">
             <h3>${isLogo ? "📛" : "🖼️"} ${escapeHtml(item.name)}</h3>
-            <div class="mw-detail-img ${isLogo ? "logo" : "wall"}">${shopImageHtml(item, isLogo ? "contain" : "cover")}</div>
-            <p class="mw-detail-meta"><span>${escapeHtml(isLogo ? "Logo" : "Wallpaper")}</span><span>${priceLabel(item)}</span><span>${status}</span></p>
+            <div class="mw-detail-img ${isLogo ? "logo" : "wall"}" ${liveSrc ? `style="aspect-ratio:${liveRatio};max-height:62vh;margin-left:auto;margin-right:auto"` : ""}>${liveSrc ? `<iframe src="${escapeHtml(liveSrc)}" title="Live preview" style="width:100%;height:100%;border:0;pointer-events:none"></iframe>` : shopImageHtml(shown, isLogo ? "contain" : "cover")}</div>
+            <p class="mw-detail-meta"><span>${escapeHtml(isLogo ? "Logo" : "Wallpaper · " + wallpaperDeviceLabel(wallpaperViewDeviceKey()) + (item.live ? " · LIVE" : ""))}</span><span>${priceLabel(item)}</span><span>${status}</span></p>
             <div class="mw-modal-actions"><button class="inv-btn primary" type="button" data-popup="close">Close</button></div>
         </div>`;
 
@@ -7674,16 +7899,16 @@ function openItemDetailsPopup(item) {
     document.body.appendChild(overlay);
 
     // If the picture can't be loaded, say exactly which file the page asked for.
-    if (item.url) {
+    if (shown.url) {
         const probe = new Image();
         probe.onerror = () => {
             const note = document.createElement("p");
             note.className = "mw-modal-message";
-            note.textContent = `Picture not found: ${item.url}  (put your file in the "public" folder at that path, then refresh with Ctrl+F5)`;
+            note.textContent = `Picture not found: ${shown.url}  (put your file in the "public" folder at that path, then refresh with Ctrl+F5)`;
             const meta = overlay.querySelector(".mw-detail-meta");
             if (meta) meta.after(note);
         };
-        probe.src = item.url;
+        probe.src = shown.url;
     }
 }
 
@@ -7789,7 +8014,7 @@ function renderShopCard(item, signedIn, wallet, username, previewBase) {
         thumb = `<div class="shop-thumb">${tierNameHtml(username, item.tier)}</div>`;
         extra = `<button class="inv-btn" type="button" data-inv="tier-details" data-key="${item.tier}">Details</button>`;
     } else if (item.cat === "wallpaper") {
-        thumb = `<div class="shop-thumb wall">${shopImageHtml(item, "cover")}</div>`;
+        thumb = `<div class="shop-thumb wall" style="position:relative">${shopImageHtml(wallpaperViewItem(item), "cover")}${item.live ? `<span style="position:absolute;top:6px;left:6px;padding:2px 8px;border-radius:999px;background:rgba(210,31,53,.92);color:#fff;font:800 10px/1.6 sans-serif;letter-spacing:1.5px">● LIVE</span>` : ""}</div>`;
         extra = `<button class="inv-btn" type="button" data-inv="shop-details" data-id="${item.id}">Details</button>`;
     } else if (item.cat === "logo") {
         thumb = `<div class="shop-thumb logo">${shopImageHtml(item, "contain")}</div>`;
@@ -7860,6 +8085,10 @@ function renderRewardsShopPage(page) {
             }
         } else {
             items = shopItemsIn(shopGroup).filter(it => it.enabled !== false || shopOwned(it.id));
+            if (shopGroup === "wallpaper") {
+                top = wallpaperDeviceSwitchHtml("rewards");
+                items = items.filter(wallpaperShownOnView);
+            }
         }
 
         if (shopGroup !== "character") {
@@ -8042,10 +8271,10 @@ function renderWallpapersTab(p) {
 
     if (shopCatalog) {
         const active = p.equipped?.wallpaper || null;
-        const owned = shopItemsIn("wallpaper").filter(item => shopOwned(item.id));
+        const owned = shopItemsIn("wallpaper").filter(item => shopOwned(item.id) && wallpaperShownOnView(item));
         const rows = owned.map(item => {
             const on = active === item.id;
-            const bg = item.css ? item.css : `url('${escapeHtml(item.url || "")}')`;
+            const bg = item.css ? item.css : `url('${escapeHtml(wallpaperUrlFor(item, wallpaperViewDeviceKey()))}')`;
             return `
                 <div class="inv-row">
                     <div style="display:flex;gap:10px;align-items:center"><div class="inv-thumb" style="background-image:${bg};background-size:cover;background-position:center"></div><div><strong>${escapeHtml(item.name)}</strong><small>${on ? "✅ active" : "Owned"}</small></div></div>
@@ -8056,7 +8285,7 @@ function renderWallpapersTab(p) {
         shopPart = `<div class="settings-card"><h3>🖼️ My Wallpapers</h3>${rows}</div>`;
     }
 
-    return `<div class="settings-card"><h3>🖼️ Default Wallpapers</h3><div class="shop-grid">${themeDefaultCards("wallpaper", p)}</div></div>` + shopPart;
+    return wallpaperDeviceSwitchHtml("inventory") + `<div class="settings-card"><h3>🖼️ Default Wallpapers</h3><div class="shop-grid">${themeDefaultCards("wallpaper", p)}</div></div>` + shopPart;
 }
 
 function renderLogosTab(p) {
@@ -8196,6 +8425,9 @@ function handleShopClick(event) {
             if (result?.ok) { minecraftSkinSelection = target.dataset.file; inventoryCharView = null; }
             renderSettingsPage("rewards");
         });
+    } else if (action === "wallpaper-device") {
+        wallpaperViewDevice = ["laptop", "mobile", "ipad"].includes(target.dataset.device) ? target.dataset.device : null;
+        renderSettingsPage(target.dataset.page === "inventory" ? "inventory" : "rewards");
     } else if (action === "shop-group") {
         shopGroup = target.dataset.key;
         shopMessage = "";
@@ -10955,7 +11187,7 @@ function renderAccountCard(data) {
 
     const avatarBox = document.createElement("div");
     avatarBox.className = "ac-avatar";
-    avatarBox.appendChild(avatarNode(data.look, 74, false));
+    avatarBox.appendChild(avatarNode(hostCrownLook(data.look, Boolean(data.isHost)), 74, false));
 
     const who = document.createElement("div");
     who.className = "ac-who";

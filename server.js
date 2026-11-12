@@ -923,6 +923,9 @@ shopAdd({ id: "wp_city",     cat: "wallpaper", name: "City Lights",   price: 400
 shopAdd({ id: "wp_blood",    cat: "wallpaper", name: "Blood Moon",    price: 500, base: "blood-moon" });
 shopAdd({ id: "wp_gold",     cat: "wallpaper", name: "Golden Hour",   price: 500, base: "golden-hour" });
 shopAdd({ id: "wp_neon",     cat: "wallpaper", name: "Neon Vice",     price: 500, base: "neon-vice" });
+/* iPad-only wallpapers (they only appear under the iPad button) */
+shopAdd({ id: "wp_crimsonmoon", cat: "wallpaper", name: "Crimson Moon Waterfront", price: 500, base: "crimson-moon",       devices: ["ipad"] });
+shopAdd({ id: "wp_neonblue",    cat: "wallpaper", name: "Neon Blue Waterfront",    price: 500, base: "neon-blue-waterfront", devices: ["ipad"] });
 
 /* ----- Logos -----
    Put YOUR image in  public/logos/<base>.png  (.jpg / .webp also work).
@@ -1090,7 +1093,7 @@ function shopPriceOf(item) {
    If no file exists yet it still returns the .jpg / .png path, so the item
    works the moment the file is added. */
 const SHOP_FILE_DIRS = { wallpaper: ["wallpapers", "wallpaper"], logo: ["logos", "logo"], sound: ["sounds", "sound"] };
-const SHOP_FILE_EXTS = ["jpg", "jpeg", "png", "webp", "gif", "avif"];
+const SHOP_FILE_EXTS = ["jpg", "jpeg", "png", "webp", "gif", "avif", "apng"];
 const SHOP_SOUND_EXTS = ["mp3", "wav", "ogg", "m4a", "webm", "aac"];
 const shopExtsFor = item => (item.cat === "sound" ? SHOP_SOUND_EXTS : SHOP_FILE_EXTS);
 const shopDefaultExt = item => (item.cat === "sound" ? "mp3" : item.cat === "logo" ? "png" : "jpg");
@@ -1128,6 +1131,75 @@ function shopFileUrl(item) {
     return `/${dirs[0]}/${item.base}.${shopDefaultExt(item)}`;
 }
 
+/* ---------- Wallpapers per device (Laptop / Mobile / iPad) ----------
+   For each shop wallpaper put up to 3 files in public/wallpapers/ :
+       <base>-laptop.gif   <base>-mobile.gif   <base>-ipad.gif
+   (jpg / png / webp / gif / avif / apng all work, live images included).
+   Also accepted: "desktop" or "pc" for laptop, "phone" for mobile, "tablet" for iPad,
+   and the device word in front ("laptop-<base>").
+   If a device file is missing, the plain <base>.<ext> file (old way) or another
+   device's file is used instead, so nothing breaks. */
+const WALLPAPER_DEVICE_WORDS = {
+    laptop: ["laptop", "desktop", "pc"],
+    mobile: ["mobile", "phone"],
+    ipad:   ["ipad", "tablet"]
+};
+
+function shopDeviceFileUrl(item, device, opts) {
+    const dirs = (opts && opts.dirs) || SHOP_FILE_DIRS[item.cat];
+    const okExts = (opts && opts.exts) || shopExtsFor(item);
+    const words = WALLPAPER_DEVICE_WORDS[device];
+    if (!dirs || !words) return null;
+
+    const bases = [item.base, item.name, String(item.id || "").replace(/^[a-z]+_/, "")]
+        .map(shopNorm).filter(Boolean);
+    const wanted = [];
+    bases.forEach(base => words.forEach(word => { wanted.push(base + word); wanted.push(word + base); }));
+
+    const roots = Array.from(new Set([path.resolve("public"), path.join(__dirname, "public")]));
+
+    for (const dir of dirs) {
+        for (const root of roots) {
+            let files = [];
+            try { files = fs.readdirSync(path.join(root, dir)); } catch (_) { continue; }
+
+            for (const name of wanted) {
+                const hit = files.find(file => shopNorm(file) === name && okExts.includes(file.split(".").pop().toLowerCase()));
+                if (hit) return `/${dir}/${encodeURIComponent(hit)}`;
+            }
+        }
+    }
+    return null;
+}
+
+/* LIVE wallpapers: self-contained animated .html pages in public/wallpapers/live/
+   named  <base>-laptop.html  <base>-mobile.html  <base>-ipad.html
+   (laptop falls back to ipad/mobile and so on, if a device has none). */
+function shopLiveUrls(item) {
+    const opts = { dirs: ["wallpapers/live"], exts: ["html", "htm"] };
+    const own = {};
+    Object.keys(WALLPAPER_DEVICE_WORDS).forEach(device => { own[device] = shopDeviceFileUrl(item, device, opts); });
+    const any = own.laptop || own.ipad || own.mobile;
+    if (!any) return null;
+    const out = {};
+    Object.keys(WALLPAPER_DEVICE_WORDS).forEach(device => { out[device] = own[device] || any; });
+    return out;
+}
+
+function shopWallpaperUrls(item) {
+    const roots = Array.from(new Set([path.resolve("public"), path.join(__dirname, "public")]));
+    const exists = url => roots.some(root => fs.existsSync(path.join(root, decodeURIComponent(url))));
+
+    const generic = shopFileUrl(item);
+    const own = {};
+    Object.keys(WALLPAPER_DEVICE_WORDS).forEach(device => { own[device] = shopDeviceFileUrl(item, device); });
+
+    const fallback = exists(generic) ? generic : (own.laptop || own.ipad || own.mobile || generic);
+    const out = {};
+    Object.keys(WALLPAPER_DEVICE_WORDS).forEach(device => { out[device] = own[device] || fallback; });
+    return out;
+}
+
 /* Prints (when the server starts) which wallpaper / logo pictures were found and which are missing. */
 (function logShopPictures() {
     try {
@@ -1137,6 +1209,16 @@ function shopFileUrl(item) {
             const url = shopFileUrl(item);
             const found = roots.some(root => fs.existsSync(path.join(root, decodeURIComponent(url))));
             console.log(`[shop] ${found ? "OK     " : "MISSING"} ${item.cat.padEnd(9)} ${item.name.padEnd(15)} -> ${found ? url : "put a file named " + item.base + (item.cat === "sound" ? ".mp3" : ".jpg/.png") + " in public" + url.replace(/[^/]+$/, "")}`);
+        });
+        SHOP_CATALOG.filter(item => item.cat === "wallpaper" && item.base && !item.file && !item.css).forEach(item => {
+            Object.keys(WALLPAPER_DEVICE_WORDS).forEach(device => {
+                const url = shopDeviceFileUrl(item, device);
+                console.log(`[shop] ${url ? "OK     " : "MISSING"} wallpaper ${device.padEnd(6)} ${item.name.padEnd(15)} -> ${url || "put a file named " + item.base + "-" + device + ".gif (or .jpg/.png/.webp) in public/wallpapers/"}`);
+            });
+        });
+        SHOP_CATALOG.filter(item => item.cat === "wallpaper" && item.base && !item.file && !item.css).forEach(item => {
+            const live = shopLiveUrls(item);
+            console.log(`[shop] ${live ? "OK     " : "MISSING"} LIVE      ${item.name.padEnd(24)} -> ${live ? [...new Set(Object.values(live))].join("  ") : "put " + item.base + "-laptop.html / -mobile.html / -ipad.html in public/wallpapers/live/"}`);
         });
     } catch (error) {
         console.log("[shop] picture check failed:", error.message);
@@ -1152,11 +1234,16 @@ function publicShopItem(item) {
         free: Boolean(item.free),
         enabled: !isShopDisabled(item.id)
     };
-    ["skin", "art", "emoji", "css", "tier", "icon"].forEach(key => {
+    ["skin", "art", "emoji", "css", "tier", "icon", "devices"].forEach(key => {
         if (item[key] !== undefined) out[key] = item[key];
     });
     if (item.file) out.url = item.file;
     else if (item.base) out.url = shopFileUrl(item);
+    if (item.cat === "wallpaper" && !item.file && !item.css && item.base) {
+        out.urls = shopWallpaperUrls(item);
+        const live = shopLiveUrls(item);
+        if (live) out.live = live;
+    }
     return out;
 }
 
