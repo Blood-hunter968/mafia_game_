@@ -68,6 +68,8 @@ async function initDatabase() {
         accountsDb = accounts;
         if (!accountsDb.guilds || typeof accountsDb.guilds !== "object") accountsDb.guilds = {};
         if (!Array.isArray(accountsDb.reports)) accountsDb.reports = [];
+        if (!accountsDb.sessions || typeof accountsDb.sessions !== "object") accountsDb.sessions = {};
+        accountSessions.prune();
         console.log("[db] Loaded " + Object.keys(accountsDb.users).length + " accounts from Neon.");
     } else {
         await writeAccountsNow();
@@ -202,7 +204,69 @@ process.on("SIGINT", flushAccountsAndExit);
 process.on("SIGTERM", flushAccountsAndExit);
 
 const socketAccounts = new Map();   // socket.id -> account key
-const accountSessions = new Map();  // session token -> account key
+/* LOGIN SESSIONS - saved in Neon (inside accountsDb.sessions), so players stay
+   signed in after a Render deploy / restart. Only a SHA-256 hash of each token is
+   stored, never the token itself. Same get / set / delete interface as the old Map. */
+const SESSION_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;   // 90 days
+const SESSIONS_PER_ACCOUNT = 8;
+
+const accountSessions = {
+    _store() {
+        if (!accountsDb.sessions || typeof accountsDb.sessions !== "object") accountsDb.sessions = {};
+        return accountsDb.sessions;
+    },
+    _hash(token) {
+        return crypto.createHash("sha256").update(String(token || "")).digest("hex");
+    },
+    get(token) {
+        if (!token) return undefined;
+        const entry = this._store()[this._hash(token)];
+        if (!entry) return undefined;
+        if (Date.now() - (entry.t || 0) > SESSION_MAX_AGE_MS) {
+            delete this._store()[this._hash(token)];
+            saveAccounts();
+            return undefined;
+        }
+        return entry.k;
+    },
+    set(token, accountKey) {
+        const store = this._store();
+        store[this._hash(token)] = { k: accountKey, t: Date.now() };
+
+        // Keep only the newest sessions of one account.
+        const mine = Object.entries(store)
+            .filter(([, e]) => e.k === accountKey)
+            .sort((a, b) => (b[1].t || 0) - (a[1].t || 0));
+        for (const [hash] of mine.slice(SESSIONS_PER_ACCOUNT)) delete store[hash];
+
+        saveAccounts();
+    },
+    delete(token) {
+        if (!token) return;
+        if (delete this._store()[this._hash(token)]) saveAccounts();
+    },
+    dropAccount(accountKey) {
+        const store = this._store();
+        let changed = false;
+        for (const hash of Object.keys(store)) {
+            if (store[hash].k === accountKey) { delete store[hash]; changed = true; }
+        }
+        if (changed) saveAccounts();
+    },
+    renameAccount(oldKey, newKey) {
+        const store = this._store();
+        for (const hash of Object.keys(store)) {
+            if (store[hash].k === oldKey) store[hash].k = newKey;
+        }
+        saveAccounts();
+    },
+    prune() {
+        const store = this._store();
+        for (const hash of Object.keys(store)) {
+            if (Date.now() - (store[hash].t || 0) > SESSION_MAX_AGE_MS || !accountsDb.users[store[hash].k]) delete store[hash];
+        }
+    }
+};
 
 function getSocketAccountKey(socket) {
     return socketAccounts.get(socket.id) || null;
@@ -317,9 +381,7 @@ async function verifyHash(secret, salt, expectedHex) {
 }
 
 function dropSessionsOf(accountKey) {
-    for (const [token, key] of accountSessions.entries()) {
-        if (key === accountKey) accountSessions.delete(token);
-    }
+    accountSessions.dropAccount(accountKey);
 }
 
 function emptyStats() {
@@ -5105,9 +5167,7 @@ io.on(
 
                         // Everything that points at the old username now points at the new one,
                         // so the player stays signed in and keeps their room seat.
-                        for (const [token, accountKey] of accountSessions.entries()) {
-                            if (accountKey === key) accountSessions.set(token, newKey);
-                        }
+                        accountSessions.renameAccount(key, newKey);
 
                         for (const [socketId, accountKey] of socketAccounts.entries()) {
                             if (accountKey === key) socketAccounts.set(socketId, newKey);
@@ -6454,9 +6514,7 @@ io.on(
                     }
                 }
 
-                for (const [token, accountKey] of accountSessions.entries()) {
-                    if (accountKey === key) accountSessions.delete(token);
-                }
+                accountSessions.dropAccount(key);
 
                 try {
                     fs.rmSync(userUploadDir(key), { recursive: true, force: true });
