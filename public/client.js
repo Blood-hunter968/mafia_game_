@@ -16303,3 +16303,615 @@ socket.on("accountBanned", data => {
     socket.on('guildInviteReceived',d=>{if(!d)return;gToast(`✉️ ${d.by} invited you to join ${d.guildName}!`);if(guildCtl&&guildCtl.box.isConnected)guildCtl.reload();});
     document.addEventListener('DOMContentLoaded',addLobbyControls); addLobbyControls();
 })();
+
+/* =========================================================
+   MAFIA WARS — UNIVERSAL "← BACK" + POLISH LAYER
+   ---------------------------------------------------------
+   1. Every box / popup / panel that opens gets a "← BACK"
+      button at the very end (existing buttons are untouched).
+   2. The "Back" keyboard shortcut (Esc by default) closes the top-most box.
+   3. Connection status pill (reconnecting / back online).
+   Game-critical popups (night turns, role reveal, death
+   reveal, loading, join approval...) are never given a Back
+   button. Add data-no-back to any element to opt out too.
+========================================================= */
+(function mwBackEverywhere() {
+    "use strict";
+    if (window.__mwBackEverywhere) return;
+    window.__mwBackEverywhere = true;
+
+    const CANDIDATE_SELECTOR = [
+        '[class*="overlay" i]', '[class*="modal" i]', '[class*="popup" i]',
+        '[class*="dialog" i]', '[id*="Overlay"]', '[id*="Modal"]', '[id*="Popup"]'
+    ].join(",");
+
+    /* never touch these (game flow / must-answer popups) */
+    const BLOCKED = /loading|nightturn|night-turn|nightaction|rolereveal|role-reveal|deathreveal|death-reveal|detectiveresult|gameopen|joinloading|joinrequest|levelup|mvp|gameover|mw-back-footer|mw-toast|tooltip/i;
+
+    const STATIC = new WeakSet();            // boxes that existed in the original HTML
+    document.querySelectorAll(CANDIDATE_SELECTOR).forEach(e => STATIC.add(e));
+
+    const idOf = el => (el.id || "") + " " + (typeof el.className === "string" ? el.className : "");
+
+    function isVisibleBox(el) {
+        if (!el.isConnected || el.hasAttribute("data-no-back")) return false;
+        if (BLOCKED.test(idOf(el))) return false;
+        if (el.closest("[data-no-back]")) return false;
+        const cs = getComputedStyle(el);
+        if (cs.display === "none" || cs.visibility === "hidden" || +cs.opacity === 0) return false;
+        if (cs.position !== "fixed" && cs.position !== "absolute") return false;
+        const r = el.getBoundingClientRect();
+        // must cover most of the screen = a real box/overlay, not a tooltip or badge
+        return r.width >= innerWidth * 0.6 && r.height >= innerHeight * 0.6;
+    }
+
+    function findCard(box) {
+        const kids = Array.from(box.children).filter(c => {
+            const cs = getComputedStyle(c);
+            return cs.display !== "none" && cs.position !== "fixed" && !c.classList.contains("mw-back-footer");
+        });
+        if (kids.length === 1 && kids[0].getBoundingClientRect().height > 80) return kids[0];
+        return box;
+    }
+
+    /* Does a Back/Cancel button already exist near the END of this card? */
+    function hasEndBack(card) {
+        const btns = card.querySelectorAll("button, [role=button]");
+        const total = Math.max(card.scrollHeight, 1);
+        const cardTop = card.getBoundingClientRect().top;
+        for (const b of btns) {
+            if (b.closest(".mw-back-footer")) continue;
+            const t = (b.textContent || "").trim();
+            if (!/(^|[\s←⬅◀‹])(back|cancel)\b/i.test(t) && !b.hasAttribute("data-mw-back")) continue;
+            const pos = (b.getBoundingClientRect().top - cardTop + card.scrollTop) / total;
+            if (pos > 0.6) return true;
+        }
+        return false;
+    }
+
+    /* ---------- closing logic ---------- */
+    function dismissControl(box) {
+        const q = box.querySelectorAll("button, [role=button]");
+        const usable = b => !b.closest(".mw-back-footer") && b.getClientRects().length && !b.disabled;
+        const pick = re => Array.from(q).find(b => usable(b) && (re.test(b.id) || re.test(typeof b.className === "string" ? b.className : "") || (re === BACKISH && b.hasAttribute("data-mw-back"))));
+        return pick(BACKISH) || pick(/close|cancel|dismiss/i);
+    }
+    const BACKISH = /(^|[-_])back|settings-?back|qa-?back|qaBack|qaThreadBack|mw-page-back/i;
+
+    function closeBox(box) {
+        const ctl = dismissControl(box);
+        if (ctl) { ctl.click(); return; }
+
+        if (box.classList.contains("mw-temp") || !STATIC.has(box)) { box.remove(); return; }
+        const wasInline = box.style.display && box.style.display !== "none";
+        let touched = false;
+        ["open", "show", "active", "visible"].forEach(c => { if (box.classList.contains(c)) { box.classList.remove(c); touched = true; } });
+        if (wasInline || !touched) box.style.display = "none";
+        box.dispatchEvent(new Event("mwxclose"));
+    }
+
+    /* ---------- footer ---------- */
+    function addFooter(box) {
+        const card = findCard(box);
+        if (card.querySelector(":scope > .mw-back-footer")) return;
+        if (hasEndBack(card)) return;
+
+        const footer = document.createElement("div");
+        footer.className = "mw-back-footer";
+        footer.innerHTML = '<button type="button" class="mw-back-btn">← BACK</button>';
+        footer.firstChild.addEventListener("click", e => {
+            e.preventDefault(); e.stopPropagation();
+            closeBox(box);
+        });
+        card.appendChild(footer);
+
+        box.setAttribute("data-mw-has-back", "1");
+        if (!box.getAttribute("role")) box.setAttribute("role", "dialog");
+        box.setAttribute("aria-modal", "true");
+    }
+
+    /* ---------- scanning (throttled) ---------- */
+    let scheduled = false;
+    function scan() {
+        scheduled = false;
+        document.querySelectorAll(CANDIDATE_SELECTOR).forEach(box => {
+            try {
+                if (!isVisibleBox(box)) return;
+                // skip wrappers that merely contain another full-size box
+                const inner = box.querySelector(CANDIDATE_SELECTOR);
+                if (inner && isVisibleBox(inner)) return;
+                addFooter(box);
+            } catch (e) { /* never break the game */ }
+        });
+    }
+    function schedule() {
+        if (scheduled) return;
+        scheduled = true;
+        setTimeout(() => requestAnimationFrame(scan), 80);
+    }
+
+    new MutationObserver(muts => {
+        for (const m of muts) {
+            const t = m.target;
+            if (t.closest && t.closest(".mw-back-footer")) continue;
+            if (m.type === "childList" && m.addedNodes.length &&
+                Array.from(m.addedNodes).every(n => n.classList && n.classList.contains("mw-back-footer"))) continue;
+            schedule();
+            return;
+        }
+    }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["style", "class"] });
+    document.addEventListener("DOMContentLoaded", schedule);
+    schedule();
+
+    /* ---------- close the top-most box (used by the Back shortcut, Esc by default) ---------- */
+    window.mwCloseTopBox = function () {
+        const open = Array.from(document.querySelectorAll('[data-mw-has-back="1"]')).filter(isVisibleBox);
+        if (!open.length) return false;
+        const z = el => parseInt(getComputedStyle(el).zIndex, 10) || 0;
+        open.sort((a, b) => z(a) - z(b));
+        closeBox(open[open.length - 1]);
+        return true;
+    };
+
+    /* ---------- connection status pill ---------- */
+    function toast(text, cls, ms) {
+        let t = document.getElementById("mwConnPill");
+        if (!t) {
+            t = document.createElement("div");
+            t.id = "mwConnPill";
+            t.setAttribute("role", "status");
+            t.setAttribute("aria-live", "polite");
+            document.body.appendChild(t);
+        }
+        clearTimeout(toast.timer);
+        t.textContent = text;
+        t.className = "mw-toast show " + (cls || "");
+        if (ms) toast.timer = setTimeout(() => t.classList.remove("show"), ms);
+    }
+    try {
+        if (typeof socket !== "undefined" && socket && socket.on) {
+            let wasDown = false;
+            socket.on("disconnect", () => { wasDown = true; toast("⚠ Connection lost — reconnecting…", "warn"); });
+            socket.on("connect", () => { if (wasDown) { wasDown = false; toast("✓ Back online", "ok", 2500); } });
+            if (socket.io && socket.io.on) {
+                socket.io.on("reconnect_attempt", () => { if (wasDown) toast("⚠ Reconnecting…", "warn"); });
+            }
+        }
+    } catch (e) { /* optional feature */ }
+})();
+
+/* =========================================================
+   MAFIA WARS — EXTRA FEATURES PACK (client-side, additive)
+   - tap ripple + haptic feedback on buttons
+   - live ping badge (click to hide)
+   - fullscreen button (F key)
+   - 15 customisable keyboard shortcuts (Settings → Shortcuts)
+   - screen stays awake during lobby / match
+   - "leave page?" protection during a match
+   - page title shows where you are
+   - click a room code to copy it
+   - lazy-loaded images, focus handling for boxes
+   - offline / online notices, window.mwToast(msg)
+========================================================= */
+(function mwExtras() {
+    "use strict";
+    if (window.__mwExtras) return;
+    window.__mwExtras = true;
+
+    const $q = (s, r) => (r || document).querySelector(s);
+    const typing = el => !!el && (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable);
+    const store = {
+        get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+        set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } }
+    };
+
+    /* ---------- toast helper ---------- */
+    function toast(msg, ms) {
+        let host = document.getElementById("mwxToastHost");
+        if (!host) {
+            host = document.createElement("div");
+            host.id = "mwxToastHost";
+            host.setAttribute("aria-live", "polite");
+            document.body.appendChild(host);
+        }
+        const t = document.createElement("div");
+        t.className = "mwx-toast-item";
+        t.textContent = msg;
+        host.appendChild(t);
+        requestAnimationFrame(() => t.classList.add("in"));
+        setTimeout(() => { t.classList.remove("in"); setTimeout(() => t.remove(), 300); }, ms || 2200);
+    }
+    window.mwToast = toast;
+
+    /* ---------- ripple + haptics ---------- */
+    document.addEventListener("pointerdown", e => {
+        const b = e.target.closest && e.target.closest("button, [role=button]");
+        if (!b || b.disabled) return;
+        try { if (navigator.vibrate && e.pointerType === "touch") navigator.vibrate(8); } catch (x) { /* ignore */ }
+        if (document.body.classList.contains("settings-no-effects") || document.body.classList.contains("settings-reduce-motion")) return;
+        const r = b.getBoundingClientRect();
+        if (r.width > 520 || r.height > 160) return;
+        const d = Math.max(r.width, r.height) * 1.6;
+        const s = document.createElement("span");
+        s.className = "mwx-ripple";
+        s.style.cssText = `width:${d}px;height:${d}px;left:${e.clientX - r.left - d / 2}px;top:${e.clientY - r.top - d / 2}px`;
+        const cs = getComputedStyle(b);
+        const prevPos = b.style.position, prevOv = b.style.overflow;
+        if (cs.position === "static") b.style.position = "relative";
+        b.style.overflow = "hidden";
+        b.appendChild(s);
+        setTimeout(() => { s.remove(); b.style.position = prevPos; b.style.overflow = prevOv; }, 600);
+    }, { passive: true });
+
+    /* ---------- corner tools: ping + fullscreen ---------- */
+    const tools = document.createElement("div");
+    tools.id = "mwxTools";
+    document.body.appendChild(tools);
+
+    const ping = document.createElement("button");
+    ping.type = "button";
+    ping.id = "mwxPing";
+    ping.title = "Connection speed (click to hide)";
+    ping.textContent = "● …";
+    if (store.get("mwxPingHidden") === "1") ping.classList.add("hidden");
+    ping.addEventListener("click", () => {
+        ping.classList.toggle("hidden");
+        store.set("mwxPingHidden", ping.classList.contains("hidden") ? "1" : "0");
+        if (ping.classList.contains("hidden")) toast("Ping badge hidden — press " + (window.mwKeys ? window.mwKeys.label("ping") : "P") + " to show it again");
+    });
+    tools.appendChild(ping);
+
+    async function measure() {
+        if (document.hidden || !navigator.onLine) return;
+        const t0 = performance.now();
+        try {
+            await fetch("/?mwping=" + Date.now(), { method: "HEAD", cache: "no-store" });
+            const ms = Math.round(performance.now() - t0);
+            ping.textContent = "● " + ms + " ms";
+            ping.className = ping.className.replace(/\b(good|mid|bad)\b/g, "").trim();
+            ping.classList.add(ms < 120 ? "good" : ms < 300 ? "mid" : "bad");
+        } catch (e) {
+            ping.textContent = "● offline";
+            ping.classList.remove("good", "mid"); ping.classList.add("bad");
+        }
+    }
+    setInterval(measure, 8000);
+    setTimeout(measure, 1500);
+
+    const canFs = !!(document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen);
+    const fsBtn = document.createElement("button");
+    fsBtn.type = "button";
+    fsBtn.id = "mwxFs";
+    fsBtn.title = "Fullscreen";
+    fsBtn.textContent = "⛶";
+    function toggleFs() {
+        try {
+            if (document.fullscreenElement || document.webkitFullscreenElement) {
+                (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+            } else {
+                (document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen).call(document.documentElement);
+            }
+        } catch (e) { /* ignore */ }
+    }
+    fsBtn.addEventListener("click", toggleFs);
+    if (canFs) tools.appendChild(fsBtn);
+
+    /* =====================================================
+       KEYBOARD SHORTCUTS (customisable, saved on this device)
+       Settings → ⌨️ Shortcuts
+    ===================================================== */
+    const visibleEl = el => !!el && el.getClientRects().length > 0;
+    const setOf = fn => { try { const st = loadMafiaSettings(); fn(st); saveMafiaSettings(st); applyMafiaSettings(); return st; } catch (e) { return null; } };
+    const openSet = view => { try { openSettings(view); } catch (e) { toast("Settings are not available right now"); } };
+
+    const ACTIONS = [
+        { id: "back",       icon: "↩️", name: "Back / Close box",     desc: "Close the open box or go back one step.",          def: "Escape", run() { return window.mwCloseTopBox ? window.mwCloseTopBox() : false; } },
+        { id: "shortcuts",  icon: "⌨️", name: "Show shortcuts",       desc: "Open the list of your shortcuts.",                  def: "?",      run() { openShortcuts(); } },
+        { id: "settings",   icon: "⚙️", name: "Open Settings",        desc: "Open or close the Settings menu.",                  def: "S",      run() { const o = document.getElementById("settingsOverlay"); if (o && visibleEl(o)) { closeSettings(); } else { openSet("main"); } } },
+        { id: "ranks",      icon: "🏆", name: "Ranks & Progress",     desc: "Jump straight to your rank and statistics.",        def: "R",      run() { openSet("ranks"); } },
+        { id: "sound",      icon: "🔊", name: "Sound Settings",       desc: "Jump straight to the sound settings.",              def: "V",      run() { openSet("sound"); } },
+        { id: "music",      icon: "🎵", name: "Music Settings",       desc: "Jump straight to the music settings.",              def: "U",      run() { openSet("music"); } },
+        { id: "account",    icon: "👤", name: "Account",              desc: "Jump straight to your account page.",               def: "A",      run() { openSet("account"); } },
+        { id: "help",       icon: "🆘", name: "Help Center",          desc: "Ask a question, send a suggestion or report a bug.", def: "H",     run() { openSet("main"); setTimeout(() => { const b = document.getElementById("settingsHelpOption"); if (b) b.click(); }, 80); } },
+        { id: "guide",      icon: "📖", name: "Game Guide",           desc: "Open the game guide.",                              def: "G",      run() { const b = ["guideButton", "lobbyGuideButton"].map(i => document.getElementById(i)).find(visibleEl); if (b) b.click(); else toast("The guide is not available on this screen"); } },
+        { id: "mute",       icon: "🔇", name: "Mute / unmute all sound", desc: "Turn the master volume off, then back on.",      def: "M",      run() {
+            const st = loadMafiaSettings();
+            const cur = Number(st.masterVolume);
+            if (cur > 0) { store.set("mwxPrevVol", String(cur)); setOf(s => { s.masterVolume = 0; }); toast("🔇 Sound muted"); }
+            else { const prev = parseFloat(store.get("mwxPrevVol")) || 0.8; setOf(s => { s.masterVolume = prev; }); toast("🔊 Sound on"); }
+        } },
+        { id: "motion",     icon: "🎞️", name: "Reduce motion on / off", desc: "Toggle reduced interface movement.",              def: "D",      run() { const st = setOf(s => { s.reduceMotion = !s.reduceMotion; }); if (st) toast(st.reduceMotion ? "Reduced motion ON" : "Reduced motion OFF"); } },
+        { id: "chat",       icon: "💬", name: "Focus chat",           desc: "Jump to the chat box so you can type.",             def: "T",      run() { const c = Array.from(document.querySelectorAll("input[id*='chat' i], textarea[id*='chat' i], input[class*='chat' i], textarea[class*='chat' i]")).find(i => visibleEl(i) && !i.disabled); if (c) { c.focus(); } else toast("No chat is open here"); } },
+        { id: "copycode",   icon: "📋", name: "Copy room code",       desc: "Copy the current room code.",                       def: "C",      run() {
+            const el = Array.from(document.querySelectorAll("[id*='code' i], [class*='code' i]")).find(e => visibleEl(e) && !e.matches("input, textarea, button, select") && /^[A-Z0-9]{4,8}$/.test((e.textContent || "").trim()));
+            if (!el) { toast("No room code on this screen"); return; }
+            const t = el.textContent.trim();
+            if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(() => toast("📋 Room code " + t + " copied")).catch(() => { });
+        } },
+        { id: "fullscreen", icon: "⛶",  name: "Fullscreen",           desc: "Enter or leave fullscreen.",                        def: "F",      run() { if (canFs) toggleFs(); else toast("Fullscreen is not supported here"); } },
+        { id: "ping",       icon: "📶", name: "Show / hide ping",     desc: "Show or hide the connection-speed badge.",          def: "P",      run() { ping.click(); } }
+    ];
+    const BY_ID = {}; ACTIONS.forEach(a => { BY_ID[a.id] = a; });
+
+    let binds = {};      // id -> combo string ("" = unassigned)
+    let keysOn = true;
+    function loadBinds() {
+        let saved = {};
+        try { saved = JSON.parse(store.get("mwxKeybinds") || "{}") || {}; } catch (e) { saved = {}; }
+        binds = {};
+        ACTIONS.forEach(a => { binds[a.id] = Object.prototype.hasOwnProperty.call(saved, a.id) ? String(saved[a.id]) : a.def; });
+        keysOn = store.get("mwxKeysOn") !== "0";
+    }
+    function saveBinds() { store.set("mwxKeybinds", JSON.stringify(binds)); store.set("mwxKeysOn", keysOn ? "1" : "0"); }
+    loadBinds();
+
+    const MODS = ["Control", "Shift", "Alt", "Meta", "AltGraph", "CapsLock"];
+    function comboOf(e) {
+        if (MODS.indexOf(e.key) !== -1) return null;
+        let k = e.key;
+        if (k === " ") k = "Space";
+        const single = k.length === 1;
+        if (single) k = k.toUpperCase();
+        const parts = [];
+        if (e.ctrlKey) parts.push("Ctrl");
+        if (e.metaKey) parts.push("Meta");
+        if (e.altKey) parts.push("Alt");
+        // Shift is only part of the combo for letters / named keys (symbols like "?" already include it)
+        if (e.shiftKey && (!single || /[A-Z]/.test(k))) parts.push("Shift");
+        parts.push(k);
+        return parts.join("+");
+    }
+    function pretty(c) {
+        if (!c) return "None";
+        return c.replace("Escape", "Esc").replace("Control", "Ctrl").replace("ArrowUp", "↑").replace("ArrowDown", "↓").replace("ArrowLeft", "←").replace("ArrowRight", "→");
+    }
+    function conflictOf(id, combo) {
+        return ACTIONS.find(a => a.id !== id && binds[a.id] && binds[a.id] === combo);
+    }
+
+    window.mwKeys = {
+        label: id => pretty(binds[id]),
+        matches: (id, e) => !!binds[id] && comboOf(e) === binds[id],
+        capturing: false
+    };
+
+    document.addEventListener("keydown", e => {
+        if (window.mwKeys.capturing || e.defaultPrevented) return;
+        const combo = comboOf(e);
+        if (!combo) return;
+        const action = ACTIONS.find(a => binds[a.id] === combo);
+        if (!action) return;
+        const isTyping = typing(e.target);
+        // Back always works (even with shortcuts off); everything else is skipped while typing or when turned off
+        if (action.id !== "back") {
+            if (!keysOn) return;
+            if (isTyping) return;
+            // plain single keys must not fire while a modifier-less key is held with Ctrl/Alt/Meta (already part of combo)
+        }
+        let handled;
+        try { handled = action.run(e); } catch (x) { handled = false; }
+        if (action.id !== "back" || handled) e.preventDefault();
+    });
+
+    /* ---------- shortcuts box (press the Show-shortcuts key) ---------- */
+    function openShortcuts() {
+        if (document.getElementById("mwxShortcuts")) return;
+        const o = document.createElement("div");
+        o.id = "mwxShortcuts";
+        o.className = "mwx-sc-overlay";
+        const rows = ACTIONS.map(a => `<div class="mwx-sc-row"><kbd>${pretty(binds[a.id])}</kbd><span>${a.icon} ${a.name}</span></div>`).join("");
+        o.innerHTML = `
+            <div class="mwx-sc-card">
+                <h2>⌨️ KEYBOARD SHORTCUTS</h2>
+                ${keysOn ? "" : '<div class="mwx-sc-off">Shortcuts are turned off in Settings (Back still works).</div>'}
+                ${rows}
+                <button type="button" class="mwx-sc-custom">⚙️ CUSTOMIZE KEYS</button>
+            </div>`;
+        o.addEventListener("click", ev => { if (ev.target === o) o.remove(); });
+        o.querySelector(".mwx-sc-custom").addEventListener("click", () => { o.remove(); openSet("shortcuts"); });
+        document.body.appendChild(o);
+    }
+
+    /* ---------- Settings page ---------- */
+    function renderShortcutsPage(page) {
+        const rows = ACTIONS.map(a => `
+            <div class="settings-row mwx-key-row" data-key-row="${a.id}">
+                <div><strong>${a.icon} ${a.name}</strong><small>${a.desc}</small></div>
+                <div class="mwx-key-ctl">
+                    <button type="button" class="mwx-key-btn${binds[a.id] ? "" : " none"}" data-key-set="${a.id}" title="Click, then press the new key">${pretty(binds[a.id])}</button>
+                    <button type="button" class="mwx-key-mini" data-key-clear="${a.id}" title="Remove key">✕</button>
+                    <button type="button" class="mwx-key-mini" data-key-reset="${a.id}" title="Back to default (${pretty(a.def)})">↺</button>
+                </div>
+            </div>`).join("");
+        page.innerHTML = settingsHeader("⌨️ SHORTCUTS") + `
+            <div class="settings-card">
+                <div class="settings-row"><div><strong>Enable keyboard shortcuts</strong><small>Turn all shortcuts on or off (Back/Close always works).</small></div>
+                    <input class="settings-switch" type="checkbox" id="mwxKeysSwitch" ${keysOn ? "checked" : ""}></div>
+            </div>
+            <div class="settings-card">
+                <h3>🎹 Your keys</h3>
+                <p class="settings-muted mwx-key-hint" id="mwxKeyHint">Click a key, then press the new key (or combo like Ctrl+K). Esc cancels.</p>
+                ${rows}
+            </div>
+            <div class="settings-card">
+                <button type="button" class="settings-action" id="mwxKeysResetAll">↺ RESET ALL TO DEFAULT</button>
+                <p class="settings-muted">Saved on this device. Shortcuts never fire while you are typing in a box.</p>
+            </div>`;
+
+        const hint = page.querySelector("#mwxKeyHint");
+        const refresh = () => {
+            ACTIONS.forEach(a => {
+                const b = page.querySelector(`[data-key-set="${a.id}"]`);
+                if (!b) return;
+                b.textContent = pretty(binds[a.id]);
+                b.classList.toggle("none", !binds[a.id]);
+                b.classList.remove("capturing");
+            });
+        };
+        let stopCapture = null;
+
+        page.querySelector("#mwxKeysSwitch").addEventListener("change", ev => { keysOn = ev.target.checked; saveBinds(); toast(keysOn ? "Shortcuts enabled" : "Shortcuts disabled"); });
+
+        page.querySelectorAll("[data-key-set]").forEach(btn => btn.addEventListener("click", () => {
+            if (stopCapture) stopCapture();
+            const id = btn.dataset.keySet;
+            btn.classList.add("capturing");
+            btn.textContent = "Press a key…";
+            window.mwKeys.capturing = true;
+            const onKey = ev => {
+                ev.preventDefault(); ev.stopPropagation();
+                if (ev.key === "Escape") { stopCapture(); return; }
+                const combo = comboOf(ev);
+                if (!combo) return;                         // only a modifier so far
+                const other = conflictOf(id, combo);
+                if (other) {
+                    hint.textContent = `"${pretty(combo)}" is already used by "${other.name}". Pick another key.`;
+                    hint.classList.add("mwx-warn");
+                    return;
+                }
+                binds[id] = combo; saveBinds();
+                hint.classList.remove("mwx-warn");
+                hint.textContent = `${BY_ID[id].name} → ${pretty(combo)} saved.`;
+                stopCapture();
+            };
+            stopCapture = () => {
+                document.removeEventListener("keydown", onKey, true);
+                setTimeout(() => { window.mwKeys.capturing = false; }, 0);
+                stopCapture = null; refresh();
+            };
+            document.addEventListener("keydown", onKey, true);
+        }));
+        page.querySelectorAll("[data-key-clear]").forEach(b => b.addEventListener("click", () => {
+            if (stopCapture) stopCapture();
+            binds[b.dataset.keyClear] = ""; saveBinds(); refresh();
+        }));
+        page.querySelectorAll("[data-key-reset]").forEach(b => b.addEventListener("click", () => {
+            if (stopCapture) stopCapture();
+            const id = b.dataset.keyReset;
+            const def = BY_ID[id].def;
+            const other = conflictOf(id, def);
+            if (other) binds[other.id] = "";             // the default key goes back to its owner
+            binds[id] = def; saveBinds(); refresh();
+            if (other) { hint.classList.remove("mwx-warn"); hint.textContent = `"${other.name}" lost its key because "${pretty(def)}" went back to "${BY_ID[id].name}".`; }
+        }));
+        page.querySelector("#mwxKeysResetAll").addEventListener("click", () => {
+            if (stopCapture) stopCapture();
+            ACTIONS.forEach(a => { binds[a.id] = a.def; }); keysOn = true; saveBinds();
+            page.querySelector("#mwxKeysSwitch").checked = true;
+            refresh(); toast("Shortcuts reset to default");
+        });
+
+        document.getElementById("settingsBack")?.addEventListener("click", () => { if (stopCapture) stopCapture(); settingsNav("main"); });
+        document.getElementById("settingsClose")?.addEventListener("click", () => { if (stopCapture) stopCapture(); closeSettings(); });
+    }
+
+    try {
+        const baseRender = renderSettingsPage;
+        renderSettingsPage = function (view) {
+            const page = document.getElementById("settingsPage");
+            if (page && view === "shortcuts") {
+                const accountInfo = document.getElementById("accountInfo");
+                const accountChip = document.getElementById("accountChip");
+                if (accountInfo && accountChip && accountInfo.parentElement !== accountChip) {
+                    accountChip.appendChild(accountInfo);
+                    accountInfo.style.display = "none";
+                }
+                renderShortcutsPage(page);
+                return;
+            }
+            baseRender.apply(this, arguments);
+            if (view === "main" && page) {
+                const grid = page.querySelector(".settings-grid");
+                if (grid && !grid.querySelector("[data-mwx-shortcuts]")) {
+                    const b = document.createElement("button");
+                    b.type = "button";
+                    b.className = "settings-option settings-category";
+                    b.dataset.mwxShortcuts = "1";
+                    b.innerHTML = '<span class="settings-icon">⌨️</span><span class="settings-copy"><strong>Shortcuts</strong><span>Keyboard shortcuts and custom keybinds</span></span>';
+                    b.addEventListener("click", () => settingsNav("shortcuts"));
+                    grid.appendChild(b);
+                }
+            }
+        };
+    } catch (e) { /* settings not available */ }
+
+    /* ---------- keep the screen awake in lobby / match ---------- */
+    let wake = null;
+    async function updateWake() {
+        try {
+            const want = !document.hidden && (document.body.classList.contains("mw-in-game") || document.body.classList.contains("mw-in-lobby"));
+            if (want && !wake && navigator.wakeLock) {
+                wake = await navigator.wakeLock.request("screen");
+                wake.addEventListener("release", () => { wake = null; });
+            } else if (!want && wake) {
+                await wake.release(); wake = null;
+            }
+        } catch (e) { wake = null; }
+    }
+    document.addEventListener("visibilitychange", updateWake);
+    new MutationObserver(updateWake).observe(document.body, { attributes: true, attributeFilter: ["class"] });
+    document.addEventListener("click", updateWake, { once: true });
+
+    /* ---------- protect against accidental leave during a match ---------- */
+    window.addEventListener("beforeunload", e => {
+        if (document.body.classList.contains("mw-in-game")) {
+            e.preventDefault();
+            e.returnValue = "";
+        }
+    });
+
+    /* ---------- page title shows where you are ---------- */
+    const baseTitle = document.title || "Mafia Wars";
+    function updateTitle() {
+        const b = document.body.classList;
+        const where = b.contains("mw-in-game") ? "⚔️ In Match" : b.contains("mw-in-lobby") ? "🎭 Lobby" : "";
+        document.title = where ? where + " · " + baseTitle.replace(/^(⚔️ In Match|🎭 Lobby) · /, "") : baseTitle;
+    }
+    new MutationObserver(updateTitle).observe(document.body, { attributes: true, attributeFilter: ["class"] });
+    updateTitle();
+
+    /* ---------- click a room code to copy ---------- */
+    document.addEventListener("click", e => {
+        const el = e.target.closest && e.target.closest("[id*='code' i], [class*='code' i]");
+        if (!el || el.matches("input, textarea, button, select")) return;
+        const txt = (el.textContent || "").trim();
+        if (!/^[A-Z0-9]{4,8}$/.test(txt)) return;
+        const done = () => toast("📋 Room code " + txt + " copied");
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done).catch(() => { });
+    });
+
+    /* ---------- lazy images ---------- */
+    function lazyImages(root) {
+        (root || document).querySelectorAll("img:not([loading])").forEach(i => { i.loading = "lazy"; i.decoding = "async"; });
+    }
+    lazyImages();
+    new MutationObserver(muts => {
+        for (const m of muts) m.addedNodes.forEach(n => {
+            if (n.nodeType !== 1) return;
+            if (n.tagName === "IMG" && !n.getAttribute("loading")) { n.loading = "lazy"; n.decoding = "async"; }
+            else if (n.querySelectorAll) lazyImages(n);
+        });
+    }).observe(document.body, { childList: true, subtree: true });
+
+    /* ---------- focus handling for boxes ---------- */
+    let lastFocus = null;
+    document.addEventListener("focusin", e => { if (!e.target.closest || !e.target.closest("[data-mw-has-back]")) lastFocus = e.target; });
+    new MutationObserver(muts => {
+        for (const m of muts) m.addedNodes.forEach(n => {
+            if (n.nodeType !== 1 || !n.matches || !n.matches("[class*='modal' i], [class*='overlay' i]")) return;
+            setTimeout(() => {
+                const input = n.querySelector("input:not([type=hidden]):not([type=checkbox]):not([type=radio]), textarea");
+                if (input && input.getClientRects().length && innerWidth > 700) input.focus({ preventScroll: true });
+            }, 120);
+        });
+        for (const m of muts) m.removedNodes.forEach(n => {
+            if (n.nodeType === 1 && n.matches && n.matches("[class*='modal' i], [class*='overlay' i]") && lastFocus && lastFocus.isConnected) {
+                try { lastFocus.focus({ preventScroll: true }); } catch (x) { /* ignore */ }
+            }
+        });
+    }).observe(document.body, { childList: true });
+
+    /* ---------- online / offline notices ---------- */
+    window.addEventListener("offline", () => toast("📡 You are offline"));
+    window.addEventListener("online", () => toast("✅ Internet is back"));
+})();
